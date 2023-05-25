@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-=======
 # SynCoid-Iterate
 
 This is a Python3 script to use 
@@ -19,4 +17,3 @@ To make backing up ZFS DataSet's easy
 4. Shutdown the system when done
 5. Use MQTT to send a message in case that is needed.
 	(I use it to send an MQTT message to HomeAssistant and then it wil safely shutdown a PI4 and take the power from the Switch)
->>>>>>> 49bf596 (Changed README.md)
