@@ -513,10 +513,28 @@ def main():
 	logger.info('')
 	logger.info('The Script ended succesfully')
 	logger.info('')
-	logger.info('If there is an option for it, it will send a succesfull complete message')
+	logger.info('If there is an option for it, it will send a succesfull completed mail')
 	logger.info('')
 	logger.info('----')
 	logger.info('')
+
+	with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
+		lines_of_text = [
+			"",
+			"----",
+			"",
+			"The Script ended succesfully",
+			"",
+			"If there is an option for it, it will send a succesfull completed mail",
+			"",
+			"----",
+			"",
+			# Add more lines as needed
+		]
+
+		for line in lines_of_text:
+			fout.write(line + "\n")
+	
 	MailTo("0","")
 
 # This is the if statement that starts main() and the syncing
