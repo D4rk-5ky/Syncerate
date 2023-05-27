@@ -33,6 +33,9 @@ import traceback
 # This code is for using popen to send a mail with postfix
 import subprocess
 
+# This is to make python sleep for a time to make sure mail is sent
+import time
+
 # This is for the send mail function
 # In case one needs to be notified of errors
 def MailTo(Exit_Code, SynCoidFail):
@@ -62,6 +65,7 @@ def MailTo(Exit_Code, SynCoidFail):
 
 			# Print any error messages
 			if stderr:
+				logger.error('')
 				logger.error('----------')
 				logger.error('')
 				logger.error('There was an error sending the mail')
@@ -69,25 +73,30 @@ def MailTo(Exit_Code, SynCoidFail):
 				logger.error('')
 				logger.error(stderr.decode())
 				logger.error('')
+				logger.error('----------')
 			elif stdout:
+				logger.info('')
 				logger.info('----------')
 				logger.info('')
 				logger.info('Mail was send succesfully')
 				logger.info('')
 				logger.info(stdout.decode())
-				logger.info('----------')
 		else:
 			logger.error('')
 			logger.error('Error log is not empty')
 			logger.error('Attempting to send mail')
 			logger.error('')
 			if not SynCoidFail == "":
+				logger.error('')
+				logger.error('----------')
+				logger.error('')
 				logger.error('This was a Syncoid crash/fail')
 				logger.error('')
 				logger.error('The exit code from Syncoid was : %i', SynCoidFail)
 				logger.error('')
 				logger.error('Plz read in the logs what might have gone wrong')
 				logger.error('')
+				logger.error('----------')
 				
 				subject = "There was an error running Syncoid-Iterate.py - this was a Syncoid error - Attaching error logs to confirm"
 				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
@@ -112,12 +121,12 @@ def MailTo(Exit_Code, SynCoidFail):
 					logger.error(stderr.decode())
 					logger.error('')
 				elif stdout:
+					logger.info('')
 					logger.info('----------')
 					logger.info('')
 					logger.info('Mail was send succesfully')
 					logger.info('')
 					logger.info(stdout.decode())
-					logger.info('----------')
 
 				sys.exit(SynCoidFail)
 			else:
@@ -167,16 +176,49 @@ def MailTo(Exit_Code, SynCoidFail):
 
 				sys.exit(Exit_Code)
 
+def SystemAction():
+	if not SystemOption == "No":
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
+		logger.info('The system has an option after the script finishes')
+		logger.info('')
+		logger.info('The options is')
+		logger.info('')
+		logger.info(SystemOption)
+		logger.info('')
+		logger.info('Gonna sleep for 2 minutes to insure mail is sent')
+		logger.info('')
+		logger.info('Then execute the command')
+		logger.info('')
+		logger.info('----------')
 
+		# Sleep before executing the desired action
+		time.sleep(120)
+
+		os.system(SystemOption)
+	else:
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
+		logger.info('The system was not choosen to shutdown or similar when the script finished')
+		logger.info('')
+		logger.info('----------')
+
+	
 # In case something is wrong with the List's
 # number of items or end names in order
 def missmatchinglists(Lenght, Names):
    
 	if Lenght == True:
+		logger.error('')
+		logger.error('----------')
 		logger.error('The number of items in each list does not match')
 		logger.error('Check the terminal or .err log')
 		logger.error('exiting - error code 1')
 	if Names == True:
+		logger.error('')
+		logger.error('----------')
 		logger.error('There are datasets on source and destination which ends doesnt match up')
 		logger.error('Check the terminal or .err log')
 		logger.error('exiting - error code 1')
@@ -199,6 +241,8 @@ config.read(args.conf)
 
 # This is to get the mail or "No" option for mail
 MailOption = (config.get('SynCoid Config', 'Mail'))
+
+SystemOption = (config.get('SynCoid Config', 'SystemAction'))
 
 # This is for creating the Date format for the Log Files
 DateTime = config.get('SynCoid Config', 'DateTime')
@@ -246,12 +290,14 @@ def get_logger(
 logger = get_logger()
 
 # Print the config file destination from the scripts argument
-logger.info('Config file destination  :   %s', args.conf)
 logger.info('')
+logger.info('----------')
+logger.info('')
+logger.info('Config file destination  :   %s', args.conf)
 
 # Write Date format to screen
-logger.info("The Date used for Log Files  :   %s", time_now)
 logger.info('')
+logger.info("The Date used for Log Files  :   %s", time_now)
 
 # Examples of using the logger function
 #  
@@ -261,6 +307,7 @@ logger.info('')
 
 # Save the importet variables to .log file
 for section in config.sections():
+	logger.info('')
 	logger.info('----------')
 	logger.info('')
 	logger.info('These are the imported variables in the config file')
@@ -278,6 +325,8 @@ logger.info('----------')
 
 # Check if the "syncoid command" is in use
 if config.get('SynCoid Config','SyncoidCommand').startswith("syncoid") == True:
+	logger.info('')
+	logger.info('----------')
 	logger.info('The syncoid command is in use')
 	logger.info('')
 
@@ -334,6 +383,8 @@ PassWordOption=(config.get('SynCoid Config', 'PassWord'))
 if PassWordOption == 'Ask':
 	PassWord = getpass('PLz. insert a desiret password if needed :    ')
 	logger.info('')
+	logger.info('----------')
+	logger.info('')
 	logger.info('The Password has been manualy added')
 	logger.info('')
 	print('')
@@ -341,13 +392,14 @@ if PassWordOption == 'Ask':
 	print('')
 elif PassWordOption == 'No':
 	logger.info('')
+	logger.info('----------')
+	logger.info('')
 	logger.info('No password is in use')
 	logger.info('')
-	print('')
-	print('no password in use')
-	print('')
 else:
 	PassWord=PassWordOption
+	logger.info('')
+	logger.info('----------')
 	logger.info('')
 	logger.info('Password is in the config file, not written to log')
 	logger.info('')
@@ -489,8 +541,14 @@ def main():
 
 		SyncoidExecute=SyncoidCommand.replace("SourceDataSet", h)
 		SyncoidExecute=SyncoidExecute.replace("DestDataSet", i)
-
+		
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
 		logger.info('Ececuting the altered SynCoid Command    :   %s', SyncoidExecute)
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
 		
 		child = ssh_command(SyncoidExecute)
 		
@@ -509,25 +567,25 @@ def main():
 			MailTo(child.exitstatus, child.exitstatus)
 
 	logger.info('')
-	logger.info('----')
+	logger.info('----------')
 	logger.info('')
 	logger.info('The Script ended succesfully')
 	logger.info('')
 	logger.info('If there is an option for it, it will send a succesfull completed mail')
 	logger.info('')
-	logger.info('----')
+	logger.info('----------')
 	logger.info('')
 
 	with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
 		lines_of_text = [
 			"",
-			"----",
+			"----------",
 			"",
 			"The Script ended succesfully",
 			"",
 			"If there is an option for it, it will send a succesfull completed mail",
 			"",
-			"----",
+			"----------",
 			"",
 			# Add more lines as needed
 		]
@@ -536,6 +594,7 @@ def main():
 			fout.write(line + "\n")
 	
 	MailTo("0","")
+	SystemAction()
 
 # This is the if statement that starts main() and the syncing
 # It has a bit of error checking and should be able to send it by mail
