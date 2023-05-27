@@ -480,9 +480,6 @@ def ssh_command(SynCoid_Command):
 	CONTINUENODESTROYSNAP = False
 
 	# spawn the child process
-	logger.info('')
-	logger.info('----------')
-	logger.info('')
 	child = pexpect.spawn(SynCoid_Command, timeout=None, encoding='utf-8')
 
 	if not LogDestination == "No":
