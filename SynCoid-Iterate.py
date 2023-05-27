@@ -36,60 +36,62 @@ import subprocess
 # This is to make python sleep for a time to make sure mail is sent
 import time
 
+def is_log_empty(log_path):
+    if os.path.isfile(log_path + ".log"):
+        return True
+    elif os.path.isfile(log_path + ".err"):
+        return os.stat(log_path + ".err").st_size == 0
+    else:
+        return True  # Log file and error file don't exist
+
 # This is for the send mail function
 # In case one needs to be notified of errors
 def MailTo(Exit_Code, SynCoidFail):
 	if not MailOption == 'No':
+
 		if LogDestination.endswith('/'):
 			LogDestinationNoSlash = LogDestination[:-1]
+		elif not LogDestination == "No":
+			LogDestinationNoSlash = LogDestination
 
 		# Define recipient, subject, and message body
 		recipient = (config.get('SynCoid Config', 'Mail'))
 				
-		if os.stat(LogDestination + "SynCoidIterate-" + time_now + ".err").st_size == 0:
+		log_file = LogDestination + "SynCoidIterate-" + time_now
+
+		if is_log_empty(log_file):
+			logger.info('')
+			logger.info('----------')
 			logger.info('')
 			logger.info('Error log is empty')
 
-			subject = "Succesfull Syncoid-Iterate.py run - Attaching logs to confirm"
-			attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".log"
-			attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
+			if not LogDestination == "No":
 
-			# Build the mail command with attachments
-			attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
-			mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
+				subject = "Succesfull Syncoid-Iterate.py run - Attaching logs to confirm"
 
-			# Open the attachment file and execute the mail command using subprocess
-			with open(attachment_file, "rb") as f:
-				p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-				stdout, stderr = p.communicate(f.read())
-				exit_code = p.returncode
+				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".log"
+				attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
 
-			# Print any error messages
-			if exit_code == 0:
-				logger.info('')
-				logger.info('----------')
-				logger.info('')
-				logger.info('Mail was send succesfully')
-				logger.info('')
-				logger.info(stdout.decode())
-			else:
-				logger.error('')
-				logger.error('----------')
-				logger.error('')
-				logger.error('There was an error sending the mail')
-				logger.error('This is what popen said')
-				logger.error('')
-				logger.error(stderr.decode())
-				logger.error('')
-				logger.error('----------')
+				# Build the mail command with attachments
+				attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
+				mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
 				
+				# Open the attachment file and execute the mail command using subprocess
+				with open(attachment_file, "rb") as f:
+						p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+						stdout, stderr = p.communicate(f.read())
+						Mail_Exit_Code = p.returncode	
+			else:
+
+				subject_and_body = "Succesfull Syncoid-Iterate.py run - Attaching logs to confirm"
+
+				mail_command = f"echo '{subject_and_body}' | mail -s '{subject_and_body}' {recipient}"
+				p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+				stdout, stderr = p.communicate()
+				Mail_Exit_Code = p.returncode	
+			
 		else:
-			logger.error('')
-			logger.error('----------')
-			logger.error('')
-			logger.error('Error log is not empty')
-			logger.error('Attempting to send mail')
-			logger.error('')
+
 			if not SynCoidFail == "":
 				logger.error('')
 				logger.error('----------')
@@ -98,91 +100,109 @@ def MailTo(Exit_Code, SynCoidFail):
 				logger.error('')
 				logger.error('The exit code from Syncoid was : %i', SynCoidFail)
 				logger.error('')
-				logger.error('Plz read in the logs what might have gone wrong')
-				logger.error('')
-				logger.error('----------')
-				
-				subject = "There was an error running Syncoid-Iterate.py - this was a Syncoid error - Attaching error logs to confirm"
-				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
-				attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
-
-				# Build the mail command with attachments
-				attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
-				mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
-
-				# Open the attachment file and execute the mail command using subprocess
-				with open(attachment_file, "rb") as f:
-					p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-					stdout, stderr = p.communicate(f.read())
-
-				# Print any error messages
-				if exit_code == 0:
-					logger.info('')
-					logger.info('----------')
-					logger.info('')
-					logger.info('Mail was send succesfully')
-					logger.info('')
-					logger.info(stdout.decode())
+				if not LogDestination == "No":
+					logger.error('Plz read in the logs what might have gone wrong')
+					logger.error('')
+					logger.error('----------')
 				else:
+					logger.error('Logs Disabled, consider enabling')
 					logger.error('')
 					logger.error('----------')
-					logger.error('')
-					logger.error('There was an error sending the mail')
-					logger.error('This is what popen said')
-					logger.error('')
-					logger.error(stderr.decode())
-					logger.error('')
-					logger.error('----------')
+				
+				if not LogDestination == "No":
+
+					subject = "There was an error running Syncoid-Iterate.py - this was a Syncoid error - Attaching error logs to confirm"
+					attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
+					attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+
+					# Build the mail command with attachments
+					attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
+					mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
+
+					# Open the attachment file and execute the mail command using subprocess
+					with open(attachment_file, "rb") as f:
+						p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+						stdout, stderr = p.communicate(f.read())
+						Mail_Exit_Code = p.returncode	
+
+				else:
+
+					subject_and_body = "There was an error running Syncoid-Iterate.py - this was a Syncoid error - Note Logging disabled"
+
+					mail_command = f"echo '{subject_and_body}' | mail -s '{subject_and_body}' {recipient}"
+					p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+					stdout, stderr = p.communicate()
+					Mail_Exit_Code = p.returncode			
 
 				sys.exit(SynCoidFail)
+
 			else:
+
+				logger.error('')
+				logger.error('----------')
+				logger.error('')
 				logger.error('This was a another type of error')
 				logger.error('')
 				logger.error('The exit code from SynCoid-Iterate-py was was : %i', Exit_Code)
 				logger.error('')
-				logger.error('Plz read in the logs what might have gone wrong')
-				logger.error('')
-				
-				subject = "There was an error running Syncoid-Iterate.py run - this was an unknown error - Attaching error logs to confirm"
-				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
-				attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
-
-				# Build the mail command with attachments
-				attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
-				mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
-				logger.error("----------")
-				logger.error("")
-				logger.error("this is the mail command being used")
-				logger.error("")
-				logger.error(mail_command)
-				logger.error("")
-				logger.error("----------")
-				
-				# Open the attachment file and execute the mail command using subprocess
-				with open(attachment_file, "rb") as f:
-					p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-					stdout, stderr = p.communicate(f.read())
-
-				# Print any error messages
-				if exit_code == 0:
-					logger.info('')
-					logger.info('----------')
-					logger.info('')
-					logger.info('Mail was send succesfully')
-					logger.info('')
-					logger.info(stdout.decode())
+				if not LogDestination == "No":
+					logger.error('Plz read in the logs what might have gone wrong')
+					logger.error('')
+					logger.error('----------')
 				else:
+					logger.error('Logs Disabled, consider enabling')
 					logger.error('')
 					logger.error('----------')
-					logger.error('')
-					logger.error('There was an error sending the mail')
-					logger.error('This is what popen said')
-					logger.error('')
-					logger.error(stderr.decode())
-					logger.error('')
-					logger.error('----------')
+				
+				if not LogDestination == "No":
 
+					subject = "There was an error running Syncoid-Iterate.py run - this was an unknown error - Attaching error logs to confirm"
+					attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
+					attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+
+					# Build the mail command with attachments
+					attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
+					mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
+					
+					# Open the attachment file and execute the mail command using subprocess
+					with open(attachment_file, "rb") as f:
+						p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+						stdout, stderr = p.communicate(f.read())
+						Mail_Exit_Code = p.returncode	
+
+				else:
+
+					subject_and_body = "There was an error running Syncoid-Iterate.py run - this was an unknown error - Note Logging disabled"
+
+					mail_command = f"echo '{subject_and_body}' | mail -s '{subject_and_body}' {recipient}"
+					p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+					stdout, stderr = p.communicate()
+					Mail_Exit_Code = p.returncode		
+					
 				sys.exit(Exit_Code)
+
+		# Print any error messages
+		if Mail_Exit_Code == 0:
+			WasMailSent(0, "")
+		else:
+			WasMailSent(Mail_Exit_Code, p.returncode,stderr.decode())
+
+def WasMailSent(MailExitCode, popenstderr):
+	if MailExitCode == 0:
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
+		logger.info('Mail was send succesfully')
+	else:
+		logger.error('')
+		logger.error('----------')
+		logger.error('')
+		logger.error('There was an error sending the mail')
+		logger.error('This is what popen said')
+		logger.error('')
+		logger.error(popenstderr)
+		logger.error('')
+		logger.error('----------')
 
 def SystemAction():
 	if not SystemOption == "No":
@@ -259,6 +279,11 @@ time_now  = datetime.datetime.now().strftime(DateTime)
 # This is for the logfile creation
 LogDestination=config.get('SynCoid Config', 'LogDestination')
 
+# This is to enable or disable Loggin
+if not LogDestination == "No":
+	if not LogDestination.endswith('/'):
+		LogDestination = LogDestination + "/"
+
 # This logger function will log everything including errors to ".log" and only errors to ".err"
 # It is called with logger.(info/error)
 def get_logger(    
@@ -266,36 +291,47 @@ def get_logger(
 		LOG_NAME       = '',
 		LOG_FILE_INFO  = LogDestination + "SynCoidIterate-" + time_now + ".log",
 		LOG_FILE_WARNING = LogDestination + "SynCoidIterate-" + time_now + ".err",
-		LOG_FILE_ERROR = LogDestination + "SynCoidIterate-" + time_now + ".err"):
+		LOG_FILE_ERROR = LogDestination + "SynCoidIterate-" + time_now + ".err",
+    	enable_file_logging=True):
 
 	log           = logging.getLogger(LOG_NAME)
 	log_formatter = logging.Formatter(LOG_FORMAT)
 
+	if enable_file_logging:
+		file_handler_info = logging.FileHandler(LOG_FILE_INFO, mode='w')
+		file_handler_info.setFormatter(log_formatter)
+		file_handler_info.setLevel(logging.INFO)
+		log.addHandler(file_handler_info)
+
+		file_handler_warning = logging.FileHandler(LOG_FILE_WARNING, mode='w')
+		file_handler_warning.setFormatter(log_formatter)
+		file_handler_warning.setLevel(logging.WARNING)
+		log.addHandler(file_handler_warning)
+
+		file_handler_error = logging.FileHandler(LOG_FILE_ERROR, mode='w')
+		file_handler_error.setFormatter(log_formatter)
+		file_handler_error.setLevel(logging.ERROR)
+		log.addHandler(file_handler_error)
+
+
 	# comment this to suppress console output
-	stream_handler = logging.StreamHandler()
+	stream_handler = logging.StreamHandler(sys.stdout)
 	stream_handler.setFormatter(log_formatter)
 	log.addHandler(stream_handler)
-
-	file_handler_info = logging.FileHandler(LOG_FILE_INFO, mode='w')
-	file_handler_info.setFormatter(log_formatter)
-	file_handler_info.setLevel(logging.INFO)
-	log.addHandler(file_handler_info)
-
-	file_handler_warning = logging.FileHandler(LOG_FILE_WARNING, mode='w')
-	file_handler_warning.setFormatter(log_formatter)
-	file_handler_warning.setLevel(logging.WARNING)
-	log.addHandler(file_handler_warning)
-
-	file_handler_error = logging.FileHandler(LOG_FILE_ERROR, mode='w')
-	file_handler_error.setFormatter(log_formatter)
-	file_handler_error.setLevel(logging.ERROR)
-	log.addHandler(file_handler_error)
 
 	log.setLevel(logging.INFO)
 
 	return log
 
-logger = get_logger()
+if not LogDestination == "No":
+	logger = get_logger(enable_file_logging=True)
+else:
+	logger = get_logger(enable_file_logging=False)
+	logger.info('')
+	logger.info('----------')
+	logger.info('Logging has beend disabled')
+	logger.info('')
+	logger.info('Only writing to terminal')
 
 # Print the config file destination from the scripts argument
 logger.info('')
@@ -329,13 +365,11 @@ for section in config.sections():
 			logging.info(text)
 			logging.info('')
 
-logger.info('----------')
-
 # Check if the "syncoid command" is in use
 if config.get('SynCoid Config','SyncoidCommand').startswith("syncoid") == True:
+	logger.info('The syncoid command is in use')
 	logger.info('')
 	logger.info('----------')
-	logger.info('The syncoid command is in use')
 	logger.info('')
 
 # Import the Source file to a Python3 list
@@ -434,7 +468,7 @@ def die(child, errstr, error_code):
 	# I had problems that the exit code given to "die" function was "str", i couldten send "int" to "die" function instead but i could conver "str" to "int"
 	# This was understood from https://medium.com/@anupkumarray/working-with-exit-codes-between-python-shell-scripts-177931204291
 	integer_number = int(error_code)
-	MailTo(integer_number,"")
+	MailTo(integer_number, "")
 	sys.exit(integer_number)
 
 # This is the function that executes the altered syncoid command
@@ -442,7 +476,7 @@ def die(child, errstr, error_code):
 # But i am in doubt it will catch all errors
 
 ISREPEATED = False
-CONTINUENODESTROYSNAP= False
+CONTINUENODESTROYSNAP = False
 
 def ssh_command(SynCoid_Command):
 
@@ -457,8 +491,9 @@ def ssh_command(SynCoid_Command):
 	logger.info('')
 	child = pexpect.spawn(SynCoid_Command, timeout=None, encoding='utf-8')
 
-	fout = open(LogDestination + 'SynCoidIterate-' + time_now + ".out",'a')
-	child.logfile = fout
+	if not LogDestination == "No":
+		fout = open(LogDestination + 'SynCoidIterate-' + time_now + ".out",'a')
+		child.logfile = fout
 
 	# set a counter for the number of times a pattern has been executed
 	#pattern_count = {}
@@ -473,7 +508,7 @@ def ssh_command(SynCoid_Command):
 	    'Connection refused',
 	    'passphrase',
 		pexpect.EOF,
-		'dataset does not exist',
+		'dataset no longer exists',
 		'WARN',
 	]
 
@@ -524,12 +559,14 @@ def ssh_command(SynCoid_Command):
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
 		elif index == 5:
 			# respond to 'passphrase'
-			child.logfile = None
+			if not LogDestination == "No":
+				child.logfile = None
 			child.sendline (PassWord)
-			child.logfile = fout
+			if not LogDestination == "No":
+				child.logfile = fout
 		elif index == 6:
 			# respond to pexpect.EOF
-			print(child.before)
+			# print(child.before)
 			return child
 		elif index == 7:
 			# respond to 'dataset does not exist'
@@ -568,9 +605,7 @@ def main():
 			logger.error('This is the SynCoid Exit status   :   %i', child.exitstatus)
 			logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
 			logger.error('')
-			logger.error('----------')
-			logger.error('')
-			MailTo(child.exitstatus, child.exitstatus)
+			MailTo("", child.exitstatus)
 
 	logger.info('')
 	logger.info('----------')
@@ -581,25 +616,29 @@ def main():
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
-
-	with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
-		lines_of_text = [
-			"",
-			"----------",
-			"",
-			"The Script ended succesfully",
-			"",
-			"If there is an option for it, it will send a succesfull completed mail",
-			"",
-			"----------",
-			"",
-			# Add more lines as needed
-		]
-
-		for line in lines_of_text:
-			fout.write(line + "\n")
 	
-	MailTo("0","")
+	if not LogDestination == "No":
+		with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
+			lines_of_text = [
+				"",
+				"----------",
+				"",
+				"The Script ended succesfully",
+				"",
+				"If there is an option for it, it will send a succesfull completed mail",
+				"",
+				"----------",
+				"",
+				# Add more lines as needed
+			]
+
+			for line in lines_of_text:
+				fout.write(line + "\n")
+	
+	# Send succesfull mail
+	MailTo(0,"")
+
+	# Decide if there is a shutdown action for the system on succesfull comletion
 	SystemAction()
 
 # This is the if statement that starts main() and the syncing
