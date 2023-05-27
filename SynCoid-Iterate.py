@@ -6,7 +6,7 @@ from asyncio.log import logger
 
 # Import variables from a .conf file
 import configparser
-from distutils.log import error, info
+#from distutils.log import error, info
 
 # This is for exit codes
 import sys
@@ -24,25 +24,58 @@ import logging
 import datetime
 
 # This is to check if the file error file is empty or not
+# And for the Mail option, if choosen
 import os
 
 #  if there is an unexpected error in the program, traceback.print_exc() will work
 import traceback
 
-# This is needed for the pexpext loop
-import time
+# This code is for using popen to send a mail with postfix
+import subprocess
 
 # This is for the send mail function
 # In case one needs to be notified of errors
 def MailTo(Exit_Code, SynCoidFail):
 	if not MailOption == 'No':
-		logger.info('')
-		logger.info('Mail option is on')
+		if LogDestination.endswith('/'):
+			LogDestinationNoSlash = LogDestination[:-1]
 
-		# check if size of file is 0
+		# Define recipient, subject, and message body
+		recipient = (config.get('SynCoid Config', 'Mail'))
+				
 		if os.stat(LogDestination + "SynCoidIterate-" + time_now + ".err").st_size == 0:
 			logger.info('')
 			logger.info('Error log is empty')
+
+			subject = "Succesfull Syncoid-Iterate.py run - Attaching logs to confirm"
+			attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".log"
+			attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
+
+			# Build the mail command with attachments
+			attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
+			mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
+
+			# Open the attachment file and execute the mail command using subprocess
+			with open(attachment_file, "rb") as f:
+				p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+				stdout, stderr = p.communicate(f.read())
+
+			# Print any error messages
+			if stderr:
+				logger.error('----------')
+				logger.error('')
+				logger.error('There was an error sending the mail')
+				logger.error('This is what popen said')
+				logger.error('')
+				logger.error(stderr.decode())
+				logger.error('')
+			elif stdout:
+				logger.info('----------')
+				logger.info('')
+				logger.info('Mail was send succesfully')
+				logger.info('')
+				logger.info(stdout.decode())
+				logger.info('----------')
 		else:
 			logger.error('')
 			logger.error('Error log is not empty')
@@ -55,10 +88,84 @@ def MailTo(Exit_Code, SynCoidFail):
 				logger.error('')
 				logger.error('Plz read in the logs what might have gone wrong')
 				logger.error('')
+				
+				subject = "There was an error running Syncoid-Iterate.py - this was a Syncoid error - Attaching error logs to confirm"
+				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
+				attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+
+				# Build the mail command with attachments
+				attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
+				mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
+
+				# Open the attachment file and execute the mail command using subprocess
+				with open(attachment_file, "rb") as f:
+					p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+					stdout, stderr = p.communicate(f.read())
+
+				# Print any error messages
+				if stderr:
+					logger.error('----------')
+					logger.error('')
+					logger.error('There was an error sending the mail')
+					logger.error('This is what popen said')
+					logger.error('')
+					logger.error(stderr.decode())
+					logger.error('')
+				elif stdout:
+					logger.info('----------')
+					logger.info('')
+					logger.info('Mail was send succesfully')
+					logger.info('')
+					logger.info(stdout.decode())
+					logger.info('----------')
+
 				sys.exit(SynCoidFail)
 			else:
+				logger.error('This was a another type of error')
+				logger.error('')
+				logger.error('The exit code from SynCoid-Iterate-py was was : %i', Exit_Code)
+				logger.error('')
+				logger.error('Plz read in the logs what might have gone wrong')
+				logger.error('')
+				
+				subject = "There was an error running Syncoid-Iterate.py run - this was an unknown error - Attaching error logs to confirm"
+				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
+				attachment_files = [f"{LogDestinationNoSlash}/SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+
+				# Build the mail command with attachments
+				attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
+				mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
+				logger.error("----")
+				logger.error("")
+				logger.error("this is the mail command being used")
+				logger.error("")
+				logger.error(mail_command)
+				logger.error("")
+				logger.error("----")
+				
+				# Open the attachment file and execute the mail command using subprocess
+				with open(attachment_file, "rb") as f:
+					p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+					stdout, stderr = p.communicate(f.read())
+
+				# Print any error messages
+				if stderr:
+					logger.error('----------')
+					logger.error('')
+					logger.error('There was an error sending the mail')
+					logger.error('This is what popen said')
+					logger.error('')
+					logger.error(stderr.decode())
+					logger.error('')
+				elif stdout:
+					logger.info('----------')
+					logger.info('')
+					logger.info('Mail was send succesfully')
+					logger.info('')
+					logger.info(stdout.decode())
+					logger.info('----------')
+
 				sys.exit(Exit_Code)
-			#mail -s 'ERROR using syncoid in some way' "${mail}" < "$LogDestination""${error}"
 
 
 # In case something is wrong with the List's
@@ -91,7 +198,7 @@ config = configparser.RawConfigParser()
 config.read(args.conf)
 
 # This is to get the mail or "No" option for mail
-MailOption=(config.get('SynCoid Config', 'Mail'))
+MailOption = (config.get('SynCoid Config', 'Mail'))
 
 # This is for creating the Date format for the Log Files
 DateTime = config.get('SynCoid Config', 'DateTime')
@@ -99,7 +206,6 @@ time_now  = datetime.datetime.now().strftime(DateTime)
 
 # This is for the logfile creation
 LogDestination=config.get('SynCoid Config', 'LogDestination')
-#logging.basicConfig(filename=LogDestination + "SynCoidIterate-" + time_now + ".log", format="%(asctime)s %(levelname)s: %(message)s", filemode="a", encoding='utf-8', level=logging.DEBUG)
 
 # This logger function will log everything including errors to ".log" and only errors to ".err"
 # It is called with logger.(info/error)
@@ -258,7 +364,6 @@ def die(child, errstr, error_code):
 	logger.error('')
 	logger.error(errstr)
 	logger.error('')
-	#logger.error('{0}'.format(child.before) + '{0}'.format(child.after))
 	logger.error(child.before)
 	logger.error('')
 	logger.error('This is the warning/error   :   ' + child.after + child.buffer)
@@ -277,10 +382,14 @@ def die(child, errstr, error_code):
 # But i am in doubt it will catch all errors
 
 ISREPEATED = False
+CONTINUENODESTROYSNAP= False
 
 def ssh_command(SynCoid_Command):
 
 	global ISREPEATED
+	global CONTINUENODESTROYSNAP
+
+	CONTINUENODESTROYSNAP = False
 
 	logger.info('----')
 
@@ -291,32 +400,36 @@ def ssh_command(SynCoid_Command):
 	child.logfile = fout
 
 	# set a counter for the number of times a pattern has been executed
-	pattern_count = {}
-	pattern_count.clear()
-
-	# set a maximum limit for the number of times a pattern can be executed
-	max_pattern_executions = 3
+	#pattern_count = {}
+	#pattern_count.clear()
 
 	# set up a list of patterns to match
 	patterns = [
 	    'Are you sure you want to continue connecting',
-	    'WARN',
+	    'could not find any snapshots to destroy; check snapshot names.',
 	    'Permission denied',
 	    'Connection timed out',
 	    'Connection refused',
 	    'passphrase',
 		pexpect.EOF,
 		'dataset does not exist',
+		'WARN',
 	]
+
+	# MAc times a pattern must repeat
+	max_pattern_executions = 5
+	# increment the pattern count for the matched pattern to zero before loop begins
+	pattern_count = {i: 0 for i in range(len(patterns))}
+
+	# increment the pattern count for the matched pattern
+	# pattern_count[index] = pattern_count.get(index, 0) + 1
 
 	while True:
 		index = child.expect(patterns)
-
-		# increment the pattern count for the matched pattern
-		pattern_count[index] = pattern_count.get(index, 0) + 1
+		pattern_count[index] += 1
 
 		# check if the pattern has been executed more than the maximum allowed number of times
-		if pattern_count.get(index, 0) > max_pattern_executions:
+		if pattern_count[index] > max_pattern_executions:
 			logger.error('')
 			logger.error(f"Pattern '{patterns[index]}' has been executed more than {max_pattern_executions} times.")
 			logger.error('')
@@ -329,8 +442,16 @@ def ssh_command(SynCoid_Command):
 			# respond to 'Are you sure you want to continue connecting'
 			child.sendline ('yes')
 		elif index == 1:
-			# respond to 'WARN'
-			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
+			logger.info('')
+			logger.info('Syncoid wanted to delete a syncoid created snapshot on Source that is no longer available')
+			logger.info('')
+			logger.info('Going the continue the script,')
+			logger.info('since this a normal error when having multiple host/server sharing the same datasets')
+			logger.info('')
+			logger.info('----')
+			logger.info('')
+			CONTINUENODESTROYSNAP = True
+			return child
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
@@ -342,7 +463,9 @@ def ssh_command(SynCoid_Command):
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
 		elif index == 5:
 			# respond to 'passphrase'
+			child.logfile = None
 			child.sendline (PassWord)
+			child.logfile = fout
 		elif index == 6:
 			# respond to pexpect.EOF
 			print(child.before)
@@ -350,6 +473,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 7:
 			# respond to 'dataset does not exist'
 			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
+		elif index == 8:
+			# respond to 'WARN'
+			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
 
 	return child
 
@@ -357,6 +483,7 @@ def ssh_command(SynCoid_Command):
 # It is called after everything else have been imported/prepared
 def main():
 	global ISREPEATED
+	global CONTINUENODESTROYSNAP
 
 	for (h, i) in zip(SourceLines, DestLines):
 
@@ -372,7 +499,7 @@ def main():
 		if ISREPEATED == True:
 			die(child, 'ERROR: The script is repeating itself', "9")
 
-		if not child.exitstatus == 0:
+		if ((not child.exitstatus == 0) and (CONTINUENODESTROYSNAP == False)):
 			logger.error('')
 			logger.error('This is the SynCoid Exit status   :   %i', child.exitstatus)
 			logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
@@ -390,6 +517,7 @@ def main():
 	logger.info('')
 	logger.info('----')
 	logger.info('')
+	MailTo("0","")
 
 # This is the if statement that starts main() and the syncing
 # It has a bit of error checking and should be able to send it by mail
