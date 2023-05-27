@@ -62,9 +62,17 @@ def MailTo(Exit_Code, SynCoidFail):
 			with open(attachment_file, "rb") as f:
 				p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
 				stdout, stderr = p.communicate(f.read())
+				exit_code = p.returncode
 
 			# Print any error messages
-			if stderr:
+			if exit_code == 0:
+				logger.info('')
+				logger.info('----------')
+				logger.info('')
+				logger.info('Mail was send succesfully')
+				logger.info('')
+				logger.info(stdout.decode())
+			else:
 				logger.error('')
 				logger.error('----------')
 				logger.error('')
@@ -74,14 +82,10 @@ def MailTo(Exit_Code, SynCoidFail):
 				logger.error(stderr.decode())
 				logger.error('')
 				logger.error('----------')
-			elif stdout:
-				logger.info('')
-				logger.info('----------')
-				logger.info('')
-				logger.info('Mail was send succesfully')
-				logger.info('')
-				logger.info(stdout.decode())
+				
 		else:
+			logger.error('')
+			logger.error('----------')
 			logger.error('')
 			logger.error('Error log is not empty')
 			logger.error('Attempting to send mail')
@@ -112,7 +116,15 @@ def MailTo(Exit_Code, SynCoidFail):
 					stdout, stderr = p.communicate(f.read())
 
 				# Print any error messages
-				if stderr:
+				if exit_code == 0:
+					logger.info('')
+					logger.info('----------')
+					logger.info('')
+					logger.info('Mail was send succesfully')
+					logger.info('')
+					logger.info(stdout.decode())
+				else:
+					logger.error('')
 					logger.error('----------')
 					logger.error('')
 					logger.error('There was an error sending the mail')
@@ -120,13 +132,7 @@ def MailTo(Exit_Code, SynCoidFail):
 					logger.error('')
 					logger.error(stderr.decode())
 					logger.error('')
-				elif stdout:
-					logger.info('')
-					logger.info('----------')
-					logger.info('')
-					logger.info('Mail was send succesfully')
-					logger.info('')
-					logger.info(stdout.decode())
+					logger.error('----------')
 
 				sys.exit(SynCoidFail)
 			else:
@@ -144,13 +150,13 @@ def MailTo(Exit_Code, SynCoidFail):
 				# Build the mail command with attachments
 				attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
 				mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{attachment_file}'"
-				logger.error("----")
+				logger.error("----------")
 				logger.error("")
 				logger.error("this is the mail command being used")
 				logger.error("")
 				logger.error(mail_command)
 				logger.error("")
-				logger.error("----")
+				logger.error("----------")
 				
 				# Open the attachment file and execute the mail command using subprocess
 				with open(attachment_file, "rb") as f:
@@ -158,7 +164,15 @@ def MailTo(Exit_Code, SynCoidFail):
 					stdout, stderr = p.communicate(f.read())
 
 				# Print any error messages
-				if stderr:
+				if exit_code == 0:
+					logger.info('')
+					logger.info('----------')
+					logger.info('')
+					logger.info('Mail was send succesfully')
+					logger.info('')
+					logger.info(stdout.decode())
+				else:
+					logger.error('')
 					logger.error('----------')
 					logger.error('')
 					logger.error('There was an error sending the mail')
@@ -166,13 +180,7 @@ def MailTo(Exit_Code, SynCoidFail):
 					logger.error('')
 					logger.error(stderr.decode())
 					logger.error('')
-				elif stdout:
-					logger.info('----------')
-					logger.info('')
-					logger.info('Mail was send succesfully')
-					logger.info('')
-					logger.info(stdout.decode())
-					logger.info('----------')
+					logger.error('----------')
 
 				sys.exit(Exit_Code)
 
@@ -443,9 +451,10 @@ def ssh_command(SynCoid_Command):
 
 	CONTINUENODESTROYSNAP = False
 
-	logger.info('----')
-
 	# spawn the child process
+	logger.info('')
+	logger.info('----------')
+	logger.info('')
 	child = pexpect.spawn(SynCoid_Command, timeout=None, encoding='utf-8')
 
 	fout = open(LogDestination + 'SynCoidIterate-' + time_now + ".out",'a')
@@ -500,7 +509,7 @@ def ssh_command(SynCoid_Command):
 			logger.info('Going the continue the script,')
 			logger.info('since this a normal error when having multiple host/server sharing the same datasets')
 			logger.info('')
-			logger.info('----')
+			logger.info('----------')
 			logger.info('')
 			CONTINUENODESTROYSNAP = True
 			return child
@@ -546,9 +555,6 @@ def main():
 		logger.info('----------')
 		logger.info('')
 		logger.info('Ececuting the altered SynCoid Command    :   %s', SyncoidExecute)
-		logger.info('')
-		logger.info('----------')
-		logger.info('')
 		
 		child = ssh_command(SyncoidExecute)
 		
@@ -562,7 +568,7 @@ def main():
 			logger.error('This is the SynCoid Exit status   :   %i', child.exitstatus)
 			logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
 			logger.error('')
-			logger.error('----')
+			logger.error('----------')
 			logger.error('')
 			MailTo(child.exitstatus, child.exitstatus)
 
@@ -611,5 +617,3 @@ if __name__ == '__main__':
 		logger.error('')
 		MailTo(2,"")
 		sys.exit(2)
-
-#MailTo(100)
