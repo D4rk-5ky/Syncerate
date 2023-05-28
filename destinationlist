@@ -25,6 +25,8 @@ Storage/Docker-SyncoidTest/RustDesk
 Storage/Docker-SyncoidTest/Searx
 Storage/Docker-SyncoidTest/SyncThing
 Storage/Docker-SyncoidTest/VaultWarden
+Storage/Docker-SyncoidTest/Video
+Storage/Docker-SyncoidTest/Videos
 Storage/Docker-SyncoidTest/Vikunja
 Storage/Docker-SyncoidTest/WallaBag
 Storage/Docker-SyncoidTest/WatchTower

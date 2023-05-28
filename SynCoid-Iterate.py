@@ -52,6 +52,8 @@ def send_mail(subject, body, recipient, attachment_files=None):
 
 # This is for the send mail function
 # In case one needs to be notified of errors
+#
+# FIx and make sure to make it possible to send error message even if .out file is not created yet
 def MailTo(Exit_Code, SynCoidFail):
 	if not MailOption == 'No':
 		
@@ -83,12 +85,14 @@ def MailTo(Exit_Code, SynCoidFail):
 				WasMailSent(0, "")
 			else:
 				WasMailSent(mail_exit_code, stderr_output)
-				
+
 		elif not SynCoidFail == "":
-				
-			logger.info("")
-			logger.info("Checking if SynCoidFail not empty string is being executed")
-			logger.info("")
+
+			logger.error('')
+			logger.error('This was  a Syncoid command fail')
+			logger.error('')
+			logger.error('Check the logs to see what could be the problem')
+			logger.error('')
 			
 			if LogDestination != "No":
 
@@ -97,7 +101,12 @@ def MailTo(Exit_Code, SynCoidFail):
 
 				# Define message body and attached files
 				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+				
+				# Check if there is an out file, to see if his was before or after Syncoid was run
+				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
+					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+				else:
+					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
 
 				# Open the attachment file and execute the mail command using subprocess
 				with open(attachment_file, "rb") as f:
@@ -118,10 +127,6 @@ def MailTo(Exit_Code, SynCoidFail):
 
 		elif not Exit_Code == 0:
 
-			logger.info("")
-			logger.info("Checking if ExitCode is not equal to 0 not empty string is being executed")
-			logger.info("")
-
 			if LogDestination != "No":
 
 				# Define subject
@@ -129,7 +134,12 @@ def MailTo(Exit_Code, SynCoidFail):
 
 				# Define message body and attached files
 				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+
+				# Check if there is an out file, to see if his was before or after Syncoid was run
+				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
+					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+				else:
+					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
 
 				# Open the attachment file and execute the mail command using subprocess
 				with open(attachment_file, "rb") as f:
@@ -202,12 +212,14 @@ def missmatchinglists(Lenght, Names):
 	if Lenght == True:
 		logger.error('')
 		logger.error('----------')
+		logger.error('')
 		logger.error('The number of items in each list does not match')
 		logger.error('Check the terminal or .err log')
 		logger.error('exiting - error code 1')
 	if Names == True:
 		logger.error('')
 		logger.error('----------')
+		logger.error('')
 		logger.error('There are datasets on source and destination which ends doesnt match up')
 		logger.error('Check the terminal or .err log')
 		logger.error('exiting - error code 1')
@@ -388,7 +400,7 @@ if PassWordOption == 'Ask':
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
-	logger.info('The Password has been manualy added')
+	logger.info('The Password has been manualy added, not written to log')
 	logger.info('')
 	print('')
 	print('This is the Password you have given  :   ', PassWord)
@@ -502,9 +514,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
-		#elif index == 3:
+		elif index == 3:
 			# respond to 'Connection timed out'
-			#die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
+			die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
 		elif index == 4:
 			# respond to 'Connection refused'
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
@@ -517,7 +529,6 @@ def ssh_command(SynCoid_Command):
 				child.logfile = fout
 		elif index == 6:
 			# respond to pexpect.EOF
-			# print(child.before)
 			return child
 		elif index == 7:
 			# respond to 'dataset does not exist'

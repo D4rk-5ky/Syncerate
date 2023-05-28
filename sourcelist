@@ -25,6 +25,8 @@ Storage/RustDesk
 Storage/Searx
 Storage/SyncThing
 Storage/VaultWarden
+Storage/Video
+Storage/Videos
 Storage/Vikunja
 Storage/WallaBag
 Storage/WatchTower
