@@ -89,7 +89,7 @@ def MailTo(Exit_Code, SynCoidFail):
 		elif not SynCoidFail == "":
 
 			logger.error('')
-			logger.error('This was  a Syncoid command fail')
+			logger.error('This was a crash related to Syncoid command')
 			logger.error('')
 			logger.error('Check the logs to see what could be the problem')
 			logger.error('')
@@ -126,6 +126,12 @@ def MailTo(Exit_Code, SynCoidFail):
 			sys.exit(SynCoidFail)
 
 		elif not Exit_Code == 0:
+
+			logger.error('')
+			logger.error('This was a crash related to the SynCoid-Iterate.py script')
+			logger.error('')
+			logger.error('Check the logs to see what could be the problem')
+			logger.error('')
 
 			if LogDestination != "No":
 
@@ -459,6 +465,17 @@ def ssh_command(SynCoid_Command):
 	CONTINUENODESTROYSNAP = False
 
 	# spawn the child process
+	if not LogDestination == "No":
+		with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
+			lines_of_text = [
+				"",
+				"----------",
+				"",
+			]
+
+			for line in lines_of_text:
+				fout.write(line + "\n")
+	
 	child = pexpect.spawn(SynCoid_Command, timeout=None, encoding='utf-8')
 
 	if not LogDestination == "No":
@@ -546,6 +563,20 @@ def main():
 	global CONTINUENODESTROYSNAP
 
 	for (h, i) in zip(SourceLines, DestLines):
+		
+		if not h.startswith('"') or not h.endswith('"'):
+			# Add quotes where they are missing
+			if not h.startswith('"'):
+				h = '"' + h
+			if not h.endswith('"'):
+				h += '"'
+
+		if not i.startswith('"') or not i.endswith('"'):
+			# Add quotes where they are missing
+			if not i.startswith('"'):
+				i = '"' + i
+			if not i.endswith('"'):
+				i += '"'
 
 		SyncoidExecute=SyncoidCommand.replace("SourceDataSet", h)
 		SyncoidExecute=SyncoidExecute.replace("DestDataSet", i)
@@ -568,8 +599,6 @@ def main():
 			logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
 			logger.error('')
 			ExitStatusAsInteger = int(child.exitstatus)
-			if isinstance(child.exitstatus, int):
-				logger.error('This is an integer')
 			MailTo("", ExitStatusAsInteger)
 
 	logger.info('')
