@@ -38,17 +38,17 @@ import time
 
 # This is is for the send mail part
 def send_mail(subject, body, recipient, attachment_files=None):
+	mail_command = ['mail', '-s', subject, recipient]
+
 	if attachment_files:
-		attachment_args = " ".join([f"--attach '{file}'" for file in attachment_files])
-		mail_command = f"mail -s '{subject}' {recipient} {attachment_args} < '{body}'"
-	else:
-		mail_command = f"echo '{body}' | mail -s '{subject}' {recipient}"
+		for file in attachment_files:
+			mail_command.extend(['--attach', file])
 
-	p = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-	stdout, stderr_output = p.communicate()
-	mail_exit_code = p.returncode
+	process = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+	_, stderr_output = process.communicate(input=body.encode())
 
-	return mail_exit_code, stderr_output
+	mail_exit_code = process.returncode
+	return mail_exit_code, stderr_output.decode().strip()
 
 # This is for the send mail function
 # In case one needs to be notified of errors
@@ -95,23 +95,28 @@ def MailTo(Exit_Code, SynCoidFail):
 			logger.error('')
 			
 			if LogDestination != "No":
-
 				# Define subject
 				subject = "Error running Syncoid-Iterate.py - Syncoid error occurred (Attaching logs)"
 
 				# Define message body and attached files
-				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
-				
-				# Check if there is an out file, to see if his was before or after Syncoid was run
-				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
-					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
-				else:
-					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
 
-				# Open the attachment file and execute the mail command using subprocess
-				with open(attachment_file, "rb") as f:
-					mail_exit_code, stderr_output = send_mail(subject, attachment_file, recipient, attachment_files)
+				body = ""
+
+				# Read contents of .err file
+				with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+					error_contents = error_file.read()
+					body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
+
+				# Check if .out file exists and read its contents
+				out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+				if os.path.isfile(out_file_path):
+					with open(out_file_path, 'r') as out_file:
+						out_contents = out_file.read()
+						body += "----------\n\n.out file\n\n----------\n\n" + out_contents
 			
+				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+
 			else:
 
 				# Define subject and message body
@@ -139,17 +144,20 @@ def MailTo(Exit_Code, SynCoidFail):
 				subject = "Error running Syncoid-Iterate.py - Unknown error occurred (Attaching logs)"
 
 				# Define message body and attached files
-				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".err"
-
 				# Check if there is an out file, to see if his was before or after Syncoid was run
 				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
 					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+
+					with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as file1:
+						error_contents = file1.read()
+					with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'r') as file2:
+						out_contents = file2.read()
+
+					body = "\n" + "----------" + "\n" + ".err file" + "\n" + "----------" + "\n" + error_contents + "\n" + "----------" + "\n" +  "\n" + ".out file" + "\n" + out_contents
 				else:
 					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
 
-				# Open the attachment file and execute the mail command using subprocess
-				with open(attachment_file, "rb") as f:
-					mail_exit_code, stderr_output = send_mail(subject, attachment_file, recipient, attachment_files)
+					mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
 			
 			else:
 
@@ -531,9 +539,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
-		elif index == 3:
+		#elif index == 3:
 			# respond to 'Connection timed out'
-			die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
+			#die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
 		elif index == 4:
 			# respond to 'Connection refused'
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
@@ -550,9 +558,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 7:
 			# respond to 'dataset does not exist'
 			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
-		elif index == 8:
+		#lif index == 8:
 			# respond to 'WARN'
-			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
+			sdie(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
 
 	return child
 
