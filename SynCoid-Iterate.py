@@ -68,13 +68,14 @@ def MailTo(Exit_Code, SynCoidFail):
 				subject = "Successful Syncoid-Iterate.py run - No errors found (Attaching logs)"
 
 				# Define message body and attached files
-				attachment_file = LogDestination + "SynCoidIterate-" + time_now + ".log"
 				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
-
+				
 				# Open the attachment file and execute the mail command using subprocess
-				with open(attachment_file, "rb") as f:
-					mail_exit_code, stderr_output = send_mail(subject, attachment_file, recipient, attachment_files)
-			
+				with open(LogDestination + 'SynCoidIterate-' + time_now + ".log", 'r') as log_file:
+					log_contents = log_file.read()
+					body = "----------\n\n.log file\n\n----------\n\n" + log_contents + "\n\n----------"
+					mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+					
 			else:
 
 				# Define subject and message body
@@ -99,8 +100,12 @@ def MailTo(Exit_Code, SynCoidFail):
 				subject = "Error running Syncoid-Iterate.py - Syncoid error occurred (Attaching logs)"
 
 				# Define message body and attached files
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
+					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+				else:
+					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
 
+				# Start with an empty body
 				body = ""
 
 				# Read contents of .err file
@@ -113,14 +118,17 @@ def MailTo(Exit_Code, SynCoidFail):
 				if os.path.isfile(out_file_path):
 					with open(out_file_path, 'r') as out_file:
 						out_contents = out_file.read()
-						body += "----------\n\n.out file\n\n----------\n\n" + out_contents
-			
+						body += "----------\n\n.out file\n" + out_contents
+
+				# Send the Mail
 				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
 
 			else:
 
 				# Define subject and message body
 				subject_and_body = "Error running Syncoid-Iterate.py - Syncoid error occurred (Logs Disabled)"
+				
+				# Send the Mail
 				mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
 			
 			if mail_exit_code == 0:
@@ -139,30 +147,39 @@ def MailTo(Exit_Code, SynCoidFail):
 			logger.error('')
 
 			if LogDestination != "No":
-
 				# Define subject
-				subject = "Error running Syncoid-Iterate.py - Unknown error occurred (Attaching logs)"
+				subject = "Error running Syncoid-Iterate.py - This was a script error (Attaching logs)"
 
 				# Define message body and attached files
-				# Check if there is an out file, to see if his was before or after Syncoid was run
 				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
 					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
-
-					with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as file1:
-						error_contents = file1.read()
-					with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'r') as file2:
-						out_contents = file2.read()
-
-					body = "\n" + "----------" + "\n" + ".err file" + "\n" + "----------" + "\n" + error_contents + "\n" + "----------" + "\n" +  "\n" + ".out file" + "\n" + out_contents
 				else:
 					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+				
+				# Start with an empty body
+				body = ""
 
-					mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
-			
+				# Read contents of .err file
+				with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+					error_contents = error_file.read()
+					body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
+
+				# Check if .out file exists and read its contents
+				out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+				if os.path.isfile(out_file_path):
+					with open(out_file_path, 'r') as out_file:
+						out_contents = out_file.read()
+						body += "----------\n\n.out file\n" + out_contents
+
+				# Send the Mail
+				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+
 			else:
 
 				# Define subject and message body
-				subject_and_body = "Error running Syncoid-Iterate.py - Unknown error occurred (Logs Disabled)"
+				subject_and_body = "Error running Syncoid-Iterate.py - This was a script error (Logs Disabled)"
+				
+				# Send the Mail
 				mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
 
 			if mail_exit_code == 0:
@@ -539,9 +556,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
-		#elif index == 3:
+		elif index == 3:
 			# respond to 'Connection timed out'
-			#die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
+			die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
 		elif index == 4:
 			# respond to 'Connection refused'
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
