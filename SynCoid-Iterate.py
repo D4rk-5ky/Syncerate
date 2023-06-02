@@ -458,22 +458,32 @@ SyncoidCommand=config.get('SynCoid Config', 'SyncoidCommand')
 
 # This is in case the thee pexpect/syncoid command fails
 # I am not sure it will catch all errors
-def die(child, errstr, error_code):
-	logger.error('')
-	logger.error(errstr)
-	logger.error('')
-	logger.error(child.before)
-	logger.error('')
-	logger.error('This is the warning/error   :   ' + child.after + child.buffer)
-	logger.error('')
-	logger.error('This is the exit code : ' + error_code)
-	logger.error('')
-	child.terminate()
-	# I had problems that the exit code given to "die" function was "str", i couldten send "int" to "die" function instead but i could conver "str" to "int"
-	# This was understood from https://medium.com/@anupkumarray/working-with-exit-codes-between-python-shell-scripts-177931204291
-	integer_number = int(error_code)
-	MailTo(integer_number, "")
-	sys.exit(integer_number)
+def die(child=None, errstr=None, error_code=None, SynCoidFail=None):
+
+	if not SynCoidFail:
+		logger.error('')
+		logger.error(errstr)
+		logger.error('')
+		logger.error(child.before)
+		logger.error('')
+		logger.error('This is the warning/error   :   ' + child.after + child.buffer)
+		logger.error('')
+		logger.error('This is the exit code : ' + error_code)
+		logger.error('')
+		child.terminate()
+
+		# I had problems that the exit code given to "die" function was "str", i couldten send "int" to "die" function instead but i could conver "str" to "int"
+		# This was understood from https://medium.com/@anupkumarray/working-with-exit-codes-between-python-shell-scripts-177931204291
+		integer_number = int(error_code)
+
+		# Send a mail related to script error
+		MailTo(error_code, "")
+
+		# Exit the script with the SynCoid exit status
+		sys.exit(integer_number)
+	elif SynCoidFail:
+		MailTo("", SynCoidFail)
+		
 
 # This is the function that executes the altered syncoid command
 # It allso have a little error checking.
@@ -556,9 +566,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
-		elif index == 3:
+		#elif index == 3:
 			# respond to 'Connection timed out'
-			die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
+			#die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
 		elif index == 4:
 			# respond to 'Connection refused'
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
@@ -575,9 +585,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 7:
 			# respond to 'dataset does not exist'
 			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
-		#lif index == 8:
+		#elif index == 8:
 			# respond to 'WARN'
-			sdie(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
+			#die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
 
 	return child
 
@@ -624,7 +634,7 @@ def main():
 			logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
 			logger.error('')
 			ExitStatusAsInteger = int(child.exitstatus)
-			MailTo("", ExitStatusAsInteger)
+			die(None, None, None, ExitStatusAsInteger)
 
 	logger.info('')
 	logger.info('----------')
