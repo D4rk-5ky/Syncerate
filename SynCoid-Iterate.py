@@ -235,6 +235,16 @@ def SystemAction():
 		logger.info('')
 		logger.info('----------')
 
+def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
+	if MQTT:
+		logger.info('Sending desired MQTT message')
+
+	if SendMail:
+		MailTo(0,"")
+
+	if PerformSystemAction:
+		# Decide if there is a shutdown action for the system on succesfull comletion
+		SystemAction()
 	
 # In case something is wrong with the List's
 # number of items or end names in order
@@ -566,9 +576,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
-		#elif index == 3:
+		elif index == 3:
 			# respond to 'Connection timed out'
-			#die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
+			die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
 		elif index == 4:
 			# respond to 'Connection refused'
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
@@ -585,9 +595,9 @@ def ssh_command(SynCoid_Command):
 		elif index == 7:
 			# respond to 'dataset does not exist'
 			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
-		#elif index == 8:
+		elif index == 8:
 			# respond to 'WARN'
-			#die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
+			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
 
 	return child
 
@@ -661,11 +671,7 @@ def main():
 			for line in lines_of_text:
 				fout.write(line + "\n")
 	
-	# Send succesfull mail
-	MailTo(0,"")
-
-	# Decide if there is a shutdown action for the system on succesfull comletion
-	SystemAction()
+	succesfull_run()
 
 # This is the if statement that starts main() and the syncing
 # It has a bit of error checking and should be able to send it by mail
