@@ -55,139 +55,142 @@ def send_mail(subject, body, recipient, attachment_files=None):
 #
 # FIx and make sure to make it possible to send error message even if .out file is not created yet
 def MailTo(Exit_Code, SynCoidFail):
-	if not MailOption == 'No':
+	# Define recipient
+	recipient = (config.get('SynCoid Config', 'Mail'))
+
+	logger.info('')
+	logger.info('----------')
+	logger.info('')
+	logger.info('There is an option to send a mail')
+
+	if Exit_Code == 0:
+
+		if LogDestination != "No":
+
+			# Define subject
+			subject = "Successful Syncoid-Iterate.py run - No errors found (Attaching logs)"
+
+			# Define message body and attached files
+			attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
+			
+			# Open the attachment file and execute the mail command using subprocess
+			with open(LogDestination + 'SynCoidIterate-' + time_now + ".log", 'r') as log_file:
+				log_contents = log_file.read()
+				body = "----------\n\n.log file\n\n----------\n\n" + log_contents + "\n\n----------"
+				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+				
+		else:
+
+			# Define subject and message body
+			subject_and_body = "Successful Syncoid-Iterate.py run - No errors found (Logs Disabled)"
+			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+
+		if mail_exit_code == 0:
+			WasMailSent(0, "")
+		else:
+			WasMailSent(mail_exit_code, stderr_output)
+
+	elif not SynCoidFail == "":
+
+		logger.error('')
+		logger.error('This was a crash related to Syncoid command')
+		logger.error('')
+		logger.error('Check the logs to see what could be the problem')
+		logger.error('')
 		
-		# Define recipient
-		recipient = (config.get('SynCoid Config', 'Mail'))
+		if LogDestination != "No":
+			# Define subject
+			subject = "Error running Syncoid-Iterate.py - Syncoid error occurred (Attaching logs)"
 
-		if Exit_Code == 0:
-
-			if LogDestination != "No":
-
-				# Define subject
-				subject = "Successful Syncoid-Iterate.py run - No errors found (Attaching logs)"
-
-				# Define message body and attached files
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
-				
-				# Open the attachment file and execute the mail command using subprocess
-				with open(LogDestination + 'SynCoidIterate-' + time_now + ".log", 'r') as log_file:
-					log_contents = log_file.read()
-					body = "----------\n\n.log file\n\n----------\n\n" + log_contents + "\n\n----------"
-					mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
-					
+			# Define message body and attached files
+			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
+				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
 			else:
+				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
 
-				# Define subject and message body
-				subject_and_body = "Successful Syncoid-Iterate.py run - No errors found (Logs Disabled)"
-				mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+			# Start with an empty body
+			body = ""
 
-			if mail_exit_code == 0:
-				WasMailSent(0, "")
-			else:
-				WasMailSent(mail_exit_code, stderr_output)
+			# Read contents of .err file
+			with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+				error_contents = error_file.read()
+				body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
 
-		elif not SynCoidFail == "":
+			# Check if .out file exists and read its contents
+			out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+			if os.path.isfile(out_file_path):
+				with open(out_file_path, 'r') as out_file:
+					out_contents = out_file.read()
+					body += "----------\n\n.out file\n" + out_contents
 
-			logger.error('')
-			logger.error('This was a crash related to Syncoid command')
-			logger.error('')
-			logger.error('Check the logs to see what could be the problem')
-			logger.error('')
+			# Send the Mail
+			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+
+		else:
+
+			# Define subject and message body
+			subject_and_body = "Error running Syncoid-Iterate.py - Syncoid error occurred (Logs Disabled)"
 			
-			if LogDestination != "No":
-				# Define subject
-				subject = "Error running Syncoid-Iterate.py - Syncoid error occurred (Attaching logs)"
+			# Send the Mail
+			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+		
+		if mail_exit_code == 0:
+			WasMailSent(0, "")
+		else:
+			WasMailSent(mail_exit_code, stderr_output)
 
-				# Define message body and attached files
-				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
-					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
-				else:
-					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+		sys.exit(SynCoidFail)
 
-				# Start with an empty body
-				body = ""
+	elif not Exit_Code == 0:
 
-				# Read contents of .err file
-				with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
-					error_contents = error_file.read()
-					body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
+		logger.error('')
+		logger.error('This was a crash related to the SynCoid-Iterate.py script')
+		logger.error('')
+		logger.error('Check the logs to see what could be the problem')
+		logger.error('')
 
-				# Check if .out file exists and read its contents
-				out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
-				if os.path.isfile(out_file_path):
-					with open(out_file_path, 'r') as out_file:
-						out_contents = out_file.read()
-						body += "----------\n\n.out file\n" + out_contents
+		if LogDestination != "No":
+			# Define subject
+			subject = "Error running Syncoid-Iterate.py - This was a script error (Attaching logs)"
 
-				# Send the Mail
-				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
-
+			# Define message body and attached files
+			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
+				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
 			else:
-
-				# Define subject and message body
-				subject_and_body = "Error running Syncoid-Iterate.py - Syncoid error occurred (Logs Disabled)"
-				
-				# Send the Mail
-				mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
 			
-			if mail_exit_code == 0:
-				WasMailSent(0, "")
-			else:
-				WasMailSent(mail_exit_code, stderr_output)
+			# Start with an empty body
+			body = ""
 
-			sys.exit(SynCoidFail)
+			# Read contents of .err file
+			with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+				error_contents = error_file.read()
+				body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
 
-		elif not Exit_Code == 0:
+			# Check if .out file exists and read its contents
+			out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+			if os.path.isfile(out_file_path):
+				with open(out_file_path, 'r') as out_file:
+					out_contents = out_file.read()
+					body += "----------\n\n.out file\n" + out_contents
 
-			logger.error('')
-			logger.error('This was a crash related to the SynCoid-Iterate.py script')
-			logger.error('')
-			logger.error('Check the logs to see what could be the problem')
-			logger.error('')
+			# Send the Mail
+			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
 
-			if LogDestination != "No":
-				# Define subject
-				subject = "Error running Syncoid-Iterate.py - This was a script error (Attaching logs)"
+		else:
 
-				# Define message body and attached files
-				if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
-					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
-				else:
-					attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
-				
-				# Start with an empty body
-				body = ""
+			# Define subject and message body
+			subject_and_body = "Error running Syncoid-Iterate.py - This was a script error (Logs Disabled)"
+			
+			# Send the Mail
+			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
 
-				# Read contents of .err file
-				with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
-					error_contents = error_file.read()
-					body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
+		if mail_exit_code == 0:
+			WasMailSent(0, "")
+		else:
+			WasMailSent(mail_exit_code, stderr_output)
 
-				# Check if .out file exists and read its contents
-				out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
-				if os.path.isfile(out_file_path):
-					with open(out_file_path, 'r') as out_file:
-						out_contents = out_file.read()
-						body += "----------\n\n.out file\n" + out_contents
-
-				# Send the Mail
-				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
-
-			else:
-
-				# Define subject and message body
-				subject_and_body = "Error running Syncoid-Iterate.py - This was a script error (Logs Disabled)"
-				
-				# Send the Mail
-				mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
-
-			if mail_exit_code == 0:
-				WasMailSent(0, "")
-			else:
-				WasMailSent(mail_exit_code, stderr_output)
-
-			sys.exit(Exit_Code)
+		sys.exit(Exit_Code)
 
 def WasMailSent(MailExitCode, popenstderr):
 	if MailExitCode == 0:
@@ -207,7 +210,7 @@ def WasMailSent(MailExitCode, popenstderr):
 		logger.error('----------')
 
 def SystemAction():
-	if not SystemOption == "No":
+	if not MailOption == "No":
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
@@ -219,7 +222,7 @@ def SystemAction():
 		logger.info('')
 		logger.info('Gonna sleep for 2 minutes to insure mail is sent')
 		logger.info('')
-		logger.info('Then execute the command')
+		logger.info('Then execute the command	:	' + SystemOption)
 		logger.info('')
 		logger.info('----------')
 
@@ -227,24 +230,40 @@ def SystemAction():
 		time.sleep(120)
 
 		os.system(SystemOption)
-	else:
+
+	elif not SystemOption == "No" and MailOption == "No":
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
-		logger.info('The system was not choosen to shutdown or similar when the script finished')
+		logger.info('The system has an option after the script finishes')
+		logger.info('')
+		logger.info('The options is')
+		logger.info('')
+		logger.info(SystemOption)
+		logger.info('')
+		logger.info('No mail option chosen')
+		logger.info('')
+		logger.info('Gonna execute the command	:	' + SystemOption)
 		logger.info('')
 		logger.info('----------')
+
+		os.system(SystemOption)
 
 def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 	if MQTT:
+		# Decide if there is a MQTT option
+		#if not MQTT_option == "No".
 		logger.info('Sending desired MQTT message')
 
 	if SendMail:
-		MailTo(0,"")
+		# Decide if there is an option to send mail
+		if not MailOption == "No":
+			MailTo(0,"")
 
 	if PerformSystemAction:
 		# Decide if there is a shutdown action for the system on succesfull comletion
-		SystemAction()
+		if not SystemOption == "No":
+			SystemAction()
 	
 # In case something is wrong with the List's
 # number of items or end names in order
@@ -445,20 +464,17 @@ if PassWordOption == 'Ask':
 	logger.info('')
 	print('')
 	print('This is the Password you have given  :   ', PassWord)
-	print('')
 elif PassWordOption == 'No':
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
 	logger.info('No password is in use')
-	logger.info('')
 else:
 	PassWord=PassWordOption
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
 	logger.info('Password is in the config file, not written to log')
-	logger.info('')
 	print('')
 	print('This is the password in the config file  :   ', PassWord)
 	print('')
@@ -650,8 +666,6 @@ def main():
 	logger.info('----------')
 	logger.info('')
 	logger.info('The Script ended succesfully')
-	logger.info('')
-	logger.info('If there is an option for it, it will send a succesfull completed mail')
 	
 	if not LogDestination == "No":
 		with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
@@ -661,8 +675,6 @@ def main():
 				"",
 				"The Script ended succesfully",
 				"",
-				"If there is an option for it, it will send a succesfull completed mail",
-				"",
 				"----------",
 				"",
 				# Add more lines as needed
@@ -671,7 +683,7 @@ def main():
 			for line in lines_of_text:
 				fout.write(line + "\n")
 	
-	succesfull_run()
+	succesfull_run(None, MailOption, SystemOption)
 
 # This is the if statement that starts main() and the syncing
 # It has a bit of error checking and should be able to send it by mail
