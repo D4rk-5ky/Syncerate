@@ -36,6 +36,47 @@ import subprocess
 # This is to make python sleep for a time to make sure mail is sent
 import time
 
+# For sending a message over MQTT
+import paho.mqtt.client as mqtt
+
+def mqtt_connect (client, userdata, flags, rc):
+	global mqtt_topic
+	global mqtt_message
+
+	try:
+	
+		if rc == 0:
+		
+			logger.info('')
+			logger.info('----------')
+			logger.info('')
+			logger.info('Publishing Topic and Message to MQTT')
+
+			# Publish the message after connecting
+			client.publish(mqtt_topic, mqtt_message, qos=1)
+
+			# Disconnect from the MQTT broker
+			client.disconnect()
+		
+		else:
+		
+			logger.error('')
+			logger.error('----------')
+			logger.error('')
+			logger.error('Failed publishing message to MQTT')
+			logger.error('')
+			logger.error('This is the return code %d\n', rc)
+			raise Exception('Failed publishing message to MQTT')
+	
+	except Exception as e:
+		# Handle the exception and capture the error message
+		error_message = str(e)
+		logger.error('')
+		logger.error('----------')
+		logger.error('')
+		logger.error('Error message: ' + error_message)
+		die(None, None, None, True)
+	
 # This is is for the send mail part
 def send_mail(subject, body, recipient, attachment_files=None):
 	mail_command = ['mail', '-s', subject, recipient]
@@ -54,7 +95,7 @@ def send_mail(subject, body, recipient, attachment_files=None):
 # In case one needs to be notified of errors
 #
 # FIx and make sure to make it possible to send error message even if .out file is not created yet
-def MailTo(Exit_Code, SynCoidFail):
+def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 	# Define recipient
 	recipient = (config.get('SynCoid Config', 'Mail'))
 
@@ -85,18 +126,7 @@ def MailTo(Exit_Code, SynCoidFail):
 			subject_and_body = "Successful Syncoid-Iterate.py run - No errors found (Logs Disabled)"
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
 
-		if mail_exit_code == 0:
-			WasMailSent(0, "")
-		else:
-			WasMailSent(mail_exit_code, stderr_output)
-
-	elif not SynCoidFail == "":
-
-		logger.error('')
-		logger.error('This was a crash related to Syncoid command')
-		logger.error('')
-		logger.error('Check the logs to see what could be the problem')
-		logger.error('')
+	elif SynCoidFail:
 		
 		if LogDestination != "No":
 			# Define subject
@@ -133,21 +163,10 @@ def MailTo(Exit_Code, SynCoidFail):
 			
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
-		
-		if mail_exit_code == 0:
-			WasMailSent(0, "")
-		else:
-			WasMailSent(mail_exit_code, stderr_output)
 
 		sys.exit(SynCoidFail)
 
-	elif not Exit_Code == 0:
-
-		logger.error('')
-		logger.error('This was a crash related to the SynCoid-Iterate.py script')
-		logger.error('')
-		logger.error('Check the logs to see what could be the problem')
-		logger.error('')
+	elif not Exit_Code == 0 and not Exit_Code == None:
 
 		if LogDestination != "No":
 			# Define subject
@@ -184,7 +203,45 @@ def MailTo(Exit_Code, SynCoidFail):
 			
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+	
+	elif MQTT_fail:
 
+		if LogDestination != "No":
+			# Define subject
+			subject = "Error sending MQTT message - (Attaching logs)"
+
+			# Define message body and attached files
+			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
+				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+			else:
+				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+			
+			# Start with an empty body
+			body = ""
+
+			# Read contents of .err file
+			with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+				error_contents = error_file.read()
+				body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
+
+			# Check if .out file exists and read its contents
+			out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+			if os.path.isfile(out_file_path):
+				with open(out_file_path, 'r') as out_file:
+					out_contents = out_file.read()
+					body += "----------\n\n.out file\n" + out_contents
+
+			# Send the Mail
+			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+
+		else:
+
+			# Define subject and message body
+			subject_and_body = "Error sending MQTT message - (Logs Disabled)"
+			
+			# Send the Mail
+			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+		
 		if mail_exit_code == 0:
 			WasMailSent(0, "")
 		else:
@@ -250,15 +307,44 @@ def SystemAction():
 		os.system(SystemOption)
 
 def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
-	if MQTT:
-		# Decide if there is a MQTT option
-		#if not MQTT_option == "No".
-		logger.info('Sending desired MQTT message')
+
+	# Decide if there is an MQTT option
+	if MQTT == "Yes":
+		
+		global mqtt_topic
+		global mqtt_message
+
+		# This is for the MQTT server information
+		broker_address = config.get('SynCoid Config', 'broker_address')
+		broker_port = config.get('SynCoid Config', 'broker_port')
+		broker_port = int(broker_port)
+		mqtt_username = config.get('SynCoid Config', 'mqtt_username')
+		mqtt_password = config.get('SynCoid Config', 'mqtt_password')
+		mqtt_topic = config.get('SynCoid Config', 'mqtt_topic')
+		mqtt_message = config.get('SynCoid Config', 'mqtt_message')
+
+		# Create MQTT client instance
+		client = mqtt.Client()
+
+		# Enable logging for MQTT
+		client.enable_logger(logging.getLogger("paho"))
+
+		# Set username and password
+		client.username_pw_set(mqtt_username, mqtt_password)
+
+		# Assign callback function for connection event
+		client.on_connect = mqtt_connect
+
+		# Connect to the broker
+		client.connect(broker_address, broker_port)
+
+		# Start the MQTT network loop
+		client.loop_forever()
 
 	if SendMail:
 		# Decide if there is an option to send mail
 		if not MailOption == "No":
-			MailTo(0,"")
+			MailTo(0)
 
 	if PerformSystemAction:
 		# Decide if there is a shutdown action for the system on succesfull comletion
@@ -303,7 +389,11 @@ config.read(args.conf)
 # This is to get the mail or "No" option for mail
 MailOption = (config.get('SynCoid Config', 'Mail'))
 
+# This is for the command after the script has succesfully run
 SystemOption = (config.get('SynCoid Config', 'SystemAction'))
+
+# This is for the logfile creation
+Use_MQTT = config.get('SynCoid Config', 'Use_MQTT')
 
 # This is for creating the Date format for the Log Files
 DateTime = config.get('SynCoid Config', 'DateTime')
@@ -484,9 +574,13 @@ SyncoidCommand=config.get('SynCoid Config', 'SyncoidCommand')
 
 # This is in case the thee pexpect/syncoid command fails
 # I am not sure it will catch all errors
-def die(child=None, errstr=None, error_code=None, SynCoidFail=None):
+def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=None):
 
-	if not SynCoidFail:
+	if child:
+		logger.error('')
+		logger.error('This was a crash known by the script')
+		logger.error('')
+		logger.error('Check the logs to see what could be the problem')
 		logger.error('')
 		logger.error(errstr)
 		logger.error('')
@@ -503,12 +597,31 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None):
 		integer_number = int(error_code)
 
 		# Send a mail related to script error
-		MailTo(error_code, "")
+		if not MailOption == "No":
+			MailTo(error_code, None)
 
 		# Exit the script with the SynCoid exit status
 		sys.exit(integer_number)
+
 	elif SynCoidFail:
-		MailTo("", SynCoidFail)
+		logger.error('')
+		logger.error('This was an unknown crash')
+		logger.error('')
+		logger.error('Check the logs to see what could be the problem')
+		logger.error('')
+
+		if not MailOption == "No":
+			MailTo(None, SynCoidFail)
+
+	elif MQTT_Fail:
+		logger.error('')
+		logger.error('This was an MQTT error')
+		logger.error('')
+		logger.error('Check the logs to see what could be the problem')
+		logger.error('')
+
+		if not MailOption == "No":
+				MailTo(None, None, True)
 		
 
 # This is the function that executes the altered syncoid command
@@ -683,7 +796,7 @@ def main():
 			for line in lines_of_text:
 				fout.write(line + "\n")
 	
-	succesfull_run(None, MailOption, SystemOption)
+	succesfull_run(Use_MQTT, MailOption, SystemOption)
 
 # This is the if statement that starts main() and the syncing
 # It has a bit of error checking and should be able to send it by mail
