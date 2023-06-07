@@ -53,7 +53,7 @@ def mqtt_connect (client, userdata, flags, rc):
 			logger.info('Publishing Topic and Message to MQTT')
 
 			# Publish the message after connecting
-			client.publish(mqtt_topic, mqtt_message, qos=1)
+			client.publish(mqtt_topic, mqtt_message)
 
 			# Disconnect from the MQTT broker
 			client.disconnect()
@@ -74,8 +74,8 @@ def mqtt_connect (client, userdata, flags, rc):
 		logger.error('')
 		logger.error('----------')
 		logger.error('')
-		logger.error('Error message: ' + error_message)
-		die(None, None, None, True)
+		logger.error('MQTT Error message: ' + error_message)
+		die(None, None, None, None, rc)
 	
 # This is is for the send mail part
 def send_mail(subject, body, recipient, attachment_files=None):
@@ -313,33 +313,56 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 		
 		global mqtt_topic
 		global mqtt_message
-
+		
 		# This is for the MQTT server information
 		broker_address = config.get('SynCoid Config', 'broker_address')
 		broker_port = config.get('SynCoid Config', 'broker_port')
 		broker_port = int(broker_port)
 		mqtt_username = config.get('SynCoid Config', 'mqtt_username')
 		mqtt_password = config.get('SynCoid Config', 'mqtt_password')
-		mqtt_topic = config.get('SynCoid Config', 'mqtt_topic')
-		mqtt_message = config.get('SynCoid Config', 'mqtt_message')
+	
+		if Use_HomeAssistant == "Yes":
+			mqtt_topic = config.get('SynCoid Config', 'HomeAssistant_Available')
+			mqtt_message = "online"
 
-		# Create MQTT client instance
-		client = mqtt.Client()
+			# Create MQTT client instance
+			client = mqtt.Client()
 
-		# Enable logging for MQTT
-		client.enable_logger(logging.getLogger("paho"))
+			# Enable logging for MQTT
+			client.enable_logger(logging.getLogger("paho"))
 
-		# Set username and password
-		client.username_pw_set(mqtt_username, mqtt_password)
+			# Set username and password
+			client.username_pw_set(mqtt_username, mqtt_password)
 
-		# Assign callback function for connection event
-		client.on_connect = mqtt_connect
+			# Assign callback function for connection event
+			client.on_connect = mqtt_connect
 
-		# Connect to the broker
-		client.connect(broker_address, broker_port)
+			# Connect to the broker
+			client.connect(broker_address, broker_port)
 
-		# Start the MQTT network loop
-		client.loop_forever()
+			# Start the MQTT network loop
+			client.loop_forever()
+
+			mqtt_topic = config.get('SynCoid Config', 'mqtt_topic')
+			mqtt_message = config.get('SynCoid Config', 'mqtt_message')
+
+			client = mqtt.Client()
+			client.enable_logger(logging.getLogger("paho"))
+			client.username_pw_set(mqtt_username, mqtt_password)
+			client.on_connect = mqtt_connect
+			client.connect(broker_address, broker_port)
+			client.loop_forever()
+
+		else:
+			mqtt_topic = config.get('SynCoid Config', 'mqtt_topic')
+			mqtt_message = config.get('SynCoid Config', 'mqtt_message')
+
+			client = mqtt.Client()
+			client.enable_logger(logging.getLogger("paho"))
+			client.username_pw_set(mqtt_username, mqtt_password)
+			client.on_connect = mqtt_connect
+			client.connect(broker_address, broker_port)
+			client.loop_forever()
 
 	if SendMail:
 		# Decide if there is an option to send mail
@@ -392,8 +415,11 @@ MailOption = (config.get('SynCoid Config', 'Mail'))
 # This is for the command after the script has succesfully run
 SystemOption = (config.get('SynCoid Config', 'SystemAction'))
 
-# This is for the logfile creation
+# This is for the MQTT option
 Use_MQTT = config.get('SynCoid Config', 'Use_MQTT')
+
+# This is for the HomeAssistant MQTT option
+Use_HomeAssistant = config.get('SynCoid Config', 'Use_HomeAssistant')
 
 # This is for creating the Date format for the Log Files
 DateTime = config.get('SynCoid Config', 'DateTime')
@@ -598,7 +624,7 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 
 		# Send a mail related to script error
 		if not MailOption == "No":
-			MailTo(error_code, None)
+			MailTo(error_code)
 
 		# Exit the script with the SynCoid exit status
 		sys.exit(integer_number)
