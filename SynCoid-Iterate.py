@@ -53,7 +53,7 @@ def mqtt_connect (client, userdata, flags, rc):
 			logger.info('Publishing Topic and Message to MQTT')
 
 			# Publish the message after connecting
-			client.publish(mqtt_topic, mqtt_message)
+			client.publish(mqtt_topic, mqtt_message, retain=True)
 
 			# Disconnect from the MQTT broker
 			client.disconnect()
@@ -106,7 +106,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 
 	if Exit_Code == 0:
 
-		if LogDestination != "No":
+		if LogDestination.capitalize() != "No":
 
 			# Define subject
 			subject = "Successful Syncoid-Iterate.py run - No errors found (Attaching logs)"
@@ -128,7 +128,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 
 	elif SynCoidFail:
 		
-		if LogDestination != "No":
+		if LogDestination.capitalize() != "No":
 			# Define subject
 			subject = "Error running Syncoid-Iterate.py - Syncoid error occurred (Attaching logs)"
 
@@ -168,7 +168,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 
 	elif not Exit_Code == 0 and not Exit_Code == None:
 
-		if LogDestination != "No":
+		if LogDestination.capitalize() != "No":
 			# Define subject
 			subject = "Error running Syncoid-Iterate.py - This was a script error (Attaching logs)"
 
@@ -206,7 +206,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 	
 	elif MQTT_fail:
 
-		if LogDestination != "No":
+		if LogDestination.capitalize() != "No":
 			# Define subject
 			subject = "Error sending MQTT message - (Attaching logs)"
 
@@ -267,7 +267,7 @@ def WasMailSent(MailExitCode, popenstderr):
 		logger.error('----------')
 
 def SystemAction():
-	if not MailOption == "No":
+	if not MailOption.capitalize() == "No":
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
@@ -288,7 +288,7 @@ def SystemAction():
 
 		os.system(SystemOption)
 
-	elif not SystemOption == "No" and MailOption == "No":
+	elif not SystemOption == "No" and MailOption.capitalize() == "No":
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
@@ -366,12 +366,12 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 
 	if SendMail:
 		# Decide if there is an option to send mail
-		if not MailOption == "No":
+		if not MailOption.capitalize() == "No":
 			MailTo(0)
 
 	if PerformSystemAction:
 		# Decide if there is a shutdown action for the system on succesfull comletion
-		if not SystemOption == "No":
+		if not SystemOption.capitalize() == "No":
 			SystemAction()
 	
 # In case something is wrong with the List's
@@ -415,11 +415,14 @@ MailOption = (config.get('SynCoid Config', 'Mail'))
 # This is for the command after the script has succesfully run
 SystemOption = (config.get('SynCoid Config', 'SystemAction'))
 
+
 # This is for the MQTT option
 Use_MQTT = config.get('SynCoid Config', 'Use_MQTT')
+Use_MQTT = Use_MQTT.capitalize()
 
 # This is for the HomeAssistant MQTT option
 Use_HomeAssistant = config.get('SynCoid Config', 'Use_HomeAssistant')
+Use_HomeAssistant = Use_HomeAssistant.capitalize()
 
 # This is for creating the Date format for the Log Files
 DateTime = config.get('SynCoid Config', 'DateTime')
@@ -428,8 +431,12 @@ time_now  = datetime.datetime.now().strftime(DateTime)
 # This is for the logfile creation
 LogDestination=config.get('SynCoid Config', 'LogDestination')
 
+#if not LogDestination.startswith("/") or not LogDestination.startswith("./"):
+#	LogDestination = LogDestination.capitalize
+
+
 # This is to enable or disable Loggin
-if not LogDestination == "No":
+if not LogDestination.capitalize() == "No":
 	if not LogDestination.endswith('/'):
 		LogDestination = LogDestination + "/"
 
@@ -472,7 +479,7 @@ def get_logger(
 
 	return log
 
-if not LogDestination == "No":
+if not LogDestination.capitalize() == "No":
 	logger = get_logger(enable_file_logging=True)
 else:
 	logger = get_logger(enable_file_logging=False)
@@ -509,10 +516,11 @@ for section in config.sections():
 	logger.info(section)
 	logger.info('')
 	for option in config.options(section):
-		text = '{} {}'.format(option, config.get(section,option))
-		if text.startswith("password") == False:
-			logging.info(text)
-			logging.info('')
+		value = config.get(section, option)
+		if option not in ['password', 'mqtt_username', 'mqtt_password']:
+			logger.info(f'{option} {value}')
+			logger.info('')
+		
 
 # Check if the "syncoid command" is in use
 if config.get('SynCoid Config','SyncoidCommand').startswith("syncoid") == True:
@@ -571,7 +579,7 @@ else:
 # Get the choice for a password from the config
 PassWordOption=(config.get('SynCoid Config', 'PassWord'))
 
-if PassWordOption == 'Ask':
+if PassWordOption.capitalize() == 'Ask':
 	PassWord = getpass('PLz. insert a desiret password if needed :    ')
 	logger.info('')
 	logger.info('----------')
@@ -580,7 +588,8 @@ if PassWordOption == 'Ask':
 	logger.info('')
 	print('')
 	print('This is the Password you have given  :   ', PassWord)
-elif PassWordOption == 'No':
+	print('')
+elif PassWordOption.capitalize() == 'No':
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
@@ -623,7 +632,7 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 		integer_number = int(error_code)
 
 		# Send a mail related to script error
-		if not MailOption == "No":
+		if not MailOption.capitalize() == "No":
 			MailTo(error_code)
 
 		# Exit the script with the SynCoid exit status
@@ -636,7 +645,7 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 		logger.error('Check the logs to see what could be the problem')
 		logger.error('')
 
-		if not MailOption == "No":
+		if not MailOption.capitalize() == "No":
 			MailTo(None, SynCoidFail)
 
 	elif MQTT_Fail:
@@ -646,7 +655,7 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 		logger.error('Check the logs to see what could be the problem')
 		logger.error('')
 
-		if not MailOption == "No":
+		if not MailOption.capitalize() == "No":
 				MailTo(None, None, True)
 		
 
@@ -665,7 +674,7 @@ def ssh_command(SynCoid_Command):
 	CONTINUENODESTROYSNAP = False
 
 	# spawn the child process
-	if not LogDestination == "No":
+	if not LogDestination.capitalize() == "No":
 		with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
 			lines_of_text = [
 				"",
@@ -678,7 +687,7 @@ def ssh_command(SynCoid_Command):
 	
 	child = pexpect.spawn(SynCoid_Command, timeout=None, encoding='utf-8')
 
-	if not LogDestination == "No":
+	if not LogDestination.capitalize() == "No":
 		fout = open(LogDestination + 'SynCoidIterate-' + time_now + ".out",'a')
 		child.logfile = fout
 
@@ -739,10 +748,10 @@ def ssh_command(SynCoid_Command):
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
 		elif index == 5:
 			# respond to 'passphrase'
-			if not LogDestination == "No":
+			if not LogDestination.capitalize() == "No":
 				child.logfile = None
 			child.sendline (PassWord)
-			if not LogDestination == "No":
+			if not LogDestination.capitalize() == "No":
 				child.logfile = fout
 		elif index == 6:
 			# respond to pexpect.EOF
@@ -806,7 +815,7 @@ def main():
 	logger.info('')
 	logger.info('The Script ended succesfully')
 	
-	if not LogDestination == "No":
+	if not LogDestination.capitalize() == "No":
 		with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
 			lines_of_text = [
 				"",
