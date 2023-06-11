@@ -95,7 +95,7 @@ def send_mail(subject, body, recipient, attachment_files=None):
 # In case one needs to be notified of errors
 #
 # FIx and make sure to make it possible to send error message even if .out file is not created yet
-def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
+def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 	# Define recipient
 	recipient = (config.get('SynCoid Config', 'Mail'))
 
@@ -196,6 +196,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
 
+			sys.exit(Exit_Code)
 		else:
 
 			# Define subject and message body
@@ -204,7 +205,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
 	
-	elif MQTT_fail:
+	elif MQTT_Fail:
 
 		if LogDestination.capitalize() != "No":
 			# Define subject
@@ -247,7 +248,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_fail=None):
 		else:
 			WasMailSent(mail_exit_code, stderr_output)
 
-		sys.exit(Exit_Code)
+		sys.exit(MQTT_Fail)
 
 def WasMailSent(MailExitCode, popenstderr):
 	if MailExitCode == 0:
@@ -616,6 +617,7 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 		logger.error('This was a crash known by the script')
 		logger.error('')
 		logger.error('Check the logs to see what could be the problem')
+		logger.error('If non existing enable them, to track down the problem')
 		logger.error('')
 		logger.error(errstr)
 		logger.error('')
@@ -634,29 +636,35 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 		# Send a mail related to script error
 		if not MailOption.capitalize() == "No":
 			MailTo(error_code)
-
-		# Exit the script with the SynCoid exit status
-		sys.exit(integer_number)
+		else:
+			# Exit the script with the SynCoid exit status
+			sys.exit(integer_number)
 
 	elif SynCoidFail:
 		logger.error('')
 		logger.error('This was an unknown crash')
 		logger.error('')
 		logger.error('Check the logs to see what could be the problem')
+		logger.error('If non existing enable them, to track down the problem')
 		logger.error('')
 
 		if not MailOption.capitalize() == "No":
 			MailTo(None, SynCoidFail)
+		else:
+			sys.exit(SynCoidFail)
 
 	elif MQTT_Fail:
 		logger.error('')
 		logger.error('This was an MQTT error')
 		logger.error('')
 		logger.error('Check the logs to see what could be the problem')
+		logger.error('If non existing enable them, to track down the problem')
 		logger.error('')
 
 		if not MailOption.capitalize() == "No":
-				MailTo(None, None, True)
+			MailTo(None, None, MQTT_Fail)
+		else:
+			sys.exit(MQTT_Fail)
 		
 
 # This is the function that executes the altered syncoid command
