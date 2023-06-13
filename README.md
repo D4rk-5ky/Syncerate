@@ -144,18 +144,22 @@ In case of an erro this wont be performed.
 ### The script can allso send a message over MQTT
 This may be usefull in case one would like an action performed after the backup is complete.
 
+```
 se_MQTT=yes
 broker_address=<IP>
 broker_port=1883
 mqtt_username=<UsernName>
 mqtt_password=<PassWord>
 mqtt_topic=home-assistant/syncoid-iterate/command
-	
+mqtt_message=ON
+```
+
 ### This next part is in case the message is for HomeAssistant MQTT integration
 ### Me and a frind use a HomeAssistant automation to shutdown the Pi safely and then take the power from an RF switch when the script end's succesfully.
 
-mqtt_message=ON
+```
 # This is needed if using HomeAssistant mqtt entity that needs to be enabled/online or not
 # Write Yes for enabling
 Use_HomeAssistant=Yes
 HomeAssistant_Available=home-assistant/syncoid-iterate/available
+```
