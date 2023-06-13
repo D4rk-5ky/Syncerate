@@ -106,11 +106,11 @@ use the text editor of your choice and go though the file one step at a time
 
 ### Choose the location for the Source list (Required)
 
-`SourceListPath=/dest/to/sourcelist
+`SourceListPath=/dest/to/sourcelist`
 
 ### Choose the lcation for the Destination list (Required)
 
-`DestListPath=/dest/to/destinationlist
+`DestListPath=/dest/to/destinationlist`
 
 ### The desired Syncoid command yo use
 Thanks to Jim salter there is a lot of options to use with Syncoid
@@ -135,3 +135,27 @@ This will create a `.log`, a `.out` and in case of error a `.err` file.
 These will be send in case Mail is enabled
 
 `LogDetination=</Dest/to/log/folder>`
+
+### The script is allso able to perform a action like Shutdown or Reboot after a succesfull run (Optional - Write No if not needed)
+In case of an erro this wont be performed.
+
+`SystemAction=shutdown -P now`
+
+### The script can allso send a message over MQTT
+This may be usefull in case one would like an action performed after the backup is complete.
+
+se_MQTT=yes
+broker_address=<IP>
+broker_port=1883
+mqtt_username=<UsernName>
+mqtt_password=<PassWord>
+mqtt_topic=home-assistant/syncoid-iterate/command
+	
+### This next part is in case the message is for HomeAssistant MQTT integration
+### Me and a frind use a HomeAssistant automation to shutdown the Pi safely and then take the power from an RF switch when the script end's succesfully.
+
+mqtt_message=ON
+# This is needed if using HomeAssistant mqtt entity that needs to be enabled/online or not
+# Write Yes for enabling
+Use_HomeAssistant=Yes
+HomeAssistant_Available=home-assistant/syncoid-iterate/available
