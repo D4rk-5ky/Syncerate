@@ -265,11 +265,11 @@ The script is very easely executed when configured like so
 
 I am incapable of ever becoming a real programmer.
 
-But this is my first real way of trying to share something i have done.
+But this is my first real way of trying to share something i have done, in the hope other's will find this usefull as we did.
 
-Simply because i spend so much time on it, and eventually made it work witout any apparent errors.
+And becasue i spend so much time on it, and eventually made it work witout any apparent errors.
 
-So i made this public in github.
+So ive made this public in github.
 
 In hope others would find a use for it.
 
