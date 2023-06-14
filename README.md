@@ -249,7 +249,7 @@ Or what ever action is performed when HomeAssistant receives the MQTT state will
 
 -----
 
-5. ### Executing the script
+#### 5. Executing the script
 
 Make sure the Python3 script is executable
 
@@ -261,17 +261,22 @@ The script is very easely executed when configured like so
 
 ----
 
-# I sincerely hope some people will find this usefull
+# I sincerely hope someone will find this usefull
 
 I am incapable of ever becoming a real programmer.
 
 But this is my first real way of trying to share something i have done.
-Simply because i spend so much time on it, and made it work.
+
+Simply because i spend so much time on it, and eventually made it work witout any apparent errors.
 
 So i made this public in github.
+
 In hope others would find a use for it.
+
 Or make it even better.
 
+
 Best regards,
+
 Darkyere & SKYNET
 
