@@ -239,9 +239,13 @@ scene: !include scenes.yaml
 ```
 
 Note that Mosquitto needs a persistence database for the HomeAssistant entity to work
-And that one also needs to make sure, to set the entity to `OFF` when done.
+And HomeAssistant also needs to make sure, to set the entity to `OFF` when done.
 
 Or what ever action is performed when HomeAssistant receives the MQTT state will be triggered every time.
+
+![HomeAssistant Automation - 1](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/58182732-36e8-4f26-bacc-1e35eaa3ee68)
+![HomeAssistant Automation - 2 png](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/f147074d-a23b-4567-aef4-5fa780c4f06f)
+![HomeAssistant Automation - 3](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/1e25b897-30bb-4edd-bd58-a849c65a330a)
 
 -----
 
