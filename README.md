@@ -183,10 +183,10 @@ In case of an error this wont be performed so one can track down the issue inste
 This may be usefull in case one would like an action performed after the backup is complete.
 
 ```
-se_MQTT=yes
+Use_MQTT=yes
 broker_address=<IP>
 broker_port=1883
-mqtt_username=<UsernName>
+mqtt_username=<UserName>
 mqtt_password=<PassWord>
 mqtt_topic=home-assistant/syncoid-iterate/command
 mqtt_message=ON
