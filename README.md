@@ -183,10 +183,10 @@ In case of an error this wont be performed so one can track down the issue inste
 This may be usefull in case one would like an action performed after the backup is complete.
 
 ```
-se_MQTT=yes
+Use_MQTT=yes
 broker_address=<IP>
 broker_port=1883
-mqtt_username=<UsernName>
+mqtt_username=<UserName>
 mqtt_password=<PassWord>
 mqtt_topic=home-assistant/syncoid-iterate/command
 mqtt_message=ON
@@ -239,13 +239,17 @@ scene: !include scenes.yaml
 ```
 
 Note that Mosquitto needs a persistence database for the HomeAssistant entity to work
-And that one also needs to make sure, to set the entity to `OFF` when done.
+And HomeAssistant also needs to make sure, to set the entity to `OFF` when done.
 
 Or what ever action is performed when HomeAssistant receives the MQTT state will be triggered every time.
 
+![HomeAssistant Automation - 1](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/58182732-36e8-4f26-bacc-1e35eaa3ee68)
+![HomeAssistant Automation - 2 png](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/f147074d-a23b-4567-aef4-5fa780c4f06f)
+![HomeAssistant Automation - 3](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/1e25b897-30bb-4edd-bd58-a849c65a330a)
+
 -----
 
-5. ### Executing the script
+#### 5. Executing the script
 
 Make sure the Python3 script is executable
 
@@ -257,17 +261,22 @@ The script is very easely executed when configured like so
 
 ----
 
-# I sincerely hope some people will find this usefull
+# I sincerely hope someone will find this usefull
 
 I am incapable of ever becoming a real programmer.
 
-But this is my first real way of trying to share something i have done.
-Simply because i spend so much time on it, and made it work.
+But this is my first real way of trying to share something i have done, in the hope other's will find this usefull as we did.
 
-So i made this public in github.
+And becasue i spend so much time on it, and eventually made it work witout any apparent errors.
+
+So ive made this public in github.
+
 In hope others would find a use for it.
+
 Or make it even better.
 
+
 Best regards,
+
 Darkyere & SKYNET
 
