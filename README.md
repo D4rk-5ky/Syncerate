@@ -41,6 +41,7 @@ If anyone would like to fork this and make a better version i would be glad some
 3. Send Mail on error or succesfull run
 4. Shutdown the system when done
 5. Use MQTT to send a message in case that is needed.
+	
 	(We use it to send an MQTT message to HomeAssistant and then it will send a signal to an ESP32 with ESPHome connected to the GPIO's of a PI4 to safely shutdown and take the power from the Switch when there havent been a ping for 3 minutes)
 
 ----
@@ -172,8 +173,10 @@ This is merely meant as a guidance
 
 And Should Look like this
 
-`SyncoidCommand="syncoid <UserName>@<IP/HostName>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile\"`
-`SyncoidCommand="syncoid SourceDataSet <UserName>@<IP/HostName>:DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile\"`
+```
+SyncoidCommand="syncoid <UserName>@<IP/HostName>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile\"
+SyncoidCommand="syncoid SourceDataSet <UserName>@<IP/HostName>:DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile\"
+```
 
 Remember you either need to be root on the Sending/Receiving end
 Or add the required ZFS permission for you user
@@ -182,7 +185,7 @@ Or add the required ZFS permission for you user
 
 `SyncoidCommand=syncoid <UserName>@<IP>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey <DestToSSHKey> --no-privilege-elevation`
 
-### Next if u have a password either for SSH or a keyfile insert it here. (Optional - Write No if not needed)
+### Next if u have a password either for SSH or a keyfile insert it here. (Optional - Write No if not needed or Ask for getting a terminal input for the password)
 
 `PassWord=<PassWord>`
 	
@@ -215,12 +218,10 @@ mqtt_topic=home-assistant/syncoid-iterate/command
 mqtt_message=ON
 ```
 
-### This next part is in case the message is for HomeAssistant MQTT integration
-(We use it to send an MQTT message to HomeAssistant and then it will send a signal to an ESP32 with ESPHome connected to the GPIO's of a PI4 to safely shutdown and take the power from the Switch when there havent been a ping for 3 minutes)
+### This next part is in case the message is for HomeAssistant's MQTT integration
+(We use it to send an MQTT message to HomeAssistant and then it will send a signal to an ESP32 with ESPHome connected to the GPIO's of a PI4 to safely shutdown and take the power from the Switch when there haven't been a ping for 3 minutes)
 
 ```
-# This is needed if using HomeAssistant mqtt entity that needs to be enabled/online or not
-# Write Yes for enabling
 Use_HomeAssistant=Yes
 HomeAssistant_Available=home-assistant/syncoid-iterate/available
 ```
@@ -278,18 +279,18 @@ Make sure the Python3 script is executable
 
 `chown +x ./Syncoid-Iterate-py`
 
-The script is very easely executed when configured like so
+The script is very easily executed when configured
 
 `Syncoid-Iterate.py -c ./config/SynCoid-Iterate.cfg`
 
 ----
 
-# I sincerely hope some people will find this usefull
+# I sincerely hope some people will find this useful
 
 This is my first real way of trying to share something i have done.
 Simply because i spend so much time on it, and made it work.
 
-So i made this public on github.
+So i made this public on Github.
 In hope others would find a use for it.
 Or make it even better.
 
