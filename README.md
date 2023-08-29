@@ -267,9 +267,11 @@ And that one also needs to make sure, to set the entity to `OFF` when done.
 
 Or what ever action is performed when HomeAssistant receives the MQTT state will be triggered every time.
 
-![HomeAssistant Automation - 1](https://github.com/D4rk-5ky/Syncerate/assets/134581987/58182732-36e8-4f26-bacc-1e35eaa3ee68)
-![HomeAssistant Automation - 2 png](https://github.com/D4rk-5ky/Syncerate/assets/134581987/f147074d-a23b-4567-aef4-5fa780c4f06f)
-![HomeAssistant Automation - 3](https://github.com/D4rk-5ky/Syncerate/assets/134581987/1e25b897-30bb-4edd-bd58-a849c65a330a)
+![HomeAssistant Automation - 1](config/HomeAssistant%20Automation%20-%201.png)
+
+![HomeAssistant Automation - 2 png](config/HomeAssistant%20Automation%20-%202.png)
+
+![HomeAssistant Automation - 3](config/HomeAssistant%20Automation%20-%203.png)
 
 -----
 
