@@ -1,4 +1,4 @@
-# SynCoid-Iterate
+# Syncerate
 
 This is a Python3 script to use 
 
@@ -50,12 +50,12 @@ If anyone would like to fork this and make a better version i would be glad some
 
 1. To start with clone this repo to your desired location.
 	``cd /your/script/location``
-	`git clone https://github.com/D4rk-5ky/SynCoid-Iterate Syncoid-Iterate`
+	`git clone https://github.com/D4rk-5ky/Syncerate Syncerate`
 
 2. Then make a list of Source datasets.
 	And make a list of Destination datasets
 
-3. Then we start editing the SynCoid-Iterate.cfg file
+3. Then we start editing the Syncerate.cfg file
 
 4. Create an MQTT message (If so desired)
 
@@ -132,7 +132,7 @@ Use whatever text editor such as Nano or Vim to make a file with the desired des
 
 ----
 
-### 3. Editing the SynCoid-Iterate.cfg
+### 3. Editing the Syncerate.cfg
 
 ### Config overview
 
@@ -214,7 +214,7 @@ broker_address=<IP>
 broker_port=1883
 mqtt_username=<UsernName>
 mqtt_password=<PassWord>
-mqtt_topic=home-assistant/syncoid-iterate/command
+mqtt_topic=home-assistant/Syncerate/command
 mqtt_message=ON
 ```
 
@@ -223,7 +223,7 @@ mqtt_message=ON
 
 ```
 Use_HomeAssistant=Yes
-HomeAssistant_Available=home-assistant/syncoid-iterate/available
+HomeAssistant_Available=home-assistant/Syncerate/available
 ```
 
 ----
@@ -246,10 +246,10 @@ tts:
 mqtt:
   binary_sensor:
   - name: "Syncoid Iterate"
-    state_topic: "home-assistant/syncoid-iterate/command"
+    state_topic: "home-assistant/Syncerate/command"
     payload_on: "ON"
     availability:
-      - topic: "home-assistant/syncoid-iterate/available"
+      - topic: "home-assistant/Syncerate/available"
         payload_available: "online"
         payload_not_available: "offline"
     qos: 0
@@ -267,9 +267,11 @@ And that one also needs to make sure, to set the entity to `OFF` when done.
 
 Or what ever action is performed when HomeAssistant receives the MQTT state will be triggered every time.
 
-![HomeAssistant Automation - 1](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/58182732-36e8-4f26-bacc-1e35eaa3ee68)
-![HomeAssistant Automation - 2 png](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/f147074d-a23b-4567-aef4-5fa780c4f06f)
-![HomeAssistant Automation - 3](https://github.com/D4rk-5ky/SynCoid-Iterate/assets/134581987/1e25b897-30bb-4edd-bd58-a849c65a330a)
+![HomeAssistant Automation - 1](config/HomeAssistant%20Automation%20-%201.png)
+
+![HomeAssistant Automation - 2 png](config/HomeAssistant%20Automation%20-%202.png)
+
+![HomeAssistant Automation - 3](config/HomeAssistant%20Automation%20-%203.png)
 
 -----
 
@@ -277,11 +279,11 @@ Or what ever action is performed when HomeAssistant receives the MQTT state will
 
 Make sure the Python3 script is executable
 
-`chown +x ./Syncoid-Iterate-py`
+`chown +x ./Syncerate-py`
 
 The script is very easily executed when configured
 
-`Syncoid-Iterate.py -c ./config/SynCoid-Iterate.cfg`
+`Syncerate.py -c ./config/Syncerate.cfg`
 
 ----
 
