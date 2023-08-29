@@ -12,22 +12,22 @@ To make backing up ZFS DataSet's easy
 
 # Reason for the script.
 
-Me and a friend started in 2020 making use of ZFS on both PI's and homemade server's based on our old hardware.
+Me and a friend started in 2020 making use of ZFS on both PI's and homemade server's based on our old hardware.  
 It didn't take long to find [Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid) and making sure to setup a proper snapshot configuration.
 
-When it came to backing up from one location to another Syncoid is a great option well written and really useful.
+When it came to backing up from one location to another Syncoid is a great option well written and really useful.  
 Unfortunately the one dataset at a time, got us a little bored to say the least over the years.
 
-So my friend started talking about it would be great with a script that could go over a list of our dataset's and pull/send them in succession.
+So my friend started talking about it would be great with a script that could go over a list of our dataset's and pull/send them in succession.  
 And the idea for this script was made.
 
-Now it is important to notice that i am not a programmer.
-I started creating this code by scouring the internet for a pice of code here and there, that i could understand and rewrite it for my purpose in the script.
-To be honest this can take a long time since u have to figure out a search query that will find some code reasembling what you want done.
+Now it is important to notice that i am not a programmer.  
+I started creating this code by scouring the internet for a pice of code here and there, that i could understand and rewrite it for my purpose in the script.  
+To be honest this can take a long time since you have to figure out a search query that will find some code reasembling what you want done.  
 And then having to rewrite it afterwards for ones own purpose.
 
-Luckily enough ChatGPT came out and with that i was able to ask more specifically for the code that i needed and it would answer me with some great options.
-Of cource this still take quite some time to make ChatGPT understand every part of what i need.
+Luckily enough ChatGPT came out and with that i was able to ask more specifically for the code that i needed and it would answer me with some great options.  
+Of cource this still take quite some time to make ChatGPT understand every part of what i need.  
 Including when the code didn't actually work a 100%
 
 If anyone would like to fork this and make a better version i would be glad someone had seen the potential in my little Python3 script and a way to improve it.
@@ -48,8 +48,8 @@ If anyone would like to fork this and make a better version i would be glad some
 
 # How to use this script.
 
-1. To start with clone this repo to your desired location.
-	``cd /your/script/location``
+1. To start with clone this repo to your desired location.  
+	``cd /your/script/location``  
 	`git clone https://github.com/D4rk-5ky/Syncerate Syncerate`
 
 2. Then make a list of Source datasets.
@@ -145,7 +145,7 @@ Use whatever text editor such as Nano or Vim to make a file with the desired des
 | DateTime=                                                             | Yes                                                                        | The format that the logs will be saved in                                                                                                          |
 | LogDestination=                                                       | Optional                                                                   | A destination folder to save the logs to                                                                                                           |
 | SystemAction=                                                         | Optional                                                                   | A command like systemctl poweroff, shutdown -P now or even reboot                                                                                  |
-| Use_MQTT=                                                             | Ootional                                                                   | An MQTT broker like Mosquitto                                                                                                                      |
+| Use_MQTT=                                                             | Optional                                                                   | An MQTT broker like Mosquitto                                                                                                                      |
 | broker_address=                                                       | Required if "Use_MQTT" "Yes"                                               | The MQTT broker hostname or IP                                                                                                                     |
 | broker_port=                                                          | Required if "Use_MQTT" "Yes"                                               | The MQTT broker port number                                                                                                                        |
 | mqtt_username=                                                        | Required if "Use_MQTT" "Yes"                                               | The MQTT username                                                                                                                                  |
@@ -166,7 +166,7 @@ Use the text editor of your choice and go though the file one step at a time
 `DestListPath=/dest/to/destinationlist`
 
 ### The desired Syncoid command yo use
-Thanks to Jim salter there is a lot of options to use with [Syncoid](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid)
+Thanks to Jim salter there is a lot of options to use with [Syncoid](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid)  
 Best to read up on it on the [Syncoid](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid) Wiki
 
 This is merely meant as a guidance
@@ -174,8 +174,8 @@ This is merely meant as a guidance
 And Should Look like this
 
 ```
-SyncoidCommand="syncoid <UserName>@<IP/HostName>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile\"
-SyncoidCommand="syncoid SourceDataSet <UserName>@<IP/HostName>:DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile\"
+SyncoidCommand="syncoid <UserName>@<IP/HostName>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile"
+SyncoidCommand="syncoid SourceDataSet <UserName>@<IP/HostName>:DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey "/home/<UserName>/.ssh/KeyFile"
 ```
 
 Remember you either need to be root on the Sending/Receiving end
