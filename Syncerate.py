@@ -109,7 +109,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 		if LogDestination.capitalize() != "No":
 
 			# Define subject
-			subject = "Successful Syncoid-Iterate.py run - No errors found (Attaching logs)"
+			subject = "Successful Syncerate.py run - No errors found (Attaching logs)"
 
 			# Define message body and attached files
 			attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
@@ -123,14 +123,14 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 		else:
 
 			# Define subject and message body
-			subject_and_body = "Successful Syncoid-Iterate.py run - No errors found (Logs Disabled)"
+			subject_and_body = "Successful Syncerate.py run - No errors found (Logs Disabled)"
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
 
 	elif SynCoidFail:
 		
 		if LogDestination.capitalize() != "No":
 			# Define subject
-			subject = "Error running Syncoid-Iterate.py - Syncoid error occurred (Attaching logs)"
+			subject = "Error running Syncerate.py - Syncoid error occurred (Attaching logs)"
 
 			# Define message body and attached files
 			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
@@ -159,7 +159,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 		else:
 
 			# Define subject and message body
-			subject_and_body = "Error running Syncoid-Iterate.py - Syncoid error occurred (Logs Disabled)"
+			subject_and_body = "Error running Syncerate.py - Syncoid error occurred (Logs Disabled)"
 			
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
@@ -170,7 +170,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 
 		if LogDestination.capitalize() != "No":
 			# Define subject
-			subject = "Error running Syncoid-Iterate.py - This was a script error (Attaching logs)"
+			subject = "Error running Syncerate.py - This was a script error (Attaching logs)"
 
 			# Define message body and attached files
 			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
@@ -200,7 +200,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 		else:
 
 			# Define subject and message body
-			subject_and_body = "Error running Syncoid-Iterate.py - This was a script error (Logs Disabled)"
+			subject_and_body = "Error running Syncerate.py - This was a script error (Logs Disabled)"
 			
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)

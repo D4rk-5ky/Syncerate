@@ -1,10 +1,10 @@
 mqtt:
   binary_sensor:
   - name: "Syncoid Iterate"
-    state_topic: "home-assistant/syncoid-iterate/command"
+    state_topic: "home-assistant/syncerate/command"
     payload_on: "ON"
     availability:
-      - topic: "home-assistant/syncoid-iterate/available"
+      - topic: "home-assistant/syncerate/available"
         payload_available: "online"
         payload_not_available: "offline"
     qos: 0
