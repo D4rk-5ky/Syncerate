@@ -5,7 +5,7 @@ This is a Python3 script to use
 [Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid) 
 
 To iterate though a list of Datasets to be send/recived with Syncoid.  
-To make backing up ZFS DataSet's easy.  
+making it easy to backup several zfs data sets.  
 
 ----
 
@@ -15,21 +15,26 @@ Me and a friend started in 2020 making use of ZFS on both PI's and homemade serv
 It didn't take long to find [Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid) and making sure to setup a proper snapshot configuration.
 
 When it came to backing up from one location to another Syncoid is a great option well written and really useful.  
-Unfortunately the one dataset at a time, got us a little bored over the years.
+Unfortunately the one dataset at a time, got real cumbersome rand time consuming.
 
-So my friend and I started talking about, it would be great with a script.  
-That could go over a list of our dataset's and pull/send them in succession.  
-And the idea for this script was made.
+So my friend and i started dreaming of a script for automating this teadius manual task That could go through a list of our dataset's and pull/send them in succession.  
+And the idea for this script was born.
 
-Now it is important to notice that i am not a programmer.  
-I started creating this script by scouring the internet for a pice of code here and there, that i could understand and then rewrite it for my purpose in the script.  
+Now it is important to notice that !!!i am not a programmer!!! and this has been a learning progress for me. 
+I started creating this script by scouring the internet for a pices of code here and there, that i could understand and then rewrite for my purpose. to endedet up spending too mush time not enough progress. 
+```
 To be honest this can take a long time, since you have to figure out a search query that will turn up some code, that reasembles what you want done.  
 And then having to rewrite it afterwards for ones own purpose.
+```
 
 Luckily enough ChatGPT came out and with that i was able to ask more specifically for the code that i needed and it would answer me with some great options.  
 Of cource this still take quite some time to make ChatGPT understand every part of what i need.  
-Including when the code didn't actually work a 100%
+Including when the code didn't actually work 100% all of the time.
 
+```
+at this point in time our script i working for uour need, and i will proberly not be adding any ny features or maintailit.
+however i would love for someone else to fork my project or enhancing or othervise making it better, for everyerone to enjouy (including us)
+```
 If anyone would like to fork this and make a better version.  
 I would be glad that someone had seen the potential in my little Python3 script and found a way to improve it.
 
@@ -41,11 +46,11 @@ I would be glad that someone had seen the potential in my little Python3 script 
 2. Logs
 3. Send Mail on error or succesfull run
 4. Shutdown the system when done
-5. Use MQTT to send a message in case that is needed.
-    - We use it to send an MQTT message to HomeAssistant.
-    - Then it will send a signal to an ESP32 with ESPHome.
-    - That is connected to the GPIO's of a PI4 to safely shutdown.
-    - Then it will take the power from the Switch when there havent been a ping for 3 minutes
+5. Use MQTT to send a message in case that is needed.  
+    - We use it to send an MQTT message to HomeAssistant.  
+    Then it will send a signal to an ESP32 with ESPHome.  
+    That is connected to the GPIO's of a PI4 to safely shutdown.  
+    Then it will take the power from the Switch when there havent been a ping for 3 minutes  
 
 ----
 
@@ -66,8 +71,9 @@ I would be glad that someone had seen the potential in my little Python3 script 
 
 ----
 
-### 2. lets make the sources list first.
+### 2.1 lets make the sources list first.
 
+Source example is located in the config folder in the git clone
 
 The easy way to get a list for the sources is to use the command
 
@@ -97,45 +103,53 @@ Use whatever text editor such as Nano or Vim to make a file with the desired sou
 
 ----
 
-### 2.  Then the destination list is a little more loose.
+### 2.2  Then the destination list is a little more loose.
 You can decide yourself where you wish to safe the Dataets on the receiving end.
 
-To check that the datasets goes to the right places, i have choosen to compare the last part of the Dataset's name's. To ensure they are transferred to the right location.
+Destination example is located in the config folder in the git clone
 
-Now notice, that the leading dataset i have chosen to save under, needs to be created manually.  
-The script can only create the dataset's that it is receiving not something that doesn't exist.
+```
+To check that the datasets goes to the right places, the script compares the last part of the Dataset's name's from source- and distination-file. To ensure they are transferred to the right location.
+if the end names does not match the script will pass an error (terminal, log-file, and email if configured)
+```
+
+The zpool your send the datasets to, can be any name you like (BackUp in this example)
+But if you want the dataset on the receving end, to be inside another dataset (Docker-SyncoidTest in this example). You will have to manually create that dataset yourself.
+The script can only create the dataset's that it is receiving not any datasets before it (Docker-SyncoidTest in this example).
 
 So i would prepare that with
 
-`zfs create Storage/Docker-SyncoidTest`
+`zfs create BackUp/Docker-SyncoidTest`
 
 lets create a list for the destination
 
 ```
-Storage/Docker-SyncoidTest/Archivy
-Storage/Docker-SyncoidTest/DataSet With Spaces
-Storage/Docker-SyncoidTest/Grafana
-Storage/Docker-SyncoidTest/HedgeDoc
-Storage/Docker-SyncoidTest/Heimdall
-Storage/Docker-SyncoidTest/Home-Assistant
-Storage/Docker-SyncoidTest/Joplin
-Storage/Docker-SyncoidTest/Kavita
-Storage/Docker-SyncoidTest/Media
-Storage/Docker-SyncoidTest/Mosquitto
-Storage/Docker-SyncoidTest/NextCloud
-Storage/Docker-SyncoidTest/Podcasts
-Storage/Docker-SyncoidTest/Portainer
-Storage/Docker-SyncoidTest/SyncThing
-Storage/Docker-SyncoidTest/Vikunja
-Storage/Docker-SyncoidTest/WallaBag
-Storage/Docker-SyncoidTest/WatchTower
+BackUp/Docker-SyncoidTest/Archivy
+BackUp/Docker-SyncoidTest/DataSet With Spaces
+BackUp/Docker-SyncoidTest/Grafana
+BackUp/Docker-SyncoidTest/HedgeDoc
+BackUp/Docker-SyncoidTest/Heimdall
+BackUp/Docker-SyncoidTest/Home-Assistant
+BackUp/Docker-SyncoidTest/Joplin
+BackUp/Docker-SyncoidTest/Kavita
+BackUp/Docker-SyncoidTest/Media
+BackUp/Docker-SyncoidTest/Mosquitto
+BackUp/Docker-SyncoidTest/NextCloud
+BackUp/Docker-SyncoidTest/Podcasts
+BackUp/Docker-SyncoidTest/Portainer
+BackUp/Docker-SyncoidTest/SyncThing
+BackUp/Docker-SyncoidTest/Vikunja
+BackUp/Docker-SyncoidTest/WallaBag
+BackUp/Docker-SyncoidTest/WatchTower
 ```
 
-Use whatever text editor such as Nano or Vim to make a file with the desired destination datasets.
+Use the text editor of your choice (such as Nano or Vim) to make a file with the desired destination datasets.
 
 ----
 
 ### 3. Editing the Syncerate.cfg
+
+An example .cfg file is located under the config folder in the git clone.
 
 ### Config overview
 
@@ -143,15 +157,15 @@ Use whatever text editor such as Nano or Vim to make a file with the desired des
 |:--------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SourceListPath=                                                       | Yes                                                                        | A list of dataset's to be transferred from Source                                                                                                  |
 | DestListPath=                                                         | Yes                                                                        | A list of dataset's to be saved to Destination                                                                                                     |
-| SyncoidCommand=                                                       | Yes                                                                        | A Syncoid command string set like you would usually use Syncoid                                                                                    |
-| PassWord=                                                             | Optional                                                                   | A Password can be written directly, asked in the terminal or disabled with no                                                                      |
+| SyncoidCommand=                                                       | Yes                                                                        | A Syncoid command string containing your usual syncoild comand arguments (note that SourseDataset and DistDataset is needed)                                                                                    |
+| PassWord=                                                             | Optional                                                                   | A Password for ssh can be written in the .cfg-file, asked in the terminal or disabled with no                                                                      |
 | DateTime=                                                             | Yes                                                                        | The format that the logs will be saved in                                                                                                          |
 | LogDestination=                                                       | Optional                                                                   | A destination folder to save the logs to                                                                                                           |
-| SystemAction=                                                         | Optional                                                                   | A command like systemctl poweroff, shutdown -P now or even reboot                                                                                  |
-| Use_MQTT=                                                             | Optional                                                                   | An MQTT broker like Mosquitto                                                                                                                      |
+| SystemAction=                                                         | Optional                                                                   | A command like systemctl poweroff, shutdown -P now or even reboot (disable with no)                                                                                 |
+| Use_MQTT=                                                             | Optional                                                                   | An MQTT broker like Mosquitto (disable with no)                                                                                                                     |
 | broker_address=                                                       | Required if "Use_MQTT" "Yes"                                               | The MQTT broker hostname or IP                                                                                                                     |
 | broker_port=                                                          | Required if "Use_MQTT" "Yes"                                               | The MQTT broker port number                                                                                                                        |
-| mqtt_username=                                                        | Required if "Use_MQTT" "Yes"                                               | The MQTT username                                                                                                                                  |
+| mqtt_username=                                                        | Required if "Use_MQTT" "Yes"                                               | The MQTT username (note!!! mqtt in this script only work with username and password not anonymous)                                                                                                                                 |
 | mqtt_password=                                                        | Required if "Use_MQTT" "Yes"                                               | The MQTT password                                                                                                                                  |
 | mqtt_topic=                                                           | Required if "Use_MQTT" "Yes"                                               | The MQTT Topic that should receive the message                                                                                                     |
 | mqtt_message=                                                       | Required if "Use_MQTT" "Yes"                                               | The MQTT message                                                                                                                                   |
@@ -159,6 +173,10 @@ Use whatever text editor such as Nano or Vim to make a file with the desired des
 | HomeAssistant_Available= | Required if Use_HomeAssistant=Yes                                          | The location to make the manual HomeAssitant entity online/available                                                                               |
 
 Use the text editor of your choice and go though the file one step at a time
+
+----
+
+# This is the .cfg examples i have made
 
 ### Choose the location for the Source list (Required)
 
@@ -174,7 +192,7 @@ Best to read up on it on the [Syncoid](https://github.com/jimsalterjrs/sanoid/wi
 
 This is merely meant as a guidance
 
-And Should Look like this
+And might look something like this
 
 ```
 ### To receive
@@ -187,31 +205,31 @@ SyncoidCommand="syncoid SourceDataSet <UserName>@<IP/HostName>:DestDataSet --com
 Remember you either need to be root on the Sending/Receiving end.  
 Or add the required ZFS permission for you user
 
-### Plz. note that `SourceDataset` and `DestDataSet` is required, since when looping over the source/dest list's, these will be changed to the corresponding datasets.
+### dont remove `SourceDataset` and `DestDataSet` they are hardcoded variables in the script (!!!NOT to be renamed!!!)    
+### Since when looping over the datasets in the source/dest files, these hardcoded variables will be changed to the corresponding datasets from the lists in the each files. (fx Storage/Wallabag, BackUp/SynCoid-Test/Wallabag ... etc.) 
 
 `SyncoidCommand=syncoid <UserName>@<IP>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey <DestToSSHKey> --no-privilege-elevation`
 
 ### Next if you have a password, either for SSH or a keyfile insert it here. 
-  - (Optional - Write No if not needed or Ask for getting a terminal input for the password)
-
-`PassWord=<PassWord>`
+  - `PassWord=No` (if you dont have a password)
+  - `PassWord=Ask` (the script will stop and ask for a password to be typed in terminal and will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg-file and written to the terminal while running the script))
+  - `PassWord=<password>` (insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg-file and written to the terminal while running the script)
 	
 ### If you wish to receive a mail on Succes/Failure. Insert a mail here. 
-  - (Optional - Write No if not needed)
-  - please note this needs something like `postfix` and the `mail` command available and setup beside this scipt
+  - `Mail=No` (if you dont want mail)
+  - please note this needs something like `postfix` and the `mail` command available and setup beside this script
 
-`Mail=<HereIs@Mail.com>`
+`Mail=<example@mail.com>`
 
 ### If you wish to have logs enabled (Generally a good idea) then insert a location here 
-  - (Optional - Write No if not needed)
+  - `LogDetination=No` (If not needed)
+  - `LogDetination=</Dest/to/log/folder>` (The destination to the log folder)
   - This will create a `.log`, a `.out` and in case of error a `.err` file.
-  - These will be send attached to the email if `Mail=` is enabled
-
-`LogDetination=</Dest/to/log/folder>`
+  - These files will be attached to the email if `Mail=` is enabled
 
 ### The script is also able to perform a action like Shutdown or Reboot after a succesfull run 
-  - (Optional - Write No if not needed)
-  - In case of an error this wont be performed so one can track down the issue instead of just believing that it had done its job.
+  - `SystemAction=No` (No if not needed)
+  - In case of an error this wont be performed so one can track down the issue instead of just believing it had done its job.
 
 `SystemAction=shutdown -P now`
 
@@ -220,12 +238,12 @@ Or add the required ZFS permission for you user
   - This may be usefull, in case one would like an action performed after the backup is complete.
 
 ```
-se_MQTT=yes
+Use_MQTT=yes
 broker_address=<IP>
-broker_port=1883
-mqtt_username=<UsernName>
+broker_port=<Port>
+mqtt_username=<UserName>
 mqtt_password=<PassWord>
-mqtt_topic=home-assistant/Syncerate/command
+mqtt_topic=<Topic to post to>
 mqtt_message=ON
 ```
 
@@ -289,7 +307,7 @@ Or what ever action is performed when HomeAssistant receives the MQTT state will
 
 -----
 
-5. ### Executing the script
+### 5. Executing the script
 
 Make sure the Python3 script is executable
 
@@ -301,7 +319,7 @@ The script is very easily executed like this when configured
 
 ----
 
-# I sincerely hope some people will find this useful
+### I sincerely hope you will find this useful.
 
 This is my first real way of trying to share something i have done.  
 Simply because i spend so much time on it, and made it work.  
