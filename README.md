@@ -5,7 +5,7 @@ This is a Python3 script to use
 [Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid) 
 
 To iterate though a list of Datasets to be send/recived with Syncoid.  
-making it easy to backup several zfs data sets.  
+Making it easy to backup several ZFS datasets.  
 
 ----
 
@@ -17,26 +17,20 @@ It didn't take long to find [Jim Salter's](https://github.com/jimsalterjrs) : [S
 When it came to backing up from one location to another Syncoid is a great option well written and really useful.  
 Unfortunately the one dataset at a time, got real cumbersome rand time consuming.
 
-So my friend and i started dreaming of a script for automating this teadius manual task That could go through a list of our dataset's and pull/send them in succession.  
+So my friend and i started dreaming of a script for automating this teadius manual task.  
+That could go through a list of our dataset's and pull/send them in succession.  
 And the idea for this script was born.
 
-Now it is important to notice that !!!i am not a programmer!!! and this has been a learning progress for me. 
-I started creating this script by scouring the internet for a pices of code here and there, that i could understand and then rewrite for my purpose. to endedet up spending too mush time not enough progress. 
-```
-To be honest this can take a long time, since you have to figure out a search query that will turn up some code, that reasembles what you want done.  
-And then having to rewrite it afterwards for ones own purpose.
-```
+Now it is important to notice that !!!i am not a programmer!!! and this has been a learning process for me. 
+I started creating this script by scouring the internet for pieces of code here and there, that i could understand and then rewrite for my purpose.  
+And ended up spending too mush time not enough progress. 
 
-Luckily enough ChatGPT came out and with that i was able to ask more specifically for the code that i needed and it would answer me with some great options.  
+Luckily enough ChatGPT came out, and with that i was able to ask more specifically for the code, that i needed and it would answer me with some great options.  
 Of cource this still take quite some time to make ChatGPT understand every part of what i need.  
-Including when the code didn't actually work 100% all of the time.
+Including when the code didn't actually work 100% all of the time.  
 
-```
-at this point in time our script i working for uour need, and i will proberly not be adding any ny features or maintailit.
-however i would love for someone else to fork my project or enhancing or othervise making it better, for everyerone to enjouy (including us)
-```
-If anyone would like to fork this and make a better version.  
-I would be glad that someone had seen the potential in my little Python3 script and found a way to improve it.
+At this point in time, the script i working for our need, and i will proberly not be adding any new features or maintain.  
+However i would love for someone else to fork my project, enhancing or othervise make it better, for everyerone to enjouy (including us)
 
 ----
 
@@ -50,7 +44,7 @@ I would be glad that someone had seen the potential in my little Python3 script 
     - We use it to send an MQTT message to HomeAssistant.  
     Then it will send a signal to an ESP32 with ESPHome.  
     That is connected to the GPIO's of a PI4 to safely shutdown.  
-    Then it will take the power from the Switch when there havent been a ping for 3 minutes  
+    Then it will take the power from the Switch when there haven't been a ping for 3 minutes  
 
 ----
 
@@ -60,14 +54,14 @@ I would be glad that someone had seen the potential in my little Python3 script 
 	``cd /your/script/location``  
 	`git clone https://github.com/D4rk-5ky/Syncerate Syncerate`
 
-2. Then make a list of Source datasets.  
-	And a list of Destination datasets
+2. [Then make a list of Source datasets.](#21-lets-make-the-sources-list-first-21-lets-make-the-sources-list-first)  
+  [And a list of Destination datasets](#22-then-the-destination-list-is-a-little-more-loose)
 
-3. Then we start editing the Syncerate.cfg file
+3. [Then we start editing the Syncerate.cfg file](#3-editing-the-synceratecfg)
 
-4. Create an MQTT message (If so desired)
+4. [Create an MQTT message (If so desired)](#4-mqtt-with-homeassistant)
 
-5. Execute the script
+5. [Execute the script](#5-executing-the-script)
 
 ----
 
@@ -104,18 +98,18 @@ Use whatever text editor such as Nano or Vim to make a file with the desired sou
 ----
 
 ### 2.2  Then the destination list is a little more loose.
-You can decide yourself where you wish to safe the Dataets on the receiving end.
+You can decide yourself where you wish to safe the Datasets on the receiving end.
 
 Destination example is located in the config folder in the git clone
 
-```
-To check that the datasets goes to the right places, the script compares the last part of the Dataset's name's from source- and distination-file. To ensure they are transferred to the right location.
-if the end names does not match the script will pass an error (terminal, log-file, and email if configured)
-```
+To check that the datasets goes to the right places, the script compares the last part of the Dataset's name's from source and destination file.  
+To ensure they are transferred to the right location.  
+If the end names does not match the script will pass an error (terminal, log-file, and email if configured)  
 
 The zpool your send the datasets to, can be any name you like (BackUp in this example)
-But if you want the dataset on the receving end, to be inside another dataset (Docker-SyncoidTest in this example). You will have to manually create that dataset yourself.
-The script can only create the dataset's that it is receiving not any datasets before it (Docker-SyncoidTest in this example).
+But if you want the dataset on the receving end, to be inside another dataset (Docker-SyncoidTest in this example).  
+You will have to manually create that dataset yourself.
+The script does not have the ability to create datasets it self, but Syncoid will create the dataset you send. At the location your choose (Docker-SyncoidTest in this example).
 
 So i would prepare that with
 
@@ -187,8 +181,8 @@ Use the text editor of your choice and go though the file one step at a time
 `DestListPath=/dest/to/destinationlist`
 
 ### The desired Syncoid command yo use
-Thanks to Jim salter there is a lot of options to use with [Syncoid](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid)  
-Best to read up on it on the [Syncoid](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid) Wiki
+Thanks to [Jim Salter's](https://github.com/jimsalterjrs) there is a lot of options to use with [Syncoid](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid)  
+Best to read up on it on the [Syncoid Wiki](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid)
 
 This is merely meant as a guidance
 
@@ -206,14 +200,15 @@ Remember you either need to be root on the Sending/Receiving end.
 Or add the required ZFS permission for you user
 
 ### dont remove `SourceDataset` and `DestDataSet` they are hardcoded variables in the script (!!!NOT to be renamed!!!)    
-### Since when looping over the datasets in the source/dest files, these hardcoded variables will be changed to the corresponding datasets from the lists in the each files. (fx Storage/Wallabag, BackUp/SynCoid-Test/Wallabag ... etc.) 
+### Since when looping over the datasets in the source/dest files, these hardcoded variables will be changed to the corresponding datasets from the lists in the each files. 
+### (fx Storage/Wallabag, BackUp/SynCoid-Test/Wallabag ... etc.) 
 
 `SyncoidCommand=syncoid <UserName>@<IP>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey <DestToSSHKey> --no-privilege-elevation`
 
 ### Next if you have a password, either for SSH or a keyfile insert it here. 
   - `PassWord=No` (if you dont have a password)
-  - `PassWord=Ask` (the script will stop and ask for a password to be typed in terminal and will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg-file and written to the terminal while running the script))
-  - `PassWord=<password>` (insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg-file and written to the terminal while running the script)
+  - `PassWord=Ask` (the script will stop and ask for a password to be typed in terminal and will automaticaly input the password when needed. It will not be saved to logs or mail, but it is still written to the terminal while running the script))
+  - `PassWord=<password>` (insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg file and written to the terminal while running the script)
 	
 ### If you wish to receive a mail on Succes/Failure. Insert a mail here. 
   - `Mail=No` (if you dont want mail)
@@ -227,36 +222,30 @@ Or add the required ZFS permission for you user
   - This will create a `.log`, a `.out` and in case of error a `.err` file.
   - These files will be attached to the email if `Mail=` is enabled
 
-### The script is also able to perform a action like Shutdown or Reboot after a succesfull run 
+### The script is also able to perform an action like Shutdown or Reboot after a succesfull run 
   - `SystemAction=No` (No if not needed)
-  - In case of an error this wont be performed so one can track down the issue instead of just believing it had done its job.
+  - In case of an error this command wont be executed, so one can track down the issue instead of just believing it had done its job.
 
 `SystemAction=shutdown -P now`
 
 ### The script can also send a message over MQTT
-  - (Optional - Write No if not needed)
-  - This may be usefull, in case one would like an action performed after the backup is complete.
-
-```
-Use_MQTT=yes
-broker_address=<IP>
-broker_port=<Port>
-mqtt_username=<UserName>
-mqtt_password=<PassWord>
-mqtt_topic=<Topic to post to>
-mqtt_message=ON
-```
+  - `Use_MQTT=Yes` (Optional - Write No if not needed)
+  - `broker_address=<IP>` (Your MQTT broker IP or hostname)
+  - `broker_port=<Port>` (Your MQTT broker port)
+  - `mqtt_username=<UserName>` (This is required, i have not made anonymous acces to MQTT possible)
+  - `mqtt_password=<PassWord>` (This is required, i have not made anonymous acces to MQTT possible)
+  - `mqtt_topic=<Topic to post to>` (Topic to send message to)
+  - `mqtt_message=ON` (Message to be send to the topic)
+  - This may be usefull, in case one would like an action performed after the backup is complete by the help of MQTT.
 
 ### This next part, is in case the message is for HomeAssistant's MQTT integration
-  - We use it to send an MQTT message to HomeAssistant.
-  - Then it will send a signal to an ESP32 with ESPHome.
-  - That is connected to the GPIO's of a PI4 to safely shutdown.
-  - Then it will take the power from the Switch when there havent been a ping for 3 minutes
+  - `Use_HomeAssistant=Yes` (Optional - Write No if not needed)
+  - `HomeAssistant_Available=home-assistant/Syncerate/available` (required by Homeassistant to make the Topic available)
+    - We use it to send an MQTT message to HomeAssistant.
+    - Then it will send a signal to an ESP32 with ESPHome.
+    - That is connected to the GPIO's of a PI4 to safely shutdown.
+    - Then it will take the power from the Switch when there havent been a ping for 3 minutes
 
-```
-Use_HomeAssistant=Yes
-HomeAssistant_Available=home-assistant/Syncerate/available
-```
 
 ----
 
