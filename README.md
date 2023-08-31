@@ -54,7 +54,8 @@ However i would love for someone else to fork my project, enhancing or othervise
 	``cd /your/script/location``  
 	`git clone https://github.com/D4rk-5ky/Syncerate Syncerate`
 
-2. [Then make a list of Source datasets.](#21-lets-make-the-sources-list-first) [And a list of Destination datasets.](#22-then-the-destination-list-is-a-little-more-loose)  
+2. [Then make a list of Source datasets.](#21-lets-make-the-sources-list-first)  
+  [And a list of Destination datasets.](#22-then-the-destination-list-is-a-little-more-loose)  
 
 3. [Then we start editing the Syncerate.cfg file](#3-editing-the-synceratecfg)
 
@@ -97,6 +98,7 @@ Use whatever text editor such as Nano or Vim to make a file with the desired sou
 ----
 
 ### 2.2  Then the destination list is a little more loose.
+
 You can decide yourself where you wish to safe the Datasets on the receiving end.
 
 Destination example is located in the config folder in the git clone
