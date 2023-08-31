@@ -97,7 +97,7 @@ def send_mail(subject, body, recipient, attachment_files=None):
 # FIx and make sure to make it possible to send error message even if .out file is not created yet
 def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 	# Define recipient
-	recipient = (config.get('SynCoid Config', 'Mail'))
+	recipient = (config.get('Syncerate Config', 'Mail'))
 
 	logger.info('')
 	logger.info('----------')
@@ -316,14 +316,14 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 		global mqtt_message
 		
 		# This is for the MQTT server information
-		broker_address = config.get('SynCoid Config', 'broker_address')
-		broker_port = config.get('SynCoid Config', 'broker_port')
+		broker_address = config.get('Syncerate Config', 'broker_address')
+		broker_port = config.get('Syncerate Config', 'broker_port')
 		broker_port = int(broker_port)
-		mqtt_username = config.get('SynCoid Config', 'mqtt_username')
-		mqtt_password = config.get('SynCoid Config', 'mqtt_password')
+		mqtt_username = config.get('Syncerate Config', 'mqtt_username')
+		mqtt_password = config.get('Syncerate Config', 'mqtt_password')
 	
 		if Use_HomeAssistant == "Yes":
-			mqtt_topic = config.get('SynCoid Config', 'HomeAssistant_Available')
+			mqtt_topic = config.get('Syncerate Config', 'HomeAssistant_Available')
 			mqtt_message = "online"
 
 			# Create MQTT client instance
@@ -344,8 +344,8 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 			# Start the MQTT network loop
 			client.loop_forever()
 
-			mqtt_topic = config.get('SynCoid Config', 'mqtt_topic')
-			mqtt_message = config.get('SynCoid Config', 'mqtt_message')
+			mqtt_topic = config.get('Syncerate Config', 'mqtt_topic')
+			mqtt_message = config.get('Syncerate Config', 'mqtt_message')
 
 			client = mqtt.Client()
 			client.enable_logger(logging.getLogger("paho"))
@@ -355,8 +355,8 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 			client.loop_forever()
 
 		else:
-			mqtt_topic = config.get('SynCoid Config', 'mqtt_topic')
-			mqtt_message = config.get('SynCoid Config', 'mqtt_message')
+			mqtt_topic = config.get('Syncerate Config', 'mqtt_topic')
+			mqtt_message = config.get('Syncerate Config', 'mqtt_message')
 
 			client = mqtt.Client()
 			client.enable_logger(logging.getLogger("paho"))
@@ -411,26 +411,26 @@ config = configparser.RawConfigParser()
 config.read(args.conf)
 
 # This is to get the mail or "No" option for mail
-MailOption = (config.get('SynCoid Config', 'Mail'))
+MailOption = (config.get('Syncerate Config', 'Mail'))
 
 # This is for the command after the script has succesfully run
-SystemOption = (config.get('SynCoid Config', 'SystemAction'))
+SystemOption = (config.get('Syncerate Config', 'SystemAction'))
 
 
 # This is for the MQTT option
-Use_MQTT = config.get('SynCoid Config', 'Use_MQTT')
+Use_MQTT = config.get('Syncerate Config', 'Use_MQTT')
 Use_MQTT = Use_MQTT.capitalize()
 
 # This is for the HomeAssistant MQTT option
-Use_HomeAssistant = config.get('SynCoid Config', 'Use_HomeAssistant')
+Use_HomeAssistant = config.get('Syncerate Config', 'Use_HomeAssistant')
 Use_HomeAssistant = Use_HomeAssistant.capitalize()
 
 # This is for creating the Date format for the Log Files
-DateTime = config.get('SynCoid Config', 'DateTime')
+DateTime = config.get('Syncerate Config', 'DateTime')
 time_now  = datetime.datetime.now().strftime(DateTime)
 
 # This is for the logfile creation
-LogDestination=config.get('SynCoid Config', 'LogDestination')
+LogDestination=config.get('Syncerate Config', 'LogDestination')
 
 #if not LogDestination.startswith("/") or not LogDestination.startswith("./"):
 #	LogDestination = LogDestination.capitalize
@@ -524,14 +524,14 @@ for section in config.sections():
 		
 
 # Check if the "syncoid command" is in use
-if config.get('SynCoid Config','SyncoidCommand').startswith("syncoid") == True:
+if config.get('Syncerate Config','SyncoidCommand').startswith("syncoid") == True:
 	logger.info('The syncoid command is in use')
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
 
 # Import the Source file to a Python3 list
-SourceListImport = open(config.get('SynCoid Config', 'SourceListPath'), "r")
+SourceListImport = open(config.get('Syncerate Config', 'SourceListPath'), "r")
 SourceLines = SourceListImport.read().splitlines()
 logger.info('Items in the Source list    :   %s', SourceLines)
 logger.info('Number of items in the Source list    :   %i', (len(SourceLines)))
@@ -540,7 +540,7 @@ print('')
 logger.info('')
 
 # Import the Destination file to a Python3 list
-DestListImport = open(config.get('SynCoid Config', 'DestListPath'), "r")
+DestListImport = open(config.get('Syncerate Config', 'DestListPath'), "r")
 DestLines = DestListImport.read().splitlines()
 logger.info('Items in the Destiantion list    %s:   ', DestLines)
 logger.info('Number of items in the Source list    :   %i', len(DestLines))
@@ -578,7 +578,7 @@ else:
 	missmatchinglists(Lenght=False, Names=True)
 
 # Get the choice for a password from the config
-PassWordOption=(config.get('SynCoid Config', 'PassWord'))
+PassWordOption=(config.get('Syncerate Config', 'PassWord'))
 
 if PassWordOption.capitalize() == 'Ask':
 	PassWord = getpass('PLz. insert a desiret password if needed :    ')
@@ -606,7 +606,7 @@ else:
 	print('')
 
 # Get the Syncoid command to be altered
-SyncoidCommand=config.get('SynCoid Config', 'SyncoidCommand')
+SyncoidCommand=config.get('Syncerate Config', 'SyncoidCommand')
 
 # This is in case the thee pexpect/syncoid command fails
 # I am not sure it will catch all errors
