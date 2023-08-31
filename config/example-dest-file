@@ -1,17 +1,17 @@
-Storage/Docker-SyncerateTest/Archivy
-Storage/Docker-SyncerateTest/DataSet With Spaces
-Storage/Docker-SyncerateTest/Grafana
-Storage/Docker-SyncerateTest/HedgeDoc
-Storage/Docker-SyncerateTest/Heimdall
-Storage/Docker-SyncerateTest/Home-Assistant
-Storage/Docker-SyncerateTest/Joplin
-Storage/Docker-SyncerateTest/Kavita
-Storage/Docker-SyncerateTest/Media
-Storage/Docker-SyncerateTest/Mosquitto
-Storage/Docker-SyncerateTest/NextCloud
-Storage/Docker-SyncerateTest/Podcasts
-Storage/Docker-SyncerateTest/Portainer
-Storage/Docker-SyncerateTest/SyncThing
-Storage/Docker-SyncerateTest/Vikunja
-Storage/Docker-SyncerateTest/WallaBag
-Storage/Docker-SyncerateTest/WatchTower
+BackUp/Docker-SyncerateTest/Archivy
+BackUp/Docker-SyncerateTest/DataSet With Spaces
+BackUp/Docker-SyncerateTest/Grafana
+BackUp/Docker-SyncerateTest/HedgeDoc
+BackUp/Docker-SyncerateTest/Heimdall
+BackUp/Docker-SyncerateTest/Home-Assistant
+BackUp/Docker-SyncerateTest/Joplin
+BackUp/Docker-SyncerateTest/Kavita
+BackUp/Docker-SyncerateTest/Media
+BackUp/Docker-SyncerateTest/Mosquitto
+BackUp/Docker-SyncerateTest/NextCloud
+BackUp/Docker-SyncerateTest/Podcasts
+BackUp/Docker-SyncerateTest/Portainer
+BackUp/Docker-SyncerateTest/SyncThing
+BackUp/Docker-SyncerateTest/Vikunja
+BackUp/Docker-SyncerateTest/WallaBag
+BackUp/Docker-SyncerateTest/WatchTower
