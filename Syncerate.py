@@ -59,13 +59,6 @@ def mqtt_connect (client, userdata, flags, rc):
 			client.disconnect()
 		
 		else:
-		
-			logger.error('')
-			logger.error('----------')
-			logger.error('')
-			logger.error('Failed publishing message to MQTT')
-			logger.error('')
-			logger.error('This is the return code %d\n', rc)
 			raise Exception('Failed publishing message to MQTT')
 	
 	except Exception as e:
@@ -106,16 +99,16 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 
 	if Exit_Code == 0:
 
-		if LogDestination.capitalize() != "No":
+		if LogDestination.upper() != "NO":
 
 			# Define subject
 			subject = "Successful Syncerate.py run - No errors found (Attaching logs)"
 
 			# Define message body and attached files
-			attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "out"]]
+			attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "out"]]
 			
 			# Open the attachment file and execute the mail command using subprocess
-			with open(LogDestination + 'SynCoidIterate-' + time_now + ".log", 'r') as log_file:
+			with open(LogDestination + 'Syncerate-' + time_now + ".log", 'r') as log_file:
 				log_contents = log_file.read()
 				body = "----------\n\n.log file\n\n----------\n\n" + log_contents + "\n\n----------"
 				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
@@ -125,29 +118,34 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			# Define subject and message body
 			subject_and_body = "Successful Syncerate.py run - No errors found (Logs Disabled)"
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+		
+		if mail_exit_code == 0:
+			WasMailSent(0, "")
+		else:
+			WasMailSent(mail_exit_code, stderr_output)
 
 	elif SynCoidFail:
 		
-		if LogDestination.capitalize() != "No":
+		if LogDestination.upper() != "NO":
 			# Define subject
 			subject = "Error running Syncerate.py - Syncoid error occurred (Attaching logs)"
 
 			# Define message body and attached files
-			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+			if os.path.isfile(LogDestination + "Syncerate-" + time_now + ".out"):
+				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
 			else:
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err"]]
 
 			# Start with an empty body
 			body = ""
 
 			# Read contents of .err file
-			with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+			with open(LogDestination + 'Syncerate-' + time_now + ".err", 'r') as error_file:
 				error_contents = error_file.read()
 				body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
 
 			# Check if .out file exists and read its contents
-			out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+			out_file_path = LogDestination + 'Syncerate-' + time_now + ".out"
 			if os.path.isfile(out_file_path):
 				with open(out_file_path, 'r') as out_file:
 					out_contents = out_file.read()
@@ -164,30 +162,35 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
 
+		if mail_exit_code == 0:
+			WasMailSent(0, "")
+		else:
+			WasMailSent(mail_exit_code, stderr_output)
+
 		sys.exit(SynCoidFail)
 
 	elif not Exit_Code == 0 and not Exit_Code == None:
 
-		if LogDestination.capitalize() != "No":
+		if LogDestination.upper() != "NO":
 			# Define subject
 			subject = "Error running Syncerate.py - This was a script error (Attaching logs)"
 
 			# Define message body and attached files
-			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+			if os.path.isfile(LogDestination + "Syncerate-" + time_now + ".out"):
+				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
 			else:
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err"]]
 			
 			# Start with an empty body
 			body = ""
 
 			# Read contents of .err file
-			with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+			with open(LogDestination + 'Syncerate-' + time_now + ".err", 'r') as error_file:
 				error_contents = error_file.read()
 				body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
 
 			# Check if .out file exists and read its contents
-			out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+			out_file_path = LogDestination + 'Syncerate-' + time_now + ".out"
 			if os.path.isfile(out_file_path):
 				with open(out_file_path, 'r') as out_file:
 					out_contents = out_file.read()
@@ -196,7 +199,6 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
 
-			sys.exit(Exit_Code)
 		else:
 
 			# Define subject and message body
@@ -204,29 +206,36 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			
 			# Send the Mail
 			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+
+		if mail_exit_code == 0:
+			WasMailSent(0, "")
+		else:
+			WasMailSent(mail_exit_code, stderr_output)
+
+		sys.exit(Exit_Code)
 	
 	elif MQTT_Fail:
 
-		if LogDestination.capitalize() != "No":
+		if LogDestination.upper() != "NO":
 			# Define subject
 			subject = "Error sending MQTT message - (Attaching logs)"
 
 			# Define message body and attached files
-			if os.path.isfile(LogDestination + "SynCoidIterate-" + time_now + ".out"):
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
+			if os.path.isfile(LogDestination + "Syncerate-" + time_now + ".out"):
+				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err", "out"]]
 			else:
-				attachment_files = [f"{LogDestination}SynCoidIterate-{time_now}.{ext}" for ext in ["log", "err"]]
+				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err"]]
 			
 			# Start with an empty body
 			body = ""
 
 			# Read contents of .err file
-			with open(LogDestination + 'SynCoidIterate-' + time_now + ".err", 'r') as error_file:
+			with open(LogDestination + 'Syncerate-' + time_now + ".err", 'r') as error_file:
 				error_contents = error_file.read()
 				body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
 
 			# Check if .out file exists and read its contents
-			out_file_path = LogDestination + 'SynCoidIterate-' + time_now + ".out"
+			out_file_path = LogDestination + 'Syncerate-' + time_now + ".out"
 			if os.path.isfile(out_file_path):
 				with open(out_file_path, 'r') as out_file:
 					out_contents = out_file.read()
@@ -247,7 +256,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			WasMailSent(0, "")
 		else:
 			WasMailSent(mail_exit_code, stderr_output)
-
+		
 		sys.exit(MQTT_Fail)
 
 def WasMailSent(MailExitCode, popenstderr):
@@ -268,7 +277,7 @@ def WasMailSent(MailExitCode, popenstderr):
 		logger.error('----------')
 
 def SystemAction():
-	if not MailOption.capitalize() == "No":
+	if not MailOption.upper() == "NO":
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
@@ -289,7 +298,7 @@ def SystemAction():
 
 		os.system(SystemOption)
 
-	elif not SystemOption == "No" and MailOption.capitalize() == "No":
+	elif not SystemOption.upper() == "NO" and MailOption.upper() == "NO":
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
@@ -309,8 +318,37 @@ def SystemAction():
 
 def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 
+	logger.info('')
+	logger.info('----------')
+	logger.info('')
+	logger.info('The Script ended succesfully')
+	logger.info('')
+	logger.info('Now going over MAIL, MQTT and System Option, if option is set in the .cfg file')
+	logger.info('')
+	logger.info('Errors for these can still be raised, at this point of the script')
+	logger.info('')
+	
+	if not LogDestination.upper() == "NO":
+		with open(LogDestination + 'Syncerate-' + time_now + ".out", 'a') as fout:
+			lines_of_text = [
+				"",
+				"----------",
+				"",
+				"The Script ended succesfully",
+				"",
+				"Now going over MAIL, MQTT and System Option, if option is set in the .cfg file",
+				"",
+				"Errors for these can still be raised, at this point of the script",
+				"",
+				"----------",
+				"",
+			]
+
+			for line in lines_of_text:
+				fout.write(line + "\n")
+	
 	# Decide if there is an MQTT option
-	if MQTT == "Yes":
+	if MQTT == "YES":
 		
 		global mqtt_topic
 		global mqtt_message
@@ -322,7 +360,7 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 		mqtt_username = config.get('Syncerate Config', 'mqtt_username')
 		mqtt_password = config.get('Syncerate Config', 'mqtt_password')
 	
-		if Use_HomeAssistant == "Yes":
+		if Use_HomeAssistant == "YES":
 			mqtt_topic = config.get('Syncerate Config', 'HomeAssistant_Available')
 			mqtt_message = "online"
 
@@ -339,7 +377,18 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 			client.on_connect = mqtt_connect
 
 			# Connect to the broker
-			client.connect(broker_address, broker_port)
+			try:
+				# Attempt to connect to the MQTT broker
+				client.connect(broker_address, broker_port)
+			except OSError as e:
+				# Handle the specific error [Errno 113] No route to host
+				if e.errno == 113:
+					logger.error('MQTT server is not reachable. Check IP and Port.')
+					# Add your specific error handling code here
+				else:
+					logger.error(f'Failed to connect to MQTT broker: {str(e)}')
+
+				die(None, None, None, None, e)  # Handle the error appropriately
 
 			# Start the MQTT network loop
 			client.loop_forever()
@@ -351,7 +400,19 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 			client.enable_logger(logging.getLogger("paho"))
 			client.username_pw_set(mqtt_username, mqtt_password)
 			client.on_connect = mqtt_connect
-			client.connect(broker_address, broker_port)
+			# Connect to the broker
+			try:
+				# Attempt to connect to the MQTT broker
+				client.connect(broker_address, broker_port)
+			except OSError as e:
+				# Handle the specific error [Errno 113] No route to host
+				if e.errno == 113:
+					logger.error('MQTT server is not reachable. Check IP and Port.')
+					# Add your specific error handling code here
+				else:
+					logger.error(f'Failed to connect to MQTT broker: {str(e)}')
+					
+				die(None, None, None, None, e)  # Handle the error appropriately
 			client.loop_forever()
 
 		else:
@@ -361,18 +422,30 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 			client = mqtt.Client()
 			client.enable_logger(logging.getLogger("paho"))
 			client.username_pw_set(mqtt_username, mqtt_password)
-			client.on_connect = mqtt_connect
+			try:
+				# Attempt to connect to the MQTT broker
+				client.connect(broker_address, broker_port)
+			except OSError as e:
+				# Handle the specific error [Errno 113] No route to host
+				if e.errno == 113:
+					logger.error('MQTT server is not reachable. Check IP and Port.')
+					# Add your specific error handling code here
+				else:
+					logger.error(f'Failed to connect to MQTT broker: {str(e)}')
+					
+				die(None, None, None, None, e)  # Handle the error appropriately
+
 			client.connect(broker_address, broker_port)
 			client.loop_forever()
 
 	if SendMail:
 		# Decide if there is an option to send mail
-		if not MailOption.capitalize() == "No":
+		if not MailOption.upper() == "NO":
 			MailTo(0)
 
 	if PerformSystemAction:
 		# Decide if there is a shutdown action for the system on succesfull comletion
-		if not SystemOption.capitalize() == "No":
+		if not SystemOption.upper() == "NO":
 			SystemAction()
 	
 # In case something is wrong with the List's
@@ -419,11 +492,11 @@ SystemOption = (config.get('Syncerate Config', 'SystemAction'))
 
 # This is for the MQTT option
 Use_MQTT = config.get('Syncerate Config', 'Use_MQTT')
-Use_MQTT = Use_MQTT.capitalize()
+Use_MQTT = Use_MQTT.upper()
 
 # This is for the HomeAssistant MQTT option
 Use_HomeAssistant = config.get('Syncerate Config', 'Use_HomeAssistant')
-Use_HomeAssistant = Use_HomeAssistant.capitalize()
+Use_HomeAssistant = Use_HomeAssistant.upper()
 
 # This is for creating the Date format for the Log Files
 DateTime = config.get('Syncerate Config', 'DateTime')
@@ -432,12 +505,8 @@ time_now  = datetime.datetime.now().strftime(DateTime)
 # This is for the logfile creation
 LogDestination=config.get('Syncerate Config', 'LogDestination')
 
-#if not LogDestination.startswith("/") or not LogDestination.startswith("./"):
-#	LogDestination = LogDestination.capitalize
-
-
 # This is to enable or disable Loggin
-if not LogDestination.capitalize() == "No":
+if not LogDestination.upper() == "NO":
 	if not LogDestination.endswith('/'):
 		LogDestination = LogDestination + "/"
 
@@ -446,9 +515,9 @@ if not LogDestination.capitalize() == "No":
 def get_logger(    
 		LOG_FORMAT     = '%(asctime)s %(levelname)s: %(message)s',
 		LOG_NAME       = '',
-		LOG_FILE_INFO  = LogDestination + "SynCoidIterate-" + time_now + ".log",
-		LOG_FILE_WARNING = LogDestination + "SynCoidIterate-" + time_now + ".err",
-		LOG_FILE_ERROR = LogDestination + "SynCoidIterate-" + time_now + ".err",
+		LOG_FILE_INFO  = LogDestination + "Syncerate-" + time_now + ".log",
+		LOG_FILE_WARNING = LogDestination + "Syncerate-" + time_now + ".err",
+		LOG_FILE_ERROR = LogDestination + "Syncerate-" + time_now + ".err",
     	enable_file_logging=True):
 
 	log           = logging.getLogger(LOG_NAME)
@@ -480,7 +549,7 @@ def get_logger(
 
 	return log
 
-if not LogDestination.capitalize() == "No":
+if not LogDestination.upper() == "NO":
 	logger = get_logger(enable_file_logging=True)
 else:
 	logger = get_logger(enable_file_logging=False)
@@ -580,7 +649,7 @@ else:
 # Get the choice for a password from the config
 PassWordOption=(config.get('Syncerate Config', 'PassWord'))
 
-if PassWordOption.capitalize() == 'Ask':
+if PassWordOption.upper() == 'ASK':
 	PassWord = getpass('PLz. insert a desiret password if needed :    ')
 	logger.info('')
 	logger.info('----------')
@@ -590,7 +659,7 @@ if PassWordOption.capitalize() == 'Ask':
 	print('')
 	print('This is the Password you have given  :   ', PassWord)
 	print('')
-elif PassWordOption.capitalize() == 'No':
+elif PassWordOption.upper() == 'NO':
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
@@ -610,31 +679,30 @@ SyncoidCommand=config.get('Syncerate Config', 'SyncoidCommand')
 
 # This is in case the thee pexpect/syncoid command fails
 # I am not sure it will catch all errors
-def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=None):
+def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=None, SynCoidFailChild=None):
 
 	if child:
 		logger.error('')
 		logger.error('This was a crash known by the script')
 		logger.error('')
 		logger.error('Check the logs to see what could be the problem')
-		logger.error('If non existing enable them, to track down the problem')
+		logger.error('If not logs exist, enable them to track down the problem')
 		logger.error('')
 		logger.error(errstr)
 		logger.error('')
-		logger.error(child.before)
-		logger.error('')
+		logger.error('This is the last part of Syncoid output   : ' + child.before)
 		logger.error('This is the warning/error   :   ' + child.after + child.buffer)
 		logger.error('')
-		logger.error('This is the exit code : ' + error_code)
+		logger.error('This is the script exit code : ' + error_code)
 		logger.error('')
 		child.terminate()
 
-		# I had problems that the exit code given to "die" function was "str", i couldten send "int" to "die" function instead but i could conver "str" to "int"
+		# I had problems that the exit code given to "die" function was "str", i couldten send "int" to "die" function instead but i could convert "str" to "int"
 		# This was understood from https://medium.com/@anupkumarray/working-with-exit-codes-between-python-shell-scripts-177931204291
 		integer_number = int(error_code)
 
 		# Send a mail related to script error
-		if not MailOption.capitalize() == "No":
+		if not MailOption.upper() == "NO":
 			MailTo(error_code)
 		else:
 			# Exit the script with the SynCoid exit status
@@ -647,8 +715,10 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 		logger.error('Check the logs to see what could be the problem')
 		logger.error('If non existing enable them, to track down the problem')
 		logger.error('')
+		logger.error('This is the last part of Syncoid output   : ' + "\n" + SynCoidFailChild.before)
+		logger.error('')
 
-		if not MailOption.capitalize() == "No":
+		if not MailOption.upper() == "NO":
 			MailTo(None, SynCoidFail)
 		else:
 			sys.exit(SynCoidFail)
@@ -660,8 +730,10 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 		logger.error('Check the logs to see what could be the problem')
 		logger.error('If non existing enable them, to track down the problem')
 		logger.error('')
+		logger.error('This is the MQTT exit code   : %s', MQTT_Fail)
+		logger.error('')
 
-		if not MailOption.capitalize() == "No":
+		if not MailOption.upper() == "NO":
 			MailTo(None, None, MQTT_Fail)
 		else:
 			sys.exit(MQTT_Fail)
@@ -682,8 +754,8 @@ def ssh_command(SynCoid_Command):
 	CONTINUENODESTROYSNAP = False
 
 	# spawn the child process
-	if not LogDestination.capitalize() == "No":
-		with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
+	if not LogDestination.upper() == "NO":
+		with open(LogDestination + 'Syncerate-' + time_now + ".out", 'a') as fout:
 			lines_of_text = [
 				"",
 				"----------",
@@ -695,8 +767,8 @@ def ssh_command(SynCoid_Command):
 	
 	child = pexpect.spawn(SynCoid_Command, timeout=None, encoding='utf-8')
 
-	if not LogDestination.capitalize() == "No":
-		fout = open(LogDestination + 'SynCoidIterate-' + time_now + ".out",'a')
+	if not LogDestination.upper() == "NO":
+		fout = open(LogDestination + 'Syncerate-' + time_now + ".out",'a')
 		child.logfile = fout
 
 	# set up a list of patterns to match
@@ -709,7 +781,7 @@ def ssh_command(SynCoid_Command):
 	    'Connection refused',
 	    'passphrase',
 		pexpect.EOF,
-		'dataset no longer exists',
+		'WARN Skipping dataset',
 		'WARN',
 	]
 
@@ -748,18 +820,21 @@ def ssh_command(SynCoid_Command):
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
+			break
 		elif index == 3:
 			# respond to 'Connection timed out'
 			die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
+			break
 		elif index == 4:
 			# respond to 'Connection refused'
 			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
+			break
 		elif index == 5:
 			# respond to 'passphrase'
-			if not LogDestination.capitalize() == "No":
+			if not LogDestination.upper() == "NO":
 				child.logfile = None
 			child.sendline (PassWord)
-			if not LogDestination.capitalize() == "No":
+			if not LogDestination.upper() == "NO":
 				child.logfile = fout
 		elif index == 6:
 			# respond to pexpect.EOF
@@ -767,9 +842,11 @@ def ssh_command(SynCoid_Command):
 		elif index == 7:
 			# respond to 'dataset does not exist'
 			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
+			break
 		elif index == 8:
 			# respond to 'WARN'
 			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
+			break
 
 	return child
 
@@ -778,6 +855,8 @@ def ssh_command(SynCoid_Command):
 def main():
 	global ISREPEATED
 	global CONTINUENODESTROYSNAP
+
+	KNOWNERROR = False
 
 	for (h, i) in zip(SourceLines, DestLines):
 		
@@ -812,32 +891,19 @@ def main():
 
 		if ((not child.exitstatus == 0) and (CONTINUENODESTROYSNAP == False)):
 			logger.error('')
-			logger.error('This is the SynCoid Exit status   :   %i', child.exitstatus)
-			logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
-			logger.error('')
-			ExitStatusAsInteger = int(child.exitstatus)
-			die(None, None, None, ExitStatusAsInteger)
 
-	logger.info('')
-	logger.info('----------')
-	logger.info('')
-	logger.info('The Script ended succesfully')
-	
-	if not LogDestination.capitalize() == "No":
-		with open(LogDestination + 'SynCoidIterate-' + time_now + ".out", 'a') as fout:
-			lines_of_text = [
-				"",
-				"----------",
-				"",
-				"The Script ended succesfully",
-				"",
-				"----------",
-				"",
-				# Add more lines as needed
-			]
+			if child.exitstatus is None:
+				logger.error('This is the SynCoid Exit status   :   %s', child.exitstatus)
+			else:
+				logger.error('This is the SynCoid Exit status   :   %i', child.exitstatus)
+				ExitStatusAsInteger = int(child.exitstatus)
+				die(None, None, None, ExitStatusAsInteger, None, child)
 
-			for line in lines_of_text:
-				fout.write(line + "\n")
+			if child.signalstatus is None:
+				logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
+			else:
+				logger.error('This is the SynCoid signal Status    :   %i', child.signalstatus)
+
 	
 	succesfull_run(Use_MQTT, MailOption, SystemOption)
 
