@@ -208,52 +208,53 @@ Or add the required ZFS permission for you user
 
 ### Next if you have a password, either for SSH or a keyfile insert it here. 
   - `PassWord=No` (if you dont have a password)
-  - `PassWord=Ask` (the script will stop and ask for a password to be typed in terminal and will automaticaly input the password when needed. It will not be saved to logs or mail, but it is still written to the terminal while running the script))
+  - `PassWord=Ask` (the script will stop and ask for a password to be typed in terminal and will automaticaly input the password when needed. It will not be saved to logs or mail, but it is still written to the terminal while running the script)
   - `PassWord=<password>` (insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg file and written to the terminal while running the script)
 	
 ### If you wish to receive a mail on Succes/Failure. Insert a mail here. 
-  - `Mail=No` (if you dont want mail)
-  - please note this needs something like `postfix` and the `mail` command available and setup beside this script
+  - `Mail=No` (Optional - No if you dont want mail)
+  - please note this needs something like `postfix` and the `mail` command available and setup beside this script  
+  niklas note: pleace note you need a mail program like postfix to send mail. at det er en form for mailprogram man skal bruge.
 
 `Mail=<example@mail.com>`
 
-### If you wish to have logs enabled (Generally a good idea) then insert a location here 
-  - `LogDetination=No` (If not needed)
-  - `LogDetination=</Dest/to/log/folder>` (The destination to the log folder)
-  - This will create a `.log`, a `.out` and in case of error a `.err` file.
-  - These files will be attached to the email if `Mail=` is enabled
+### If you wish to have logs enabled (Generally a good idea for debugging) then insert a location here 
+  - `LogDetination=No` (Optional - no If not needed)
+  - `LogDetination=</Dest/to/log/folder>` (The destination to the log folder)  
+  This will create a `.log`, a `.out` and in case of error a `.err` file.  
+  These files will be attached to the email if `Mail=` is enabled
 
-### The script is also able to perform an action like Shutdown or Reboot after a succesfull run 
-  - `SystemAction=No` (No if not needed)
-  - In case of an error this command wont be executed, so one can track down the issue instead of just believing it had done its job.
+### The script is able to perform an command like Shutdown, Reboot or execute a script after a succesfull run 
+  - `SystemAction=No` (Optional - No if not needed)  
+  - `SystemAction=shutdown -P now` (exampe: shutting down ubuntu)  
+  In case of an error this command wont be executed, so one can track down the issue instead of just believing it had done its job.
 
-`SystemAction=shutdown -P now`
-
-### The script can also send a message over MQTT
+### The script can send a message over MQTT
   - `Use_MQTT=Yes` (Optional - Write No if not needed)
   - `broker_address=<IP>` (Your MQTT broker IP or hostname)
   - `broker_port=<Port>` (Your MQTT broker port)
-  - `mqtt_username=<UserName>` (This is required, i have not made anonymous acces to MQTT possible)
-  - `mqtt_password=<PassWord>` (This is required, i have not made anonymous acces to MQTT possible)
+  - `mqtt_username=<UserName>` (!!! This is required !!!, i have not made anonymous acces to MQTT possible)
+  - `mqtt_password=<PassWord>` (!!! This is required !!!, i have not made anonymous acces to MQTT possible)
   - `mqtt_topic=<Topic to post to>` (Topic to send message to)
-  - `mqtt_message=ON` (Message to be send to the topic)
-  - This may be usefull, in case one would like an action performed after the backup is complete by the help of MQTT.
+  - `mqtt_message=ON` (Message to be send to the topic)  
+  This may be usefull, in case one would like an action performed after the backup is complete by the help of MQTT.
 
-### This next part, is in case the message is for HomeAssistant's MQTT integration
+### This next part, is in case the message is for the HomeAssistant's MQTT integration
   - `Use_HomeAssistant=Yes` (Optional - Write No if not needed)
-  - `HomeAssistant_Available=home-assistant/Syncerate/available` (required by Homeassistant to make the Topic available)
-    - We use it to send an MQTT message to HomeAssistant.
-    - Then it will send a signal to an ESP32 with ESPHome.
-    - That is connected to the GPIO's of a PI4 to safely shutdown.
-    - Then it will take the power from the Switch when there havent been a ping for 3 minutes
-
-
+  - `HomeAssistant_Available=home-assistant/Syncerate/available` (required by Homeassistant to make the Topic available)  
+  We use this to send an MQTT message to HomeAssistant to activate an automation to safely shutdown a RPI4.  
+    
+    First we send an MQTT message to HomeAssistant.  
+    Then we will send a signal to an ESP32 with ESPHome.  
+    That is connected to the GPIO's of a PI4 to safely shutdown.  
+    Then it will turn off the power to the RPI4's Switch, when there has not been a ping for 3 minutes 
+    
 ----
 
 ### 4. MQTT with HomeAssistant
 
-In case that HomeAssistant is the use case of MQTT
-One could use the yaml entity that is located under `config/HomeAssistant-Configuration-For-MQTT.yaml`
+In case you want to use MQTT with homeasistant  
+you can benefit from using my exampel yamel configuration file located here: `config/HomeAssistant-Configuration-For-MQTT.yaml`
 
 This should be inserted in configuration.yaml similar to
 
@@ -284,10 +285,8 @@ script: !include scripts.yaml
 scene: !include scenes.yaml
 ```
 
-Note, that Mosquitto needs a persistence database for the HomeAssistant entity to work.  
-And that one also needs to make sure, to set the entity to `OFF` when done.
-
-Or what ever action is performed when HomeAssistant receives the MQTT state will be triggered every time.
+Note, that Mosquitto need to be set to persistence in the MQTT config for the HomeAssistant MQTT entity to work.  
+And when done it is important to set the HomeAsssistant Entity to OFF, to make sure the automation does not repeat.  
 
 ![HomeAssistant Automation - 1](config/HomeAssistant%20Automation%20-%201.png)
 
@@ -303,7 +302,7 @@ Make sure the Python3 script is executable
 
 `chown +x ./Syncerate-py`
 
-The script is very easily executed like this when configured
+When configured the script is very easily executed like this: 
 
 `Syncerate.py -c ./config/Syncerate.cfg`
 
@@ -320,4 +319,16 @@ Or make it even better.
 
 Best regards,  
 Darkyere & Skynet
+
+
+This is my first contribution to the opensource comunity on github
+i spend a lot of time making this script work for us
+and i share it on github in hopes that it can help you too.
+
+feel free to fork and inhance and improve the script in any way you  may like
+
+bedst Regards
+Darkyere & Skynet
+
+
 
