@@ -370,14 +370,14 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 				logging.error(f'Failed to connect to MQTT broker: {str(e)}')
 			die(None, None, None, None, e)
 
-		# Publish a normal message
-		client.publish(mqtt_topic, mqtt_message, retain=True)
-
 		# Optionally, send a message if HomeAssistant is an option
 		if Use_HomeAssistant == "YES":
 			homeassistant_topic = config.get('Syncerate Config', 'HomeAssistant_Available')
 			homeassistant_message = "online"
 			client.publish(homeassistant_topic, homeassistant_message, retain=True)
+
+		# Publish a normal message
+		client.publish(mqtt_topic, mqtt_message, retain=True)
 
 		# Start the MQTT network loop
 		client.loop_forever()
