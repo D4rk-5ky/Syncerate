@@ -32,6 +32,7 @@ Including when the code didn't actually work 100% all of the time.
 
 At this point in time, the script i working for our own need, and i will proberly not be adding any new features or maintain it.  
 However i would love for someone else to fork my project, enhancing or othervise make it better, for everyone to enjouy (including us)
+If you would like to contribute directly to this project, make sure to checkout `Syncerate-Next`, edit it and then make a pull request.
 
 ----
 
