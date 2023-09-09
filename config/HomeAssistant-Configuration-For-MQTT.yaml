@@ -1,6 +1,6 @@
 mqtt:
   binary_sensor:
-  - name: "Syncoid Iterate"
+  - name: "Syncerate test"
     state_topic: "home-assistant/syncerate/command"
     payload_on: "ON"
     availability:
@@ -8,21 +8,4 @@ mqtt:
         payload_available: "online"
         payload_not_available: "offline"
     qos: 0
-    #device_class: opening
     value_template: "{{ value_json.state }}"
-  switch:
-    - unique_id: syncoid_switch
-      name: "Syncoid Switch"
-      state_topic: "homeassistant/syncoid-switch/switch"
-      command_topic: "homeassistant/syncoid-switch/switch/set"
-      availability:
-        - topic: "homeassistant/syncoid-switch/switch/available"
-          payload_available: "online"
-          payload_not_available: "offline"
-      payload_on: "ON"
-      payload_off: "OFF"
-      state_on: "ON"
-      state_off: "OFF"
-      optimistic: false
-      qos: 0
-      retain: true 

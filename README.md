@@ -1,10 +1,11 @@
 # Syncerate
 
-This is a Python3 script to use 
+This is a Python3 script that use's
 
-[Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid) 
+[Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid)  
+Thanks to the podcast [2.5 Admins](https://2.5admins.com/) now a part of  [Jupiter Broadcasting](https://www.jupiterbroadcasting.com/)
 
-To iterate though a list of Datasets to be send/recived with Syncoid.  
+It iterate's through a list of ZFS datasets to be send/received with Syncoid.  
 Making it easy to backup several ZFS datasets.  
 
 ----
@@ -15,32 +16,36 @@ Me and a friend started in 2020 making use of ZFS on both PI's and homemade serv
 It didn't take long to find [Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid) and making sure to setup a proper snapshot configuration.
 
 When it came to backing up from one location to another Syncoid is a great option well written and really useful.  
-Unfortunately the one dataset at a time, got real cumbersome rand time consuming.
+We just wanted to be able to send all the dataset's we had and its snapshots without having to redo the command's again.  
 
-So my friend and i started dreaming of a script for automating this teadius manual task.  
+So my friend and i started dreaming of a script to automate this.  
 That could go through a list of our dataset's and pull/send them in succession.  
 And the idea for this script was born.
 
-Now it is important to notice that !!!i am not a programmer!!! and this has been a learning process for me. 
+Now it is important to notice that <span style="color:red">i am not a programmer</span> and this has been a learning process for me.  
 I started creating this script by scouring the internet for pieces of code here and there, that i could understand and then rewrite for my purpose.  
-And ended up spending too mush time not enough progress. 
+And ended up spending too mush time and not enough progress. 
 
 Luckily enough ChatGPT came out, and with that i was able to ask more specifically for the code, that i needed and it would answer me with some great options.  
-Of cource this still take quite some time to make ChatGPT understand every part of what i need.  
+Of cource this still takes quite some time to make ChatGPT understand every part of what i need.  
 Including when the code didn't actually work 100% all of the time.  
 
-At this point in time, the script i working for our need, and i will proberly not be adding any new features or maintain.  
-However i would love for someone else to fork my project, enhancing or othervise make it better, for everyerone to enjouy (including us)
+At this point in time, the script i working for our own need, and i will proberly not be adding any new features or maintain it.  
+However i would love for someone else to fork my project, enhancing or othervise make it better, for everyone to enjouy (including us)
+
+----
+
+### Disclaimer: Use this at your own risk. I am not liable for any loss or damage occurred while you use this script. No batteries included.  
 
 ----
 
 ### It has included options like
 
 1. Go over a list of ZFS Dataset's and Send/Receive them to a Remote/Local ZFS POOL
-2. Logs
-3. Send Mail on error or succesfull run
-4. Shutdown the system when done
-5. Use MQTT to send a message in case that is needed.  
+2. Logs <span style="color:cyan">(Optional)</span>
+3. Send Mail on error or succesfull run <span style="color:cyan">(Optional)</span>
+4. Shutdown the system when done or perform a script <span style="color:cyan">(Optional)</span>
+5. Use MQTT to send a message in case that is needed. <span style="color:cyan">(Optional)</span>  
     - We use it to send an MQTT message to HomeAssistant.  
     Then it will send a signal to an ESP32 with ESPHome.  
     That is connected to the GPIO's of a PI4 to safely shutdown.  
@@ -65,7 +70,7 @@ However i would love for someone else to fork my project, enhancing or othervise
 
 ----
 
-### 2.1 lets make the sources list first.
+### 2.1 Lets make the sources list first.
 
 Source example is located in the config folder in the git clone
 
@@ -107,35 +112,35 @@ To check that the datasets goes to the right places, the script compares the las
 To ensure they are transferred to the right location.  
 If the end names does not match the script will pass an error (terminal, log-file, and email if configured)  
 
-The zpool your send the datasets to, can be any name you like (BackUp in this example)
+The zpool your send the datasets to, can be any name you like (BackUp in this example)  
 But if you want the dataset on the receving end, to be inside another dataset (Docker-SyncoidTest in this example).  
-You will have to manually create that dataset yourself.
-The script does not have the ability to create datasets it self, but Syncoid will create the dataset you send. At the location your choose (Docker-SyncoidTest in this example).
+You will have to manually create that dataset yourself.  
+The script does not have the ability to create dataset's by it self, but Syncoid will create the dataset you send, at the location your choose (Docker-Syncerate-Test in this example).
 
-So i would prepare that with
+So i would prepare the dataset i wanted to send/receive the dataset's to with a command similar to
 
-`zfs create BackUp/Docker-SyncoidTest`
+`zfs create BackUp/Docker-Syncerate-Test`
 
 lets create a list for the destination
 
 ```
-BackUp/Docker-SyncoidTest/Archivy
-BackUp/Docker-SyncoidTest/DataSet With Spaces
-BackUp/Docker-SyncoidTest/Grafana
-BackUp/Docker-SyncoidTest/HedgeDoc
-BackUp/Docker-SyncoidTest/Heimdall
-BackUp/Docker-SyncoidTest/Home-Assistant
-BackUp/Docker-SyncoidTest/Joplin
-BackUp/Docker-SyncoidTest/Kavita
-BackUp/Docker-SyncoidTest/Media
-BackUp/Docker-SyncoidTest/Mosquitto
-BackUp/Docker-SyncoidTest/NextCloud
-BackUp/Docker-SyncoidTest/Podcasts
-BackUp/Docker-SyncoidTest/Portainer
-BackUp/Docker-SyncoidTest/SyncThing
-BackUp/Docker-SyncoidTest/Vikunja
-BackUp/Docker-SyncoidTest/WallaBag
-BackUp/Docker-SyncoidTest/WatchTower
+BackUp/Docker-Syncerate-Test/Archivy
+BackUp/Docker-Syncerate-Test/DataSet With Spaces
+BackUp/Docker-Syncerate-Test/Grafana
+BackUp/Docker-Syncerate-Test/HedgeDoc
+BackUp/Docker-Syncerate-Test/Heimdall
+BackUp/Docker-Syncerate-Test/Home-Assistant
+BackUp/Docker-Syncerate-Test/Joplin
+BackUp/Docker-Syncerate-Test/Kavita
+BackUp/Docker-Syncerate-Test/Media
+BackUp/Docker-Syncerate-Test/Mosquitto
+BackUp/Docker-Syncerate-Test/NextCloud
+BackUp/Docker-Syncerate-Test/Podcasts
+BackUp/Docker-Syncerate-Test/Portainer
+BackUp/Docker-Syncerate-Test/SyncThing
+BackUp/Docker-Syncerate-Test/Vikunja
+BackUp/Docker-Syncerate-Test/WallaBag
+BackUp/Docker-Syncerate-Test/WatchTower
 ```
 
 Use the text editor of your choice (such as Nano or Vim) to make a file with the desired destination datasets.
@@ -185,8 +190,7 @@ Use the text editor of your choice and go though the file one step at a time
 Thanks to [Jim Salter's](https://github.com/jimsalterjrs) there is a lot of options to use with [Syncoid](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid)  
 Best to read up on it on the [Syncoid Wiki](https://github.com/jimsalterjrs/sanoid/wiki/Syncoid)
 
-This is merely meant as a guidance
-
+This is merely meant as a guidance  
 And might look something like this
 
 ```
@@ -198,62 +202,57 @@ SyncoidCommand="syncoid SourceDataSet <UserName>@<IP/HostName>:DestDataSet --com
 ```
 
 Remember you either need to be root on the Sending/Receiving end.  
-Or add the required ZFS permission for you user
+Or add the required ZFS permission for you user.  
 
-### dont remove `SourceDataset` and `DestDataSet` they are hardcoded variables in the script (!!!NOT to be renamed!!!)    
+### Dont remove `SourceDataset` and `DestDataSet` they are hardcoded variables in the script <span style="color:red">NOT to be renamed</span> 
 ### Since when looping over the datasets in the source/dest files, these hardcoded variables will be changed to the corresponding datasets from the lists in the each files. 
-### (fx Storage/Wallabag, BackUp/SynCoid-Test/Wallabag ... etc.) 
+### (Etc. the executed command with Storage/Wallabag in the source list and BackUp/Docker-Syncerate-Test/WallaBag in the destination list, would end up looking like this) 
 
-`SyncoidCommand=syncoid <UserName>@<IP>:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey <DestToSSHKey> --no-privilege-elevation`
+`SyncoidCommand=syncoid <UserName>@<IP>:Storage/Wallabag BackUp/Docker-Syncerate-Test/WallaBag --compress none --sshcipher chacha20-poly1305@openssh.com --sshport <Port> --sshkey <DestToSSHKey> --no-privilege-elevation`
 
-### Next if you have a password, either for SSH or a keyfile insert it here. 
-  - `PassWord=No` (if you dont have a password)
-  - `PassWord=Ask` (the script will stop and ask for a password to be typed in terminal and will automaticaly input the password when needed. It will not be saved to logs or mail, but it is still written to the terminal while running the script))
-  - `PassWord=<password>` (insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg file and written to the terminal while running the script)
-	
-### If you wish to receive a mail on Succes/Failure. Insert a mail here. 
-  - `Mail=No` (if you dont want mail)
-  - please note this needs something like `postfix` and the `mail` command available and setup beside this script
+### Next if you have a password, either for SSH or a keyfile insert it here.  
+  - `PassWord=No` <span style="color:cyan">(If you dont have a password)</span>  
+  - `PassWord=Ask` <span style="color:cyan">(the script will stop and ask for a password to be typed in the terminal and will automaticaly input the password when needed. It will not be saved to logs or mail, but it is still written to the terminal while running the script)</span>  
+  - `PassWord=<password>` <span style="color:cyan">(insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg file and written to the terminal while running the script) </span>  
 
-`Mail=<example@mail.com>`
-
-### If you wish to have logs enabled (Generally a good idea) then insert a location here 
-  - `LogDetination=No` (If not needed)
-  - `LogDetination=</Dest/to/log/folder>` (The destination to the log folder)
-  - This will create a `.log`, a `.out` and in case of error a `.err` file.
-  - These files will be attached to the email if `Mail=` is enabled
-
-### The script is also able to perform an action like Shutdown or Reboot after a succesfull run 
-  - `SystemAction=No` (No if not needed)
-  - In case of an error this command wont be executed, so one can track down the issue instead of just believing it had done its job.
-
-`SystemAction=shutdown -P now`
-
-### The script can also send a message over MQTT
-  - `Use_MQTT=Yes` (Optional - Write No if not needed)
-  - `broker_address=<IP>` (Your MQTT broker IP or hostname)
-  - `broker_port=<Port>` (Your MQTT broker port)
-  - `mqtt_username=<UserName>` (This is required, i have not made anonymous acces to MQTT possible)
-  - `mqtt_password=<PassWord>` (This is required, i have not made anonymous acces to MQTT possible)
-  - `mqtt_topic=<Topic to post to>` (Topic to send message to)
-  - `mqtt_message=ON` (Message to be send to the topic)
-  - This may be usefull, in case one would like an action performed after the backup is complete by the help of MQTT.
-
-### This next part, is in case the message is for HomeAssistant's MQTT integration
-  - `Use_HomeAssistant=Yes` (Optional - Write No if not needed)
-  - `HomeAssistant_Available=home-assistant/Syncerate/available` (required by Homeassistant to make the Topic available)
-    - We use it to send an MQTT message to HomeAssistant.
-    - Then it will send a signal to an ESP32 with ESPHome.
-    - That is connected to the GPIO's of a PI4 to safely shutdown.
-    - Then it will take the power from the Switch when there havent been a ping for 3 minutes
+### If you wish to receive a mail on Succes/Failure. Insert a mail here.  
+  - `Mail=No` <span style="color:cyan">(Optional - No if you dont want mail)</span>  
+  - `Mail=<example@mail.com>` <span style="color:cyan">(Example)</span>  
+  - please note this need a mail service like `postfix` and the `mail` command available and setup to send a mail.  
 
 
+### If you wish to have logs enabled (Generally a good idea for debugging) then insert a location here  
+  - `LogDetination=No` <span style="color:cyan">(Optional - No if not needed)</span>  
+  - `LogDetination=</Dest/to/log/folder>` <span style="color:cyan">(The destination to the log folder)</span>  
+  This will create a `.log`, an `.out` and in case of error an `.err` file.  
+  These files will be attached to the email if `Mail=` is enabled  
+
+### The script is able to perform a command like Shutdown, Reboot or execute a script after a succesfull run  
+  - `SystemAction=No` <span style="color:cyan">(Optional - No if not needed)</span>  
+  - `SystemAction=shutdown -P now` <span style="color:cyan">(Example: Shutting down Ubuntu)</span>  
+  In case of an error this command wont be executed, so one can track down the issue instead of just believing that it did what whas intended.  
+
+### The script can send a message over MQTT
+  - `Use_MQTT=Yes` <span style="color:cyan">(Optional - Write No if not needed)</span>  
+  - `broker_address=<IP>` <span style="color:cyan">(Your MQTT broker IP or hostname)</span>  
+  - `broker_port=<Port>` <span style="color:cyan">(Your MQTT broker port)</span>  
+  - `mqtt_username=<UserName>` (<span style="color:red">This is required if Use_MQTT=Yes,</span>, <span style="color:cyan">i have not made anonymous acces to MQTT possible</span>)  
+  - `mqtt_password=<PassWord>` (<span style="color:red">This is required if Use_MQTT=Yes,</span>, <span style="color:cyan">i have not made anonymous acces to MQTT possible</span>)  
+  - `mqtt_topic=<Topic to post to>` <span style="color:cyan">(Topic to send message to)</span>  
+  - `mqtt_message=<Message>` <span style="color:cyan">(Message to be send to the topic)</span>  
+  This could be usefull, in case that you would lik a message to be send by help of MQTT.
+
+### This next part, is in case the message is for the HomeAssistant's MQTT integration  
+  - `Use_HomeAssistant=Yes` <span style="color:cyan">(Optional - Write No if not needed)</span>  
+  - `HomeAssistant_Available=home-assistant/Syncerate/available` <span style="color:cyan">(required by Homeassistant to make the Topic available)</span>  
+  We use this to send an MQTT message to HomeAssistant to activate an automation to safely shutdown a RPI4.  
+    
 ----
 
 ### 4. MQTT with HomeAssistant
 
-In case that HomeAssistant is the use case of MQTT
-One could use the yaml entity that is located under `config/HomeAssistant-Configuration-For-MQTT.yaml`
+In case you want to use MQTT with Homeasistant.  
+You can benefit from using my example yaml configuration file located here: `config/HomeAssistant-Configuration-For-MQTT.yaml`
 
 This should be inserted in configuration.yaml similar to
 
@@ -267,15 +266,14 @@ tts:
 
 mqtt:
   binary_sensor:
-  - name: "Syncoid Iterate"
-    state_topic: "home-assistant/Syncerate/command"
+  - name: "Syncerate test"
+    state_topic: "home-assistant/syncerate/command"
     payload_on: "ON"
     availability:
-      - topic: "home-assistant/Syncerate/available"
+      - topic: "home-assistant/syncerate/available"
         payload_available: "online"
         payload_not_available: "offline"
     qos: 0
-    #device_class: opening
     value_template: "{{ value_json.state }}"
 
 group: !include groups.yaml
@@ -284,16 +282,12 @@ script: !include scripts.yaml
 scene: !include scenes.yaml
 ```
 
-Note, that Mosquitto needs a persistence database for the HomeAssistant entity to work.  
-And that one also needs to make sure, to set the entity to `OFF` when done.
-
-Or what ever action is performed when HomeAssistant receives the MQTT state will be triggered every time.
+Note, that Mosquitto need to be set to persistence in the MQTT config for the HomeAssistant MQTT entity to work.  
+And when done it is important to set the HomeAsssistant Entity to OFF, to make sure the automation does not repeat itself.  
 
 ![HomeAssistant Automation - 1](config/HomeAssistant%20Automation%20-%201.png)
 
 ![HomeAssistant Automation - 2 png](config/HomeAssistant%20Automation%20-%202.png)
-
-![HomeAssistant Automation - 3](config/HomeAssistant%20Automation%20-%203.png)
 
 -----
 
@@ -303,7 +297,7 @@ Make sure the Python3 script is executable
 
 `chown +x ./Syncerate-py`
 
-The script is very easily executed like this when configured
+When configured the script is very easily executed like this: 
 
 `Syncerate.py -c ./config/Syncerate.cfg`
 
@@ -311,13 +305,13 @@ The script is very easily executed like this when configured
 
 ### I sincerely hope you will find this useful.
 
-This is my first real way of trying to share something i have done.  
-Simply because i spend so much time on it, and made it work.  
+This is my first contribution to the opensource community on github.  
+I spend a lot of time to make this script work for us, and i share it on github in hopes that it can help you too.
 
-So i made this public on Github.  
-In hope others would find a use for it.  
-Or make it even better.  
+Feel free to fork, inhance and improve the script in any way you may like  
 
 Best regards,  
 Darkyere & Skynet
+
+
 
