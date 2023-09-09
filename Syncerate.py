@@ -39,36 +39,31 @@ import time
 # For sending a message over MQTT
 import paho.mqtt.client as mqtt
 
-def mqtt_connect (client, userdata, flags, rc):
-	global mqtt_topic
-	global mqtt_message
+def mqtt_connect(client, userdata, flags, rc, mqtt_topic, mqtt_message):
+    try:
+        if rc == 0:
+            logger.info('')
+            logger.info('----------')
+            logger.info('')
+            logger.info('Publishing Topic and Message to MQTT')
 
-	try:
-	
-		if rc == 0:
-		
-			logger.info('')
-			logger.info('----------')
-			logger.info('')
-			logger.info('Publishing Topic and Message to MQTT')
+            # Publish the message after connecting
+            client.publish(mqtt_topic, mqtt_message, retain=True)
 
-			# Publish the message after connecting
-			client.publish(mqtt_topic, mqtt_message, retain=True)
-
-			# Disconnect from the MQTT broker
-			client.disconnect()
-		
-		else:
-			raise Exception('Failed publishing message to MQTT')
-	
-	except Exception as e:
-		# Handle the exception and capture the error message
-		error_message = str(e)
-		logger.error('')
-		logger.error('----------')
-		logger.error('')
-		logger.error('MQTT Error message: ' + error_message)
-		die(None, None, None, None, rc)
+            # Disconnect from the MQTT broker
+            client.disconnect()
+        
+        else:
+            raise Exception('Failed publishing message to MQTT')
+    
+    except Exception as e:
+        # Handle the exception and capture the error message
+        error_message = str(e)
+        logger.error('')
+        logger.error('----------')
+        logger.error('')
+        logger.error('MQTT Error message: ' + error_message)
+        die(None, None, None, None, rc)
 	
 # This is is for the send mail part
 def send_mail(subject, body, recipient, attachment_files=None):
@@ -347,96 +342,45 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 			for line in lines_of_text:
 				fout.write(line + "\n")
 	
-	# Decide if there is an MQTT option
 	if MQTT == "YES":
-		
-		global mqtt_topic
-		global mqtt_message
-		
-		# This is for the MQTT server information
+		# Your MQTT logic here
+		mqtt_topic = config.get('Syncerate Config', 'mqtt_topic')
+		mqtt_message = config.get('Syncerate Config', 'mqtt_message')
 		broker_address = config.get('Syncerate Config', 'broker_address')
 		broker_port = config.get('Syncerate Config', 'broker_port')
 		broker_port = int(broker_port)
 		mqtt_username = config.get('Syncerate Config', 'mqtt_username')
 		mqtt_password = config.get('Syncerate Config', 'mqtt_password')
-	
-		if Use_HomeAssistant == "YES":
-			mqtt_topic = config.get('Syncerate Config', 'HomeAssistant_Available')
-			mqtt_message = "online"
 
-			# Create MQTT client instance
-			client = mqtt.Client()
+		 # Create MQTT client instance
+		client = mqtt.Client()
+		client.enable_logger(logging.getLogger("paho"))
+		client.username_pw_set(mqtt_username, mqtt_password)
+		client.on_connect = lambda client, userdata, flags, rc: mqtt_connect(client, userdata, flags, rc, mqtt_topic, mqtt_message)
 
-			# Enable logging for MQTT
-			client.enable_logger(logging.getLogger("paho"))
-
-			# Set username and password
-			client.username_pw_set(mqtt_username, mqtt_password)
-
-			# Assign callback function for connection event
-			client.on_connect = mqtt_connect
-
-			# Connect to the broker
-			try:
-				# Attempt to connect to the MQTT broker
-				client.connect(broker_address, broker_port)
-			except OSError as e:
-				# Handle the specific error [Errno 113] No route to host
-				if e.errno == 113:
-					logger.error('MQTT server is not reachable. Check IP and Port.')
-					# Add your specific error handling code here
-				else:
-					logger.error(f'Failed to connect to MQTT broker: {str(e)}')
-
-				die(None, None, None, None, e)  # Handle the error appropriately
-
-			# Start the MQTT network loop
-			client.loop_forever()
-
-			mqtt_topic = config.get('Syncerate Config', 'mqtt_topic')
-			mqtt_message = config.get('Syncerate Config', 'mqtt_message')
-
-			client = mqtt.Client()
-			client.enable_logger(logging.getLogger("paho"))
-			client.username_pw_set(mqtt_username, mqtt_password)
-			client.on_connect = mqtt_connect
-			# Connect to the broker
-			try:
-				# Attempt to connect to the MQTT broker
-				client.connect(broker_address, broker_port)
-			except OSError as e:
-				# Handle the specific error [Errno 113] No route to host
-				if e.errno == 113:
-					logger.error('MQTT server is not reachable. Check IP and Port.')
-					# Add your specific error handling code here
-				else:
-					logger.error(f'Failed to connect to MQTT broker: {str(e)}')
-					
-				die(None, None, None, None, e)  # Handle the error appropriately
-			client.loop_forever()
-
-		else:
-			mqtt_topic = config.get('Syncerate Config', 'mqtt_topic')
-			mqtt_message = config.get('Syncerate Config', 'mqtt_message')
-
-			client = mqtt.Client()
-			client.enable_logger(logging.getLogger("paho"))
-			client.username_pw_set(mqtt_username, mqtt_password)
-			try:
-				# Attempt to connect to the MQTT broker
-				client.connect(broker_address, broker_port)
-			except OSError as e:
-				# Handle the specific error [Errno 113] No route to host
-				if e.errno == 113:
-					logger.error('MQTT server is not reachable. Check IP and Port.')
-					# Add your specific error handling code here
-				else:
-					logger.error(f'Failed to connect to MQTT broker: {str(e)}')
-					
-				die(None, None, None, None, e)  # Handle the error appropriately
-
+		try:
+			# Attempt to connect to the MQTT broker
 			client.connect(broker_address, broker_port)
-			client.loop_forever()
+		except OSError as e:
+			# Handle the specific error [Errno 113] No route to host
+			if e.errno == 113:
+				logging.error('MQTT server is not reachable. Check IP and Port.')
+				# Add your specific error handling code here
+			else:
+				logging.error(f'Failed to connect to MQTT broker: {str(e)}')
+			die(None, None, None, None, e)
+
+		# Publish a normal message
+		client.publish(mqtt_topic, mqtt_message, retain=True)
+
+		# Optionally, send a message if HomeAssistant is an option
+		if Use_HomeAssistant == "YES":
+			homeassistant_topic = config.get('Syncerate Config', 'HomeAssistant_Available')
+			homeassistant_message = "online"
+			client.publish(homeassistant_topic, homeassistant_message, retain=True)
+
+		# Start the MQTT network loop
+		client.loop_forever()
 
 	if SendMail:
 		# Decide if there is an option to send mail
