@@ -1,2 +1,5 @@
 name: Syncerate
-theme: Leap Day
+description: [A python3 script to iterate through a list of ZFS dataset's with Syncoid]
+remote_theme: pages-themes/leap-day@v0.2.0
+plugins:
+- jekyll-remote-theme
