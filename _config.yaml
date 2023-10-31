@@ -1,6 +1,6 @@
 name: Syncerate
-description: [A python3 script to iterate through a list of ZFS dataset's with Syncoid]
+description: A python3 script to iterate through a list of ZFS datasets with Syncoid
 remote_theme: pages-themes/midnight@v0.2.0
 plugins:
 - jekyll-remote-theme
-show_downloads: [True]
+show_downloads: true
