@@ -3,10 +3,12 @@
 This is a Python3 script that use's
 
 [Jim Salter's](https://github.com/jimsalterjrs) : [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid)  
-Thanks to the podcast [2.5 Admins](https://2.5admins.com/) now a part of  [Jupiter Broadcasting](https://www.jupiterbroadcasting.com/)
+Thanks to the podcast [2.5 Admins](https://2.5admins.com/) a part of  [Late Night Linux Family](https://latenightlinux.com/)
 
 It iterate's through a list of ZFS datasets to be send/received with Syncoid.  
 Making it easy to backup several ZFS datasets.  
+
+This project can be found on my github repo [Syncerate](https://github.com/D4rk-5ky/Syncerate/tree/main)
 
 ----
 
