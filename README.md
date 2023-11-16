@@ -33,7 +33,7 @@ Of cource this still takes quite some time to make ChatGPT understand every part
 Including when the code didn't actually work 100% all of the time.  
 
 At this point in time, the script i working for our own need, and i will proberly not be adding any new features or maintain it.  
-However i would love for someone else to fork my project, enhancing or othervise make it better, for everyone to enjouy (including us)
+However i would love for someone else to fork my project, enhancing or othervise make it better, for everyone to enjoy (including us)  
 If you would like to contribute directly to this project, make sure to checkout `Syncerate-Next`, edit it and then make a pull request.
 
 ----
@@ -99,6 +99,7 @@ Storage/SyncThing
 Storage/Vikunja
 Storage/WallaBag
 Storage/WatchTower
+Other-ZFS-Pool/Dataset-Example
 ```
 
 Use whatever text editor such as Nano or Vim to make a file with the desired source datasets.
@@ -144,6 +145,7 @@ BackUp/Docker-Syncerate-Test/SyncThing
 BackUp/Docker-Syncerate-Test/Vikunja
 BackUp/Docker-Syncerate-Test/WallaBag
 BackUp/Docker-Syncerate-Test/WatchTower
+Other-ZFS-Pool/Dataset-Example
 ```
 
 Use the text editor of your choice (such as Nano or Vim) to make a file with the desired destination datasets.
@@ -164,7 +166,7 @@ An example .cfg file is located under the config folder in the git clone.
 | PassWord=                                                             | Optional                                                                   | A Password for ssh can be written in the .cfg-file, asked in the terminal or disabled with no                                                                      |
 | DateTime=                                                             | Yes                                                                        | The format that the logs will be saved in                                                                                                          |
 | LogDestination=                                                       | Optional                                                                   | A destination folder to save the logs to                                                                                                           |
-| SystemAction=                                                         | Optional                                                                   | A command like systemctl poweroff, shutdown -P now or even reboot (disable with no)                                                                                 |
+| SystemAction=                                                         | Optional                                                                   | A command like systemctl poweroff, shutdown -P now, reboot or even a script of your own making (disable with no)                                                                                 |
 | Use_MQTT=                                                             | Optional                                                                   | An MQTT broker like Mosquitto (disable with no)                                                                                                                     |
 | broker_address=                                                       | Required if "Use_MQTT" "Yes"                                               | The MQTT broker hostname or IP                                                                                                                     |
 | broker_port=                                                          | Required if "Use_MQTT" "Yes"                                               | The MQTT broker port number                                                                                                                        |
@@ -215,8 +217,8 @@ Or add the required ZFS permission for you user.
 
 ### Next if you have a password, either for SSH or a keyfile insert it here.  
   - `PassWord=No` <span style="color:cyan">(If you dont have a password)</span>  
-  - `PassWord=Ask` <span style="color:cyan">(the script will stop and ask for a password to be typed in the terminal and will automaticaly input the password when needed. It will not be saved to logs or mail, but it is still written to the terminal while running the script)</span>  
-  - `PassWord=<password>` <span style="color:cyan">(insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg file and written to the terminal while running the script) </span>  
+  - `PassWord=Ask` <span style="color:cyan">(The script will stop and ask for a password to be typed in the terminal and will automaticaly input the password when needed. It will not be saved to logs or mail, but it is still written to the terminal while running the script)</span>  
+  - `PassWord=<password>` <span style="color:cyan">(Insert your actual password. the script will automaticaly input the password when needed, and will not be saved to logs or mail, but is still in the cfg file and written to the terminal while running the script) </span>  
 
 ### If you wish to receive a mail on Succes/Failure. Insert a mail here.  
   - `Mail=No` <span style="color:cyan">(Optional - No if you dont want mail)</span>  
