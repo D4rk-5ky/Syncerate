@@ -700,6 +700,7 @@ def ssh_command(SynCoid_Command):
 	global CONTINUENODESTROYSNAP
 
 	CONTINUENODESTROYSNAP = False
+	CONTINUENORESUME = False
 
 	# spawn the child process
 	if not LogDestination.upper() == "NO":
@@ -797,9 +798,17 @@ def ssh_command(SynCoid_Command):
 			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
 			break
 		elif index == 9:
-			# respond to 'WARN'
-			CONTINUENODESTROYSNAP = True
-			return child
+			# respond to 'WARN: resetting partially receive state because the snapshot source no longer exists'
+			CONTINUENORESUME = True
+			logger.info('')
+			logger.info('----------')
+			logger.info('')
+			logger.info('The last transfer of a dataset failed and there is no matching snapshots between sender and receiver,')
+			logger.info('This is most likely due to the fact that the origional snapshot used for the transfer is missing and cant resume without that snapshot')
+			logger.info('')
+			logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
+			logger.info('')
+			SynCoid_Command = SynCoid_Command + " --no-resume"
 
 	return child
 
@@ -856,6 +865,19 @@ def main():
 				logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
 			else:
 				logger.error('This is the SynCoid signal Status    :   %i', child.signalstatus)
+
+		#if CONTINUENORESUME == True:
+		#		logger.info('')
+		#	logger.info('----------')
+		#	logger.info('')
+		#	logger.info('The last transfer of a dataset failed and there is no matching snapshots between sender and receiver,')
+		#	logger.info('This is most likely due to the fact that the origional snapshot used for the transfer is missing and cant resume without that snapshot')
+		#	logger.info('')
+		#	logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
+		#	logger.info('')
+		#	CONTINUENORESUME == False
+		#	SyncoidExecute = SyncoidExecute + " --no-resume"
+
 
 	
 	succesfull_run(Use_MQTT, MailOption, SystemOption)
