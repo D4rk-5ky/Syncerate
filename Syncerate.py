@@ -800,15 +800,19 @@ def ssh_command(SynCoid_Command):
 		elif index == 9:
 			# respond to 'WARN: resetting partially receive state because the snapshot source no longer exists'
 			CONTINUENORESUME = True
-			logger.info('')
-			logger.info('----------')
-			logger.info('')
-			logger.info('The last transfer of a dataset failed and there is no matching snapshots between sender and receiver,')
-			logger.info('This is most likely due to the fact that the origional snapshot used for the transfer is missing and cant resume without that snapshot')
-			logger.info('')
-			logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
-			logger.info('')
-			SynCoid_Command = SynCoid_Command + " --no-resume"
+
+	# Continue the loop to modify the command if needed
+	if CONTINUENORESUME:
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
+		logger.info('The last transfer of a dataset failed, and there are no matching snapshots between sender and receiver,')
+		logger.info('This is most likely due to the fact that the original snapshot used for the transfer is missing and can\'t resume without that snapshot')
+		logger.info('')
+		logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
+		logger.info('')
+		SynCoid_Command = SynCoid_Command + " --no-resume"
+	
 
 	return child
 
