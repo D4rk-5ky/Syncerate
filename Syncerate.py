@@ -468,6 +468,10 @@ def get_logger(
 	log_formatter = logging.Formatter(LOG_FORMAT)
 
 	if enable_file_logging:
+		# If log folder is missing, create it
+		os.makedirs(LogDestination, exist_ok=True)
+
+		# Set up log files
 		file_handler_info = logging.FileHandler(LOG_FILE_INFO, mode='w')
 		file_handler_info.setFormatter(log_formatter)
 		file_handler_info.setLevel(logging.INFO)
