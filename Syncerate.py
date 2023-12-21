@@ -732,7 +732,7 @@ def ssh_command(SynCoid_Command):
 		pexpect.EOF,
 		'WARN Skipping dataset',
 		'WARN',
-		'WARN: resetting partially receive state because the snapshot source no longer exists',
+		'used in the initial send no longer exists',
 	]
 
 	# MAc times a pattern must repeat
