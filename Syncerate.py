@@ -727,6 +727,7 @@ def ssh_command(SynCoid_Command):
 		pexpect.EOF,
 		'WARN Skipping dataset',
 		'WARN',
+		'WARN: resetting partially receive state because the snapshot source no longer exists',
 	]
 
 	# MAc times a pattern must repeat
@@ -791,6 +792,10 @@ def ssh_command(SynCoid_Command):
 			# respond to 'WARN'
 			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
 			break
+		elif index == 9:
+			# respond to 'WARN'
+			CONTINUENODESTROYSNAP = True
+			return child
 
 	return child
 
