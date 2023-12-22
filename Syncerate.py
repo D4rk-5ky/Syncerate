@@ -703,6 +703,9 @@ def ssh_command(SynCoid_Command):
 	CONTINUENODESTROYSNAP = False
 	CONTINUENORESUME = False
 
+	# Initialize modified command
+	modified_command = SynCoid_Command
+
 	# spawn the child process
 	if not LogDestination.upper() == "NO":
 		with open(LogDestination + 'Syncerate-' + time_now + ".out", 'a') as fout:
@@ -809,12 +812,11 @@ def ssh_command(SynCoid_Command):
 			logger.info('')
 			logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
 			logger.info('')
-			Modified_Command = SynCoid_Command + " --no-resume"
-			logger.info('The modified command reads : ' + Modified_Command)
+			modified_command = SynCoid_Command + " --no-resume"
+			logger.info('The modified command reads : ' + SynCoid_Command)
 			logger.info('')
-			return child, Modified_Command
 
-	return child
+	return child, modified_command
 
 # This is the main() part of the script
 # It is called after everything else have been imported/prepared
@@ -849,12 +851,14 @@ def main():
 		logger.info('')
 		logger.info('Ececuting the altered SynCoid Command    :   %s', SyncoidExecute)
 		
-		child, SyncoidCommand = ssh_command(SyncoidExecute)
+		# Call ssh_command and capture both the child object and the modified command
+		child, modified_command = ssh_command(SyncoidExecute)
 		
-		if CONTINUENORESUME == True:
-			child, SyncoidCommand = ssh_command(SyncoidCommand)
+		if CONTINUENORESUME:
+			logger.info('Executing the modified SynCoid Command: %s', modified_command)
+			child, modified_command = ssh_command(modified_command)
 			child.close()
-		else:		
+		else:
 			child.close()
 
 		if ISREPEATED == True:
