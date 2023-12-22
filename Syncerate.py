@@ -815,6 +815,8 @@ def ssh_command(SynCoid_Command):
 			modified_command = SynCoid_Command + " --no-resume"
 			logger.info('The modified command reads : ' + modified_command)
 			logger.info('')
+			logger.info('----------')
+			logger.info('')
 			return child, modified_command
 
 
