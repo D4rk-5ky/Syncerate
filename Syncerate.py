@@ -698,9 +698,13 @@ def ssh_command(SynCoid_Command):
 
 	global ISREPEATED
 	global CONTINUENODESTROYSNAP
+	global CONTINUENORESUME
 
 	CONTINUENODESTROYSNAP = False
 	CONTINUENORESUME = False
+
+	# Initialize modified command
+	modified_command = SynCoid_Command
 
 	# spawn the child process
 	if not LogDestination.upper() == "NO":
@@ -766,7 +770,7 @@ def ssh_command(SynCoid_Command):
 			logger.info('Going the continue the script,')
 			logger.info('since this a normal error when having multiple host/server sharing the same datasets')
 			CONTINUENODESTROYSNAP = True
-			return child
+			return child, modified_command
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
@@ -788,7 +792,7 @@ def ssh_command(SynCoid_Command):
 				child.logfile = fout
 		elif index == 6:
 			# respond to pexpect.EOF
-			return child
+			return child, modified_command
 		elif index == 7:
 			# respond to 'dataset does not exist'
 			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
@@ -800,27 +804,30 @@ def ssh_command(SynCoid_Command):
 		elif index == 9:
 			# respond to 'WARN: resetting partially receive state because the snapshot source no longer exists'
 			CONTINUENORESUME = True
+			logger.info('')
+			logger.info('----------')
+			logger.info('')
+			logger.info('The last transfer of a dataset failed, and there are no matching snapshots between sender and receiver,')
+			logger.info('This is most likely due to the fact that the original snapshot used for the transfer is missing and can\'t resume without that snapshot')
+			logger.info('')
+			logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
+			logger.info('')
+			modified_command = SynCoid_Command + " --no-resume"
+			logger.info('The modified command reads : ' + modified_command)
+			logger.info('')
+			logger.info('----------')
+			logger.info('')
+			return child, modified_command
 
-	# Continue the loop to modify the command if needed
-	if CONTINUENORESUME:
-		logger.info('')
-		logger.info('----------')
-		logger.info('')
-		logger.info('The last transfer of a dataset failed, and there are no matching snapshots between sender and receiver,')
-		logger.info('This is most likely due to the fact that the original snapshot used for the transfer is missing and can\'t resume without that snapshot')
-		logger.info('')
-		logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
-		logger.info('')
-		SynCoid_Command = SynCoid_Command + " --no-resume"
-	
 
-	return child
+	return child, modified_command
 
 # This is the main() part of the script
 # It is called after everything else have been imported/prepared
 def main():
 	global ISREPEATED
 	global CONTINUENODESTROYSNAP
+	global CONTINUENORESUME
 
 	KNOWNERROR = False
 
@@ -848,9 +855,16 @@ def main():
 		logger.info('')
 		logger.info('Ececuting the altered SynCoid Command    :   %s', SyncoidExecute)
 		
-		child = ssh_command(SyncoidExecute)
+		# Call ssh_command and capture both the child object and the modified command
+		child, modified_command = ssh_command(SyncoidExecute)
 		
-		child.close()
+		if CONTINUENORESUME:
+			child.close()
+			logger.info('Executing the modified SynCoid Command    :    %s', modified_command)
+			child, modified_command = ssh_command(modified_command)
+			child.close()
+		else:
+			child.close()
 
 		if ISREPEATED == True:
 			die(child, 'ERROR: The script is repeating itself', "9")
