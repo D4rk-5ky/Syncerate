@@ -770,7 +770,7 @@ def ssh_command(SynCoid_Command):
 			logger.info('Going the continue the script,')
 			logger.info('since this a normal error when having multiple host/server sharing the same datasets')
 			CONTINUENODESTROYSNAP = True
-			return child
+			return child, modified_command
 		elif index == 2:
 			# respond to 'Permission denied'
 			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
@@ -792,7 +792,7 @@ def ssh_command(SynCoid_Command):
 				child.logfile = fout
 		elif index == 6:
 			# respond to pexpect.EOF
-			return child
+			return child, modified_command
 		elif index == 7:
 			# respond to 'dataset does not exist'
 			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
