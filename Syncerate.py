@@ -813,8 +813,10 @@ def ssh_command(SynCoid_Command):
 			logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
 			logger.info('')
 			modified_command = SynCoid_Command + " --no-resume"
-			logger.info('The modified command reads : ' + SynCoid_Command)
+			logger.info('The modified command reads : ' + modified_command)
 			logger.info('')
+			return child, modified_command
+
 
 	return child, modified_command
 
@@ -855,6 +857,7 @@ def main():
 		child, modified_command = ssh_command(SyncoidExecute)
 		
 		if CONTINUENORESUME:
+			child.close()
 			logger.info('Executing the modified SynCoid Command: %s', modified_command)
 			child, modified_command = ssh_command(modified_command)
 			child.close()
