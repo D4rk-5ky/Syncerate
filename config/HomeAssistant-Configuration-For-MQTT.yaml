@@ -8,4 +8,3 @@ mqtt:
         payload_available: "online"
         payload_not_available: "offline"
     qos: 0
-    value_template: "{{ value_json.state }}"

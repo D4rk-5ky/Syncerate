@@ -698,6 +698,7 @@ def ssh_command(SynCoid_Command):
 
 	global ISREPEATED
 	global CONTINUENODESTROYSNAP
+	global CONTINUENORESUME
 
 	CONTINUENODESTROYSNAP = False
 	CONTINUENORESUME = False
@@ -800,19 +801,18 @@ def ssh_command(SynCoid_Command):
 		elif index == 9:
 			# respond to 'WARN: resetting partially receive state because the snapshot source no longer exists'
 			CONTINUENORESUME = True
-
-	# Continue the loop to modify the command if needed
-	if CONTINUENORESUME:
-		logger.info('')
-		logger.info('----------')
-		logger.info('')
-		logger.info('The last transfer of a dataset failed, and there are no matching snapshots between sender and receiver,')
-		logger.info('This is most likely due to the fact that the original snapshot used for the transfer is missing and can\'t resume without that snapshot')
-		logger.info('')
-		logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
-		logger.info('')
-		SynCoid_Command = SynCoid_Command + " --no-resume"
-	
+			logger.info('')
+			logger.info('----------')
+			logger.info('')
+			logger.info('The last transfer of a dataset failed, and there are no matching snapshots between sender and receiver,')
+			logger.info('This is most likely due to the fact that the original snapshot used for the transfer is missing and can\'t resume without that snapshot')
+			logger.info('')
+			logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
+			logger.info('')
+			Modified_Command = SynCoid_Command + " --no-resume"
+			logger.info('The modified command reads : ' + Modified_Command)
+			logger.info('')
+			return child, Modified_Command
 
 	return child
 
@@ -821,6 +821,7 @@ def ssh_command(SynCoid_Command):
 def main():
 	global ISREPEATED
 	global CONTINUENODESTROYSNAP
+	global CONTINUENORESUME
 
 	KNOWNERROR = False
 
@@ -848,9 +849,13 @@ def main():
 		logger.info('')
 		logger.info('Ececuting the altered SynCoid Command    :   %s', SyncoidExecute)
 		
-		child = ssh_command(SyncoidExecute)
+		child, SyncoidCommand = ssh_command(SyncoidExecute)
 		
-		child.close()
+		if CONTINUENORESUME == True:
+			child, SyncoidCommand = ssh_command(SyncoidCommand)
+			child.close()
+		else:		
+			child.close()
 
 		if ISREPEATED == True:
 			die(child, 'ERROR: The script is repeating itself', "9")
