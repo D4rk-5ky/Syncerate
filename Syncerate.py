@@ -860,7 +860,7 @@ def main():
 		
 		if CONTINUENORESUME:
 			child.close()
-			logger.info('Executing the modified SynCoid Command: %s', modified_command)
+			logger.info('Executing the modified SynCoid Command    :    %s', modified_command)
 			child, modified_command = ssh_command(modified_command)
 			child.close()
 		else:
