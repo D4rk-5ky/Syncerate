@@ -559,6 +559,83 @@ def read_dataset_list(path):
             if line.strip() and not line.strip().startswith("#")
         ]
 	
+def read_dataset_list(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return [
+            line.strip()
+            for line in f
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+def parse_destination_line(line):
+	"""
+	Parse one destination-list line.
+
+	Supported formats:
+
+	Storage/Docker
+
+	Storage/Docker: --recvoptions="o recordsize=1M o compression=zstd-9"
+
+	Important:
+	- We split on ': ' using rsplit()
+	- This avoids breaking remote destinations like:
+	  root@10.0.0.2:Storage/Docker
+	"""
+
+	if ": " not in line:
+		return line, []
+
+	destination_dataset, extra_args_text = line.rsplit(": ", 1)
+
+	destination_dataset = destination_dataset.strip()
+	extra_args_text = extra_args_text.strip()
+
+	if not extra_args_text:
+		return destination_dataset, []
+
+	try:
+		extra_args = shlex.split(extra_args_text)
+	except ValueError as e:
+		logger.error("Could not parse extra arguments for destination line:")
+		logger.error(line)
+		logger.error("shlex error: %s", e)
+		die(None, None, EXIT_LIST_ERROR)
+
+	return destination_dataset, extra_args
+
+
+def parse_destination_list(destination_lines):
+	"""
+	Return two lists:
+
+	1. Destination datasets only
+	2. Extra arguments per destination
+
+	Example:
+
+	Input:
+	Storage/Docker: --recvoptions="o recordsize=1M o compression=zstd-9"
+
+	Output:
+	DestDatasets:
+	["Storage/Docker"]
+
+	DestExtraArgs:
+	[["--recvoptions=o recordsize=1M o compression=zstd-9"]]
+	"""
+
+	dest_datasets = []
+	dest_extra_args = []
+
+	for line in destination_lines:
+		destination_dataset, extra_args = parse_destination_line(line)
+
+		dest_datasets.append(destination_dataset)
+		dest_extra_args.append(extra_args)
+
+	return dest_datasets, dest_extra_args
+
 # Import the Source file to a Python3 list
 SourceLines = read_dataset_list(config.get('Syncerate Config', 'SourceListPath'))
 
@@ -567,9 +644,13 @@ logger.info('Number of items in the Source list    :   %i', len(SourceLines))
 logger.info('')
 
 # Import the Destination file to a Python3 list
-DestLines = read_dataset_list(config.get('Syncerate Config', 'DestListPath'))
+DestLinesRaw = read_dataset_list(config.get('Syncerate Config', 'DestListPath'))
 
-logger.info('Items in the Destination list    :   %s', DestLines)
+DestLines, DestExtraArgs = parse_destination_list(DestLinesRaw)
+
+logger.info('Raw items in the Destination list    :   %s', DestLinesRaw)
+logger.info('Parsed Destination datasets          :   %s', DestLines)
+logger.info('Parsed Destination extra args        :   %s', DestExtraArgs)
 logger.info('Number of items in the Destination list    :   %i', len(DestLines))
 logger.info('')
 
@@ -757,18 +838,18 @@ def escape_dataset_for_syncoid(dataset):
 
 	return dataset.replace("\\", "\\\\").replace(" ", "\\ ")
 
-def build_syncoid_command(command_template, source_dataset, dest_dataset):
+def build_syncoid_command(command_template, source_dataset, dest_dataset, extra_args=None):
 	"""
 	Build a safe argv-style command list for pexpect.
 
-	Normal mode:
-	- Python passes datasets with spaces as single arguments.
-
-	EscapeSpacesForSyncoid mode:
-	- Spaces are changed to backslash-spaces.
-	- This is only a workaround for syncoid internals if syncoid splits
-	dataset names later.
+	Important:
+	- shlex.split() happens BEFORE replacing SourceDataSet/DestDataSet.
+	- This keeps datasets with spaces as single arguments.
+	- extra_args are appended at the end of the syncoid command.
 	"""
+
+	if extra_args is None:
+		extra_args = []
 
 	source_dataset = escape_dataset_for_syncoid(source_dataset)
 	dest_dataset = escape_dataset_for_syncoid(dest_dataset)
@@ -779,6 +860,8 @@ def build_syncoid_command(command_template, source_dataset, dest_dataset):
 		part.replace("SourceDataSet", source_dataset).replace("DestDataSet", dest_dataset)
 		for part in command_parts
 	]
+
+	command_parts.extend(extra_args)
 
 	return command_parts
 
@@ -941,19 +1024,24 @@ def main():
 	global CONTINUENODESTROYSNAP
 	global CONTINUENORESUME
 
-	KNOWNERROR = False
+	for h, i, extra_args in zip(SourceLines, DestLines, DestExtraArgs):
 
-	for (h, i) in zip(SourceLines, DestLines):
-		
 		SyncoidExecute = build_syncoid_command(
 			SyncoidCommand,
 			h,
-			i
+			i,
+			extra_args
 		)
 
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
+
+		if extra_args:
+			logger.info('Extra Syncoid arguments for this destination:')
+			logger.info('%s', extra_args)
+			logger.info('')
+
 		logger.info(
 			'Executing the altered Syncoid Command    :   %s',
 			shlex.join(SyncoidExecute)
@@ -967,17 +1055,19 @@ def main():
 		
 		if CONTINUENORESUME:
 			child.close()
+
 			logger.info(
 				'Executing the modified Syncoid Command    :    %s',
 				shlex.join(modified_command)
 			)
+
 			child, modified_command = ssh_command(modified_command)
 			child.close()
 		else:
 			child.close()
 
 		if ISREPEATED == True:
-			die(child, 'ERROR: The script is repeating itself', "9")
+			die(child, 'ERROR: The script is repeating itself', EXIT_REPEATED_PATTERN)
 
 		if child.exitstatus is None and child.signalstatus is not None:
 			exit_code = 128 + int(child.signalstatus)
@@ -996,7 +1086,6 @@ def main():
 
 			die(None, None, None, exit_code, None, child)
 
-	
 	successfull_run(Use_MQTT, MailOption, SystemOption)
 
 # This is the if statement that starts main() and the syncing
