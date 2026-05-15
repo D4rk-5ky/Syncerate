@@ -1,0 +1,20 @@
+# Syncerate private config
+*.cfg
+*.conf
+
+# Keep example configs
+!*.example.cfg
+!*.example.conf
+
+# Logs
+*.log
+*.err
+*.out
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local editor files
+.vscode/
+.idea/

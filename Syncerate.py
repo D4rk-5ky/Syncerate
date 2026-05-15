@@ -112,9 +112,9 @@ def send_mqtt_messages():
         logger.exception("Failed publishing MQTT message(s)")
 
         if MailOption.upper() != "NO":
-            MailTo(None, None, 10)
+            MailTo(None, None, EXIT_MQTT_ERROR)
 
-        sys.exit(10)
+        sys.exit(EXIT_MQTT_ERROR)
 
 # This is for the send mail function
 # In case one needs to be notified of errors
@@ -418,8 +418,8 @@ def missmatchinglists(Lenght, Names):
 		logger.error('There are datasets on source and destination which ends doesnt match up')
 		logger.error('Check the terminal or .err log')
 		logger.error('exiting - error code 1')
-	MailTo(1,"")
-	sys.exit(1)
+	MailTo(EXIT_LIST_ERROR)
+	sys.exit(EXIT_LIST_ERROR)
 
 # Create the arguments to be processed
 parser = argparse.ArgumentParser(description='Iterate though 2 lists of ZFS DataSets with Syncoid')
@@ -558,14 +558,6 @@ def read_dataset_list(path):
             for line in f
             if line.strip() and not line.strip().startswith("#")
         ]
-	
-def read_dataset_list(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return [
-            line.strip()
-            for line in f
-            if line.strip() and not line.strip().startswith("#")
-        ]
 
 def parse_destination_line(line):
 	"""
@@ -597,10 +589,11 @@ def parse_destination_line(line):
 	try:
 		extra_args = shlex.split(extra_args_text)
 	except ValueError as e:
-		logger.error("Could not parse extra arguments for destination line:")
-		logger.error(line)
-		logger.error("shlex error: %s", e)
-		die(None, None, EXIT_LIST_ERROR)
+		raise ValueError(
+			f"Could not parse extra arguments for destination line:\n"
+			f"{line}\n"
+			f"shlex error: {e}"
+		) from e
 
 	return destination_dataset, extra_args
 
@@ -646,7 +639,12 @@ logger.info('')
 # Import the Destination file to a Python3 list
 DestLinesRaw = read_dataset_list(config.get('Syncerate Config', 'DestListPath'))
 
-DestLines, DestExtraArgs = parse_destination_list(DestLinesRaw)
+try:
+	DestLines, DestExtraArgs = parse_destination_list(DestLinesRaw)
+except ValueError as e:
+	logger.error("%s", e)
+	MailTo(EXIT_LIST_ERROR)
+	sys.exit(EXIT_LIST_ERROR)
 
 logger.info('Raw items in the Destination list    :   %s', DestLinesRaw)
 logger.info('Parsed Destination datasets          :   %s', DestLines)
@@ -684,7 +682,9 @@ else:
 	missmatchinglists(Lenght=False, Names=True)
 
 # Get the choice for a password from the config
-PassWordOption=(config.get('Syncerate Config', 'PassWord'))
+PassWord = None
+
+PassWordOption = config.get('Syncerate Config', 'PassWord')
 
 if PassWordOption.upper() == 'ASK':
 	PassWord = getpass('PLz. insert a desiret password if needed :    ')
@@ -693,13 +693,15 @@ if PassWordOption.upper() == 'ASK':
 	logger.info('')
 	logger.info('The Password has been manualy added, not written to log')
 	logger.info('')
+
 elif PassWordOption.upper() == 'NO':
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
 	logger.info('No password is in use')
+
 else:
-	PassWord=PassWordOption
+	PassWord = PassWordOption
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
@@ -791,9 +793,6 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 # It allso have a little error checking.
 # But i am in doubt it will catch all errors
 
-ISREPEATED = False
-CONTINUENODESTROYSNAP = False
-
 def log_command_debug(command_list):
 	logger.info('')
 	logger.info('Syncoid command debug:')
@@ -865,12 +864,30 @@ def build_syncoid_command(command_template, source_dataset, dest_dataset, extra_
 
 	return command_parts
 
+def close_child_logfile(child):
+	if child is None:
+		return
+
+	logfile = getattr(child, "logfile", None)
+
+	if logfile is None:
+		return
+
+	try:
+		logfile.flush()
+		logfile.close()
+	except Exception:
+		logger.exception("Could not close pexpect logfile cleanly")
+	finally:
+		child.logfile = None
+
 def ssh_command(SynCoid_Command):
 
 	global ISREPEATED
 	global CONTINUENODESTROYSNAP
 	global CONTINUENORESUME
 
+	ISREPEATED = False
 	CONTINUENODESTROYSNAP = False
 	CONTINUENORESUME = False
 
@@ -961,7 +978,11 @@ def ssh_command(SynCoid_Command):
 			continue
 
 		elif index == PATTERN_PERMISSION_DENIED:
-			die(child, 'ERROR! Incorrect password or SSH permission denied.', 5)
+			die(
+				child=child,
+				errstr='ERROR! Incorrect password or SSH permission denied.',
+				error_code=EXIT_PASSWORD_DENIED
+			)
 
 		elif index == PATTERN_TIMEOUT:
 			die(child, 'ERROR! Connection timed out.', 6)
@@ -973,12 +994,20 @@ def ssh_command(SynCoid_Command):
 			if not LogDestination.upper() == "NO":
 				child.logfile = None
 
+			if PassWord is None:
+				die(
+					child,
+					'ERROR! Password/passphrase prompt appeared, but PassWord is set to NO.',
+					EXIT_PASSWORD_DENIED
+				)
+
 			child.sendline(PassWord)
 
 			if not LogDestination.upper() == "NO":
 				child.logfile = fout
 
 		elif index == PATTERN_EOF:
+			close_child_logfile(child)
 			return child, modified_command
 
 		elif index == PATTERN_WARN_SKIPPING:
@@ -994,13 +1023,17 @@ def ssh_command(SynCoid_Command):
 			logger.info('Gonna rerun the command with --no-resume.')
 			logger.info('')
 
-			modified_command = SynCoid_Command + ["--no-resume"]
+			if "--no-resume" not in SynCoid_Command:
+				modified_command = SynCoid_Command + ["--no-resume"]
+			else:
+				modified_command = SynCoid_Command
 			
 			logger.info('The modified command reads : %s', shlex.join(modified_command))
 			logger.info('')
 			logger.info('----------')
 			logger.info('')
-
+			
+			close_child_logfile(child)
 			return child, modified_command
 
 		elif index == PATTERN_GENERIC_WARN:
@@ -1010,10 +1043,19 @@ def ssh_command(SynCoid_Command):
 			if not LogDestination.upper() == "NO":
 				child.logfile = None
 
+			if PassWord is None:
+				die(
+					child,
+					'ERROR! Password/passphrase prompt appeared, but PassWord is set to NO.',
+					EXIT_PASSWORD_DENIED
+				)
+
 			child.sendline(PassWord)
 
 			if not LogDestination.upper() == "NO":
 				child.logfile = fout
+
+	close_child_logfile(child)
 
 	return child, modified_command
 
@@ -1076,7 +1118,16 @@ def main():
 			logger.error('Syncoid was terminated by signal: %s', child.signalstatus)
 			logger.error('Using exit code: %s', exit_code)
 
-			die(None, None, None, exit_code, None, child)
+			die(
+				SynCoidFail=exit_code,
+				SynCoidFailChild=child
+			)
+			
+		if child.exitstatus != 0 and CONTINUENODESTROYSNAP is True:
+			logger.warning('')
+			logger.warning('Syncoid exited with non-zero status %s, but CONTINUENODESTROYSNAP is True.', child.exitstatus)
+			logger.warning('Ignoring this because the known no-destroy-snapshot message was seen.')
+			logger.warning('')
 
 		if child.exitstatus != 0 and CONTINUENODESTROYSNAP is False:
 			exit_code = int(child.exitstatus)
@@ -1084,7 +1135,10 @@ def main():
 			logger.error('')
 			logger.error('This is the Syncoid exit status: %s', exit_code)
 
-			die(None, None, None, exit_code, None, child)
+			die(
+				SynCoidFail=exit_code,
+				SynCoidFailChild=child
+			)
 
 	successfull_run(Use_MQTT, MailOption, SystemOption)
 
