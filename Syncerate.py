@@ -2,7 +2,6 @@
 
 # Import argument parser for python arguments
 import argparse
-from asyncio.log import logger
 
 # Import variables from a .conf file
 import configparser
@@ -36,34 +35,24 @@ import subprocess
 # This is to make python sleep for a time to make sure mail is sent
 import time
 
+import shlex
+
 # For sending a message over MQTT
-import paho.mqtt.client as mqtt
+import paho.mqtt.publish as publish
 
-def mqtt_connect(client, userdata, flags, rc, mqtt_topic, mqtt_message):
-    try:
-        if rc == 0:
-            logger.info('')
-            logger.info('----------')
-            logger.info('')
-            logger.info('Publishing Topic and Message to MQTT')
+logger = logging.getLogger("syncerate")
 
-            # Publish the message after connecting
-            client.publish(mqtt_topic, mqtt_message, retain=True)
-
-            # Disconnect from the MQTT broker
-            client.disconnect()
-        
-        else:
-            raise Exception('Failed publishing message to MQTT')
-    
-    except Exception as e:
-        # Handle the exception and capture the error message
-        error_message = str(e)
-        logger.error('')
-        logger.error('----------')
-        logger.error('')
-        logger.error('MQTT Error message: ' + error_message)
-        die(None, None, None, None, rc)
+EXIT_OK = 0
+EXIT_LIST_ERROR = 1
+EXIT_SCRIPT_ERROR = 2
+EXIT_WARNING = 4
+EXIT_PASSWORD_DENIED = 5
+EXIT_CONNECTION_TIMEOUT = 6
+EXIT_CONNECTION_REFUSED = 7
+EXIT_DATASET_MISSING = 8
+EXIT_REPEATED_PATTERN = 9
+EXIT_MQTT_ERROR = 10
+EXIT_SYSTEM_ACTION_ERROR = 11
 	
 # This is is for the send mail part
 def send_mail(subject, body, recipient, attachment_files=None):
@@ -79,11 +68,61 @@ def send_mail(subject, body, recipient, attachment_files=None):
 	mail_exit_code = process.returncode
 	return mail_exit_code, stderr_output.decode().strip()
 
+def send_mqtt_messages():
+    broker_address = config.get('Syncerate Config', 'broker_address')
+    broker_port = config.getint('Syncerate Config', 'broker_port')
+
+    mqtt_username = config.get('Syncerate Config', 'mqtt_username', fallback='').strip()
+    mqtt_password = config.get('Syncerate Config', 'mqtt_password', fallback='')
+
+    auth = None
+    if mqtt_username:
+        auth = {
+            "username": mqtt_username,
+            "password": mqtt_password,
+        }
+
+    messages = []
+
+    if Use_HomeAssistant == "YES":
+        messages.append({
+            "topic": config.get('Syncerate Config', 'HomeAssistant_Available'),
+            "payload": "online",
+            "retain": True,
+            "qos": 0,
+        })
+
+    messages.append({
+        "topic": config.get('Syncerate Config', 'mqtt_topic'),
+        "payload": config.get('Syncerate Config', 'mqtt_message'),
+        "retain": True,
+        "qos": 0,
+    })
+
+    try:
+        publish.multiple(
+            messages,
+            hostname=broker_address,
+            port=broker_port,
+            auth=auth,
+        )
+        logger.info("MQTT message(s) published successfully")
+
+    except Exception:
+        logger.exception("Failed publishing MQTT message(s)")
+
+        if MailOption.upper() != "NO":
+            MailTo(None, None, 10)
+
+        sys.exit(10)
+
 # This is for the send mail function
 # In case one needs to be notified of errors
 #
 # FIx and make sure to make it possible to send error message even if .out file is not created yet
 def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
+	if MailOption.upper() == "NO":
+		return
 	# Define recipient
 	recipient = (config.get('Syncerate Config', 'Mail'))
 
@@ -291,7 +330,10 @@ def SystemAction():
 		# Sleep before executing the desired action
 		time.sleep(120)
 
-		os.system(SystemOption)
+		try:
+			subprocess.run(SystemOption, shell=True, check=False)
+		except Exception:
+			logger.exception("Failed running SystemAction")
 
 	elif not SystemOption.upper() == "NO" and MailOption.upper() == "NO":
 		logger.info('')
@@ -309,14 +351,17 @@ def SystemAction():
 		logger.info('')
 		logger.info('----------')
 
-		os.system(SystemOption)
+		try:
+			subprocess.run(SystemOption, shell=True, check=False)
+		except Exception:
+			logger.exception("Failed running SystemAction")
 
-def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
+def successfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 
 	logger.info('')
 	logger.info('----------')
 	logger.info('')
-	logger.info('The Script ended succesfully')
+	logger.info('The Script ended successfully')
 	logger.info('')
 	logger.info('Now going over MAIL, MQTT and System Option, if option is set in the .cfg file')
 	logger.info('')
@@ -329,7 +374,7 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 				"",
 				"----------",
 				"",
-				"The Script ended succesfully",
+				"The Script ended successfully",
 				"",
 				"Now going over MAIL, MQTT and System Option, if option is set in the .cfg file",
 				"",
@@ -343,44 +388,7 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 				fout.write(line + "\n")
 	
 	if MQTT == "YES":
-		# Your MQTT logic here
-		mqtt_topic = config.get('Syncerate Config', 'mqtt_topic')
-		mqtt_message = config.get('Syncerate Config', 'mqtt_message')
-		broker_address = config.get('Syncerate Config', 'broker_address')
-		broker_port = config.get('Syncerate Config', 'broker_port')
-		broker_port = int(broker_port)
-		mqtt_username = config.get('Syncerate Config', 'mqtt_username')
-		mqtt_password = config.get('Syncerate Config', 'mqtt_password')
-
-		 # Create MQTT client instance
-		client = mqtt.Client()
-		client.enable_logger(logging.getLogger("paho"))
-		client.username_pw_set(mqtt_username, mqtt_password)
-		client.on_connect = lambda client, userdata, flags, rc: mqtt_connect(client, userdata, flags, rc, mqtt_topic, mqtt_message)
-
-		try:
-			# Attempt to connect to the MQTT broker
-			client.connect(broker_address, broker_port)
-		except OSError as e:
-			# Handle the specific error [Errno 113] No route to host
-			if e.errno == 113:
-				logging.error('MQTT server is not reachable. Check IP and Port.')
-				# Add your specific error handling code here
-			else:
-				logging.error(f'Failed to connect to MQTT broker: {str(e)}')
-			die(None, None, None, None, e)
-
-		# Optionally, send a message if HomeAssistant is an option
-		if Use_HomeAssistant == "YES":
-			homeassistant_topic = config.get('Syncerate Config', 'HomeAssistant_Available')
-			homeassistant_message = "online"
-			client.publish(homeassistant_topic, homeassistant_message, retain=True)
-
-		# Publish a normal message
-		client.publish(mqtt_topic, mqtt_message, retain=True)
-
-		# Start the MQTT network loop
-		client.loop_forever()
+		send_mqtt_messages()
 
 	if SendMail:
 		# Decide if there is an option to send mail
@@ -388,7 +396,7 @@ def succesfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 			MailTo(0)
 
 	if PerformSystemAction:
-		# Decide if there is a shutdown action for the system on succesfull comletion
+		# Decide if there is a shutdown action for the system on successfull comletion
 		if not SystemOption.upper() == "NO":
 			SystemAction()
 	
@@ -430,7 +438,7 @@ config.read(args.conf)
 # This is to get the mail or "No" option for mail
 MailOption = (config.get('Syncerate Config', 'Mail'))
 
-# This is for the command after the script has succesfully run
+# This is for the command after the script has successfully run
 SystemOption = (config.get('Syncerate Config', 'SystemAction'))
 
 
@@ -456,46 +464,42 @@ if not LogDestination.upper() == "NO":
 
 # This logger function will log everything including errors to ".log" and only errors to ".err"
 # It is called with logger.(info/error)
-def get_logger(    
-		LOG_FORMAT     = '%(asctime)s %(levelname)s: %(message)s',
-		LOG_NAME       = '',
-		LOG_FILE_INFO  = LogDestination + "Syncerate-" + time_now + ".log",
-		LOG_FILE_WARNING = LogDestination + "Syncerate-" + time_now + ".err",
-		LOG_FILE_ERROR = LogDestination + "Syncerate-" + time_now + ".err",
-    	enable_file_logging=True):
+def get_logger(enable_file_logging=True):
+    log = logging.getLogger("syncerate")
+    log.setLevel(logging.INFO)
+    log.handlers.clear()
+    log.propagate = False
 
-	log           = logging.getLogger(LOG_NAME)
-	log_formatter = logging.Formatter(LOG_FORMAT)
+    log_formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
 
-	if enable_file_logging:
-		# If log folder is missing, create it
-		os.makedirs(LogDestination, exist_ok=True)
+    # Terminal output
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(log_formatter)
+    stream_handler.setLevel(logging.INFO)
+    log.addHandler(stream_handler)
 
-		# Set up log files
-		file_handler_info = logging.FileHandler(LOG_FILE_INFO, mode='w')
-		file_handler_info.setFormatter(log_formatter)
-		file_handler_info.setLevel(logging.INFO)
-		log.addHandler(file_handler_info)
+    if enable_file_logging:
+        os.makedirs(LogDestination, exist_ok=True)
 
-		file_handler_warning = logging.FileHandler(LOG_FILE_WARNING, mode='w')
-		file_handler_warning.setFormatter(log_formatter)
-		file_handler_warning.setLevel(logging.WARNING)
-		log.addHandler(file_handler_warning)
+        # Full log file
+        info_handler = logging.FileHandler(
+            LogDestination + "Syncerate-" + time_now + ".log",
+            mode="w"
+        )
+        info_handler.setFormatter(log_formatter)
+        info_handler.setLevel(logging.INFO)
+        log.addHandler(info_handler)
 
-		file_handler_error = logging.FileHandler(LOG_FILE_ERROR, mode='w')
-		file_handler_error.setFormatter(log_formatter)
-		file_handler_error.setLevel(logging.ERROR)
-		log.addHandler(file_handler_error)
+        # Error-only file
+        err_handler = logging.FileHandler(
+            LogDestination + "Syncerate-" + time_now + ".err",
+            mode="w"
+        )
+        err_handler.setFormatter(log_formatter)
+        err_handler.setLevel(logging.ERROR)
+        log.addHandler(err_handler)
 
-
-	# comment this to suppress console output
-	stream_handler = logging.StreamHandler(sys.stdout)
-	stream_handler.setFormatter(log_formatter)
-	log.addHandler(stream_handler)
-
-	log.setLevel(logging.INFO)
-
-	return log
+    return log
 
 if not LogDestination.upper() == "NO":
 	logger = get_logger(enable_file_logging=True)
@@ -547,22 +551,26 @@ if config.get('Syncerate Config','SyncoidCommand').startswith("syncoid") == True
 	logger.info('----------')
 	logger.info('')
 
+def read_dataset_list(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return [
+            line.strip()
+            for line in f
+            if line.strip() and not line.strip().startswith("#")
+        ]
+	
 # Import the Source file to a Python3 list
-SourceListImport = open(config.get('Syncerate Config', 'SourceListPath'), "r")
-SourceLines = SourceListImport.read().splitlines()
+SourceLines = read_dataset_list(config.get('Syncerate Config', 'SourceListPath'))
+
 logger.info('Items in the Source list    :   %s', SourceLines)
-logger.info('Number of items in the Source list    :   %i', (len(SourceLines)))
-SourceListImport.close()
-print('')
+logger.info('Number of items in the Source list    :   %i', len(SourceLines))
 logger.info('')
 
 # Import the Destination file to a Python3 list
-DestListImport = open(config.get('Syncerate Config', 'DestListPath'), "r")
-DestLines = DestListImport.read().splitlines()
-logger.info('Items in the Destiantion list    %s:   ', DestLines)
-logger.info('Number of items in the Source list    :   %i', len(DestLines))
-DestListImport.close()
-print('')
+DestLines = read_dataset_list(config.get('Syncerate Config', 'DestListPath'))
+
+logger.info('Items in the Destination list    :   %s', DestLines)
+logger.info('Number of items in the Destination list    :   %i', len(DestLines))
 logger.info('')
 
 # Compare the number of items in the two list's
@@ -604,9 +612,6 @@ if PassWordOption.upper() == 'ASK':
 	logger.info('')
 	logger.info('The Password has been manualy added, not written to log')
 	logger.info('')
-	print('')
-	print('This is the Password you have given  :   ', PassWord)
-	print('')
 elif PassWordOption.upper() == 'NO':
 	logger.info('')
 	logger.info('----------')
@@ -618,9 +623,6 @@ else:
 	logger.info('----------')
 	logger.info('')
 	logger.info('Password is in the config file, not written to log')
-	print('')
-	print('This is the password in the config file  :   ', PassWord)
-	print('')
 
 # Get the Syncoid command to be altered
 SyncoidCommand=config.get('Syncerate Config', 'SyncoidCommand')
@@ -628,63 +630,80 @@ SyncoidCommand=config.get('Syncerate Config', 'SyncoidCommand')
 # This is in case the thee pexpect/syncoid command fails
 # I am not sure it will catch all errors
 def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=None, SynCoidFailChild=None):
+    if error_code is not None:
+        exit_code = int(error_code)
+    elif SynCoidFail is not None:
+        exit_code = int(SynCoidFail)
+    elif MQTT_Fail is not None:
+        exit_code = int(MQTT_Fail)
+    else:
+        exit_code = 1
 
-	if child:
-		logger.error('')
-		logger.error('This was a crash known by the script')
-		logger.error('')
-		logger.error('Check the logs to see what could be the problem')
-		logger.error('If not logs exist, enable them to track down the problem')
-		logger.error('')
-		logger.error(errstr)
-		logger.error('')
-		logger.error('This is the last part of Syncoid output   : ' + child.before)
-		logger.error('This is the warning/error   :   ' + child.after + child.buffer)
-		logger.error('')
-		logger.error('This is the script exit code : ' + error_code)
-		logger.error('')
-		child.terminate()
+    def safe_text(value):
+        if value is None:
+            return ""
+        return str(value)
 
-		# I had problems that the exit code given to "die" function was "str", i couldten send "int" to "die" function instead but i could convert "str" to "int"
-		# This was understood from https://medium.com/@anupkumarray/working-with-exit-codes-between-python-shell-scripts-177931204291
-		integer_number = int(error_code)
+    logger.error('')
+    logger.error('----------')
+    logger.error('')
 
-		# Send a mail related to script error
-		if not MailOption.upper() == "NO":
-			MailTo(error_code)
-		else:
-			# Exit the script with the SynCoid exit status
-			sys.exit(integer_number)
+    if child:
+        logger.error('This was a crash known by the script')
+        logger.error('')
+        logger.error('Check the logs to see what could be the problem')
+        logger.error('If no logs exist, enable them to track down the problem')
+        logger.error('')
 
-	elif SynCoidFail:
-		logger.error('')
-		logger.error('This was an unknown crash')
-		logger.error('')
-		logger.error('Check the logs to see what could be the problem')
-		logger.error('If non existing enable them, to track down the problem')
-		logger.error('')
-		logger.error('This is the last part of Syncoid output   : ' + "\n" + SynCoidFailChild.before)
-		logger.error('')
+        if errstr:
+            logger.error(errstr)
+            logger.error('')
 
-		if not MailOption.upper() == "NO":
-			MailTo(None, SynCoidFail)
-		else:
-			sys.exit(SynCoidFail)
+        logger.error('This is the last part of Syncoid output:')
+        logger.error(safe_text(child.before))
+        logger.error('')
 
-	elif MQTT_Fail:
-		logger.error('')
-		logger.error('This was an MQTT error')
-		logger.error('')
-		logger.error('Check the logs to see what could be the problem')
-		logger.error('If non existing enable them, to track down the problem')
-		logger.error('')
-		logger.error('This is the MQTT exit code   : %s', MQTT_Fail)
-		logger.error('')
+        logger.error('This is the warning/error:')
+        logger.error(safe_text(child.after) + safe_text(child.buffer))
+        logger.error('')
 
-		if not MailOption.upper() == "NO":
-			MailTo(None, None, MQTT_Fail)
-		else:
-			sys.exit(MQTT_Fail)
+        logger.error('This is the script exit code: %s', exit_code)
+
+        try:
+            child.terminate(force=True)
+        except Exception:
+            logger.exception("Could not terminate child process cleanly")
+
+    elif SynCoidFail is not None:
+        logger.error('This was an unknown Syncoid crash')
+        logger.error('Syncoid exit code: %s', exit_code)
+
+        if SynCoidFailChild is not None:
+            logger.error('')
+            logger.error('This is the last part of Syncoid output:')
+            logger.error(safe_text(SynCoidFailChild.before))
+
+    elif MQTT_Fail is not None:
+        logger.error('This was an MQTT error')
+        logger.error('MQTT exit code: %s', exit_code)
+
+    else:
+        logger.error('This was a script error')
+        logger.error('Exit code: %s', exit_code)
+
+    logger.error('')
+    logger.error('----------')
+    logger.error('')
+
+    if MailOption.upper() != "NO":
+        if MQTT_Fail is not None:
+            MailTo(None, None, exit_code)
+        elif SynCoidFail is not None:
+            MailTo(None, exit_code)
+        else:
+            MailTo(exit_code)
+
+    sys.exit(exit_code)
 		
 
 # This is the function that executes the altered syncoid command
@@ -693,6 +712,75 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
 
 ISREPEATED = False
 CONTINUENODESTROYSNAP = False
+
+def log_command_debug(command_list):
+	logger.info('')
+	logger.info('Syncoid command debug:')
+	logger.info('')
+	logger.info('Shell-style command:')
+	logger.info('%s', shlex.join(command_list))
+
+	logger.info('')
+	logger.info('Raw Python argv:')
+	logger.info('%r', command_list)
+
+	logger.info('')
+	logger.info('Individual arguments:')
+	logger.info('Argument count: %s', len(command_list))
+
+	for number, argument in enumerate(command_list):
+		logger.info('argv[%s] = %r', number, argument)
+
+	logger.info('')
+
+
+def escape_dataset_for_syncoid(dataset):
+	"""
+	Optional workaround for syncoid internals that may split dataset names
+	with spaces.
+
+	Normal:
+	Storage/DataSet With Spaces
+
+	Escaped:
+	Storage/DataSet\ With\ Spaces
+	"""
+
+	escape_spaces = config.getboolean(
+		'Syncerate Config',
+		'EscapeSpacesForSyncoid',
+		fallback=False
+	)
+
+	if not escape_spaces:
+		return dataset
+
+	return dataset.replace("\\", "\\\\").replace(" ", "\\ ")
+
+def build_syncoid_command(command_template, source_dataset, dest_dataset):
+	"""
+	Build a safe argv-style command list for pexpect.
+
+	Normal mode:
+	- Python passes datasets with spaces as single arguments.
+
+	EscapeSpacesForSyncoid mode:
+	- Spaces are changed to backslash-spaces.
+	- This is only a workaround for syncoid internals if syncoid splits
+	dataset names later.
+	"""
+
+	source_dataset = escape_dataset_for_syncoid(source_dataset)
+	dest_dataset = escape_dataset_for_syncoid(dest_dataset)
+
+	command_parts = shlex.split(command_template)
+
+	command_parts = [
+		part.replace("SourceDataSet", source_dataset).replace("DestDataSet", dest_dataset)
+		for part in command_parts
+	]
+
+	return command_parts
 
 def ssh_command(SynCoid_Command):
 
@@ -718,7 +806,12 @@ def ssh_command(SynCoid_Command):
 			for line in lines_of_text:
 				fout.write(line + "\n")
 	
-	child = pexpect.spawn(SynCoid_Command, timeout=None, encoding='utf-8')
+	child = pexpect.spawn(
+		SynCoid_Command[0],
+		SynCoid_Command[1:],
+		timeout=None,
+		encoding='utf-8'
+	)
 
 	if not LogDestination.upper() == "NO":
 		fout = open(LogDestination + 'Syncerate-' + time_now + ".out",'a')
@@ -726,17 +819,30 @@ def ssh_command(SynCoid_Command):
 
 	# set up a list of patterns to match
 	# The easiest way to force a Syncoid Error is to remove "Connection timed out" and give a wrong port number
+	PATTERN_HOSTKEY = 0
+	PATTERN_NO_DESTROY_SNAP = 1
+	PATTERN_PERMISSION_DENIED = 2
+	PATTERN_TIMEOUT = 3
+	PATTERN_REFUSED = 4
+	PATTERN_PASSPHRASE = 5
+	PATTERN_EOF = 6
+	PATTERN_WARN_SKIPPING = 7
+	PATTERN_NO_RESUME = 8
+	PATTERN_GENERIC_WARN = 9
+	PATTERN_PASSWORD = 10
+
 	patterns = [
-	    'Are you sure you want to continue connecting',
-	    'could not find any snapshots to destroy; check snapshot names.',
-	    'Permission denied',
-	    'Connection timed out',
-	    'Connection refused',
-	    'passphrase',
+		'Are you sure you want to continue connecting',
+		'could not find any snapshots to destroy; check snapshot names.',
+		'Permission denied',
+		'Connection timed out',
+		'Connection refused',
+		'passphrase',
 		pexpect.EOF,
 		'WARN Skipping dataset',
-		'WARN',
 		'used in the initial send no longer exists',
+		'WARN',
+		'password',
 	]
 
 	# MAc times a pattern must repeat
@@ -757,68 +863,74 @@ def ssh_command(SynCoid_Command):
 			break
 
 		# execute code based on the matched pattern
-		if index == 0:
-			# SSH does not have the public key. Just accept it.
-			# respond to 'Are you sure you want to continue connecting'
-			child.sendline ('yes')
-		elif index == 1:
+		if index == PATTERN_HOSTKEY:
+			child.sendline('yes')
+
+		elif index == PATTERN_NO_DESTROY_SNAP:
 			logger.info('')
 			logger.info('----------')
 			logger.info('')
-			logger.info('Syncoid wanted to delete a syncoid created snapshot on Source that is no longer available')
+			logger.info('Syncoid wanted to delete a syncoid-created snapshot that no longer exists.')
+			logger.info('This can happen when multiple hosts share the same datasets.')
+			logger.info('Marking this as non-fatal and continuing until Syncoid exits.')
 			logger.info('')
-			logger.info('Going the continue the script,')
-			logger.info('since this a normal error when having multiple host/server sharing the same datasets')
 			CONTINUENODESTROYSNAP = True
-			return child, modified_command
-		elif index == 2:
-			# respond to 'Permission denied'
-			die(child, 'ERROR!  Incorrect password. Here is what SSH said:', "5")
-			break
-		elif index == 3:
-			# respond to 'Connection timed out'
-			die(child, 'ERROR!  Connection Timeout. Here is what SSH said:', "6")
-			break
-		elif index == 4:
-			# respond to 'Connection refused'
-			die(child, 'ERROR!  Connection refused. Here is what SSH said:', "7")
-			break
-		elif index == 5:
-			# respond to 'passphrase'
+			continue
+
+		elif index == PATTERN_PERMISSION_DENIED:
+			die(child, 'ERROR! Incorrect password or SSH permission denied.', 5)
+
+		elif index == PATTERN_TIMEOUT:
+			die(child, 'ERROR! Connection timed out.', 6)
+
+		elif index == PATTERN_REFUSED:
+			die(child, 'ERROR! Connection refused.', 7)
+
+		elif index == PATTERN_PASSPHRASE:
 			if not LogDestination.upper() == "NO":
 				child.logfile = None
-			child.sendline (PassWord)
+
+			child.sendline(PassWord)
+
 			if not LogDestination.upper() == "NO":
 				child.logfile = fout
-		elif index == 6:
-			# respond to pexpect.EOF
-			return child, modified_command
-		elif index == 7:
-			# respond to 'dataset does not exist'
-			die(child, 'Destination dataset does not exist - Plz recheck the Source and dest list to be sure:', "8")
-			break
-		elif index == 8:
-			# respond to 'WARN'
-			die(child, 'ERROR!  There Was a Warning. Here is what SSH said:', "4")
-			break
-		elif index == 9:
-			# respond to 'WARN: resetting partially receive state because the snapshot source no longer exists'
-			CONTINUENORESUME = True
-			logger.info('')
-			logger.info('----------')
-			logger.info('')
-			logger.info('The last transfer of a dataset failed, and there are no matching snapshots between sender and receiver,')
-			logger.info('This is most likely due to the fact that the original snapshot used for the transfer is missing and can\'t resume without that snapshot')
-			logger.info('')
-			logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
-			logger.info('')
-			modified_command = SynCoid_Command + " --no-resume"
-			logger.info('The modified command reads : ' + modified_command)
-			logger.info('')
-			logger.info('----------')
-			logger.info('')
+
+		elif index == PATTERN_EOF:
 			return child, modified_command
 
+		elif index == PATTERN_WARN_SKIPPING:
+			die(child, 'ERROR! Syncoid skipped a dataset. Check source/destination datasets.', 8)
+
+		elif index == PATTERN_NO_RESUME:
+			CONTINUENORESUME = True
+
+			logger.info('')
+			logger.info('----------')
+			logger.info('')
+			logger.info('The last transfer failed and the resume snapshot no longer exists.')
+			logger.info('Gonna rerun the command with --no-resume.')
+			logger.info('')
+
+			modified_command = SynCoid_Command + ["--no-resume"]
+			
+			logger.info('The modified command reads : %s', shlex.join(modified_command))
+			logger.info('')
+			logger.info('----------')
+			logger.info('')
+
+			return child, modified_command
+
+		elif index == PATTERN_GENERIC_WARN:
+			die(child, 'ERROR! Syncoid produced a warning.', 4)
+
+		elif index == PATTERN_PASSWORD:
+			if not LogDestination.upper() == "NO":
+				child.logfile = None
+
+			child.sendline(PassWord)
+
+			if not LogDestination.upper() == "NO":
+				child.logfile = fout
 
 	return child, modified_command
 
@@ -833,34 +945,32 @@ def main():
 
 	for (h, i) in zip(SourceLines, DestLines):
 		
-		if not h.startswith('"') or not h.endswith('"'):
-			# Add quotes where they are missing
-			if not h.startswith('"'):
-				h = '"' + h
-			if not h.endswith('"'):
-				h += '"'
+		SyncoidExecute = build_syncoid_command(
+			SyncoidCommand,
+			h,
+			i
+		)
 
-		if not i.startswith('"') or not i.endswith('"'):
-			# Add quotes where they are missing
-			if not i.startswith('"'):
-				i = '"' + i
-			if not i.endswith('"'):
-				i += '"'
-
-		SyncoidExecute=SyncoidCommand.replace("SourceDataSet", h)
-		SyncoidExecute=SyncoidExecute.replace("DestDataSet", i)
-		
 		logger.info('')
 		logger.info('----------')
 		logger.info('')
-		logger.info('Ececuting the altered SynCoid Command    :   %s', SyncoidExecute)
-		
+		logger.info(
+			'Executing the altered Syncoid Command    :   %s',
+			shlex.join(SyncoidExecute)
+		)
+		logger.info('')
+
+		log_command_debug(SyncoidExecute)
+
 		# Call ssh_command and capture both the child object and the modified command
 		child, modified_command = ssh_command(SyncoidExecute)
 		
 		if CONTINUENORESUME:
 			child.close()
-			logger.info('Executing the modified SynCoid Command    :    %s', modified_command)
+			logger.info(
+				'Executing the modified Syncoid Command    :    %s',
+				shlex.join(modified_command)
+			)
 			child, modified_command = ssh_command(modified_command)
 			child.close()
 		else:
@@ -869,36 +979,25 @@ def main():
 		if ISREPEATED == True:
 			die(child, 'ERROR: The script is repeating itself', "9")
 
-		if ((not child.exitstatus == 0) and (CONTINUENODESTROYSNAP == False)):
+		if child.exitstatus is None and child.signalstatus is not None:
+			exit_code = 128 + int(child.signalstatus)
+
 			logger.error('')
+			logger.error('Syncoid was terminated by signal: %s', child.signalstatus)
+			logger.error('Using exit code: %s', exit_code)
 
-			if child.exitstatus is None:
-				logger.error('This is the SynCoid Exit status   :   %s', child.exitstatus)
-			else:
-				logger.error('This is the SynCoid Exit status   :   %i', child.exitstatus)
-				ExitStatusAsInteger = int(child.exitstatus)
-				die(None, None, None, ExitStatusAsInteger, None, child)
+			die(None, None, None, exit_code, None, child)
 
-			if child.signalstatus is None:
-				logger.error('This is the SynCoid signal Status    :   %s', child.signalstatus)
-			else:
-				logger.error('This is the SynCoid signal Status    :   %i', child.signalstatus)
+		if child.exitstatus != 0 and CONTINUENODESTROYSNAP is False:
+			exit_code = int(child.exitstatus)
 
-		#if CONTINUENORESUME == True:
-		#		logger.info('')
-		#	logger.info('----------')
-		#	logger.info('')
-		#	logger.info('The last transfer of a dataset failed and there is no matching snapshots between sender and receiver,')
-		#	logger.info('This is most likely due to the fact that the origional snapshot used for the transfer is missing and cant resume without that snapshot')
-		#	logger.info('')
-		#	logger.info('Gonna rerun the command with --no-resume to make Syncoid continue from the last matching snapshot')
-		#	logger.info('')
-		#	CONTINUENORESUME == False
-		#	SyncoidExecute = SyncoidExecute + " --no-resume"
+			logger.error('')
+			logger.error('This is the Syncoid exit status: %s', exit_code)
 
+			die(None, None, None, exit_code, None, child)
 
 	
-	succesfull_run(Use_MQTT, MailOption, SystemOption)
+	successfull_run(Use_MQTT, MailOption, SystemOption)
 
 # This is the if statement that starts main() and the syncing
 # It has a bit of error checking and should be able to send it by mail
@@ -907,11 +1006,11 @@ def main():
 if __name__ == '__main__':
 	try:
 		main()
-	except Exception as e:
-		logger.error('')
-		logger.error(str(e))
-		logger.error('')
-		logger.error(traceback.print_exc())
-		logger.error('')
-		MailTo(2,"")
+
+	except Exception:
+		logger.exception("Unhandled script error")
+
+		if MailOption.upper() != "NO":
+			MailTo(2)
+
 		sys.exit(2)
