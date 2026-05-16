@@ -813,30 +813,6 @@ def log_command_debug(command_list):
 
 	logger.info('')
 
-
-def escape_dataset_for_syncoid(dataset):
-	"""
-	Optional workaround for syncoid internals that may split dataset names
-	with spaces.
-
-	Normal:
-	Storage/DataSet With Spaces
-
-	Escaped:
-	Storage/DataSet\ With\ Spaces
-	"""
-
-	escape_spaces = config.getboolean(
-		'Syncerate Config',
-		'EscapeSpacesForSyncoid',
-		fallback=False
-	)
-
-	if not escape_spaces:
-		return dataset
-
-	return dataset.replace("\\", "\\\\").replace(" ", "\\ ")
-
 def build_syncoid_command(command_template, source_dataset, dest_dataset, extra_args=None):
 	"""
 	Build a safe argv-style command list for pexpect.
@@ -849,9 +825,6 @@ def build_syncoid_command(command_template, source_dataset, dest_dataset, extra_
 
 	if extra_args is None:
 		extra_args = []
-
-	source_dataset = escape_dataset_for_syncoid(source_dataset)
-	dest_dataset = escape_dataset_for_syncoid(dest_dataset)
 
 	command_parts = shlex.split(command_template)
 
