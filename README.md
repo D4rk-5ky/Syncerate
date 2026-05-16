@@ -454,33 +454,31 @@ mqtt_message=ON
 Use_HomeAssistant=No
 HomeAssistant_Available=home-assistant/syncerate/available
 
-EscapeSpacesForSyncoid=False
 ```
 
 ---
 
 ## Config options
 
-| Option                    | Required                                   | Description                                                           |
-| ------------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
-| `SourceListPath`          | Yes                                        | Path to the source dataset list                                       |
-| `DestListPath`            | Yes                                        | Path to the destination dataset list                                  |
-| `SyncoidCommand`          | Yes                                        | Syncoid command template containing `SourceDataSet` and `DestDataSet` |
-| `PassWord`                | Optional                                   | `No`, `Ask`, or a password/passphrase                                 |
-| `DateTime`                | Yes                                        | Date/time format used for log filenames                               |
-| `LogDestination`          | Optional                                   | Log folder path, or `No` to disable file logging                      |
-| `Mail`                    | Optional                                   | Recipient email address, or `No`                                      |
-| `SystemAction`            | Optional                                   | Command to run after successful completion, or `No`                   |
-| `Use_MQTT`                | Optional                                   | `Yes` or `No`                                                         |
-| `broker_address`          | Required if MQTT is enabled                | MQTT broker hostname or IP                                            |
-| `broker_port`             | Required if MQTT is enabled                | MQTT broker port                                                      |
-| `mqtt_username`           | Optional                                   | MQTT username                                                         |
-| `mqtt_password`           | Optional                                   | MQTT password                                                         |
-| `mqtt_topic`              | Required if MQTT is enabled                | MQTT topic to publish to                                              |
-| `mqtt_message`            | Required if MQTT is enabled                | MQTT message payload                                                  |
-| `Use_HomeAssistant`       | Optional                                   | `Yes` or `No`                                                         |
-| `HomeAssistant_Available` | Required if Home Assistant MQTT is enabled | MQTT availability topic                                               |
-
+| Option | Required | Description |
+| --- | --- | --- |
+| `SourceListPath` | Yes | Path to the source dataset list |
+| `DestListPath` | Yes | Path to the destination dataset list |
+| `SyncoidCommand` | Yes | Syncoid command template containing `SourceDataSet` and `DestDataSet` |
+| `PassWord` | Optional | `No`, `Ask`, or a password/passphrase |
+| `DateTime` | Yes | Date/time format used for log filenames |
+| `LogDestination` | Optional | Log folder path, or `No` to disable file logging |
+| `Mail` | Optional | Recipient email address, or `No` |
+| `SystemAction` | Optional | Command to run after successful completion, or `No` |
+| `Use_MQTT` | Optional | `Yes` or `No` |
+| `broker_address` | Required if MQTT is enabled | MQTT broker hostname or IP |
+| `broker_port` | Required if MQTT is enabled | MQTT broker port |
+| `mqtt_username` | Optional | MQTT username |
+| `mqtt_password` | Optional | MQTT password |
+| `mqtt_topic` | Required if MQTT is enabled | MQTT topic to publish to |
+| `mqtt_message` | Required if MQTT is enabled | MQTT message payload |
+| `Use_HomeAssistant` | Optional | `Yes` or `No` |
+| `HomeAssistant_Available` | Required if Home Assistant MQTT is enabled | MQTT availability topic |
 
 ---
 
@@ -715,10 +713,32 @@ Example:
 Storage/DataSet With Spaces
 ```
 
-The script builds the Syncoid command as an argument list instead of one large shell string.
+Do not escape spaces manually with backslashes in the source or destination list.
 
-This helps keep dataset names with spaces as one argument.
+Use this:
 
+```text
+Storage/DataSet With Spaces
+```
+
+Do not use this:
+
+```text
+Storage/DataSet\ With\ Spaces
+```
+
+The script builds the Syncoid command as a Python argument list instead of one large shell string.
+
+That means dataset names with spaces are kept as one argument.
+
+Example internal command list:
+
+```python
+[
+    "syncoid",
+    "Storage/DataSet With Spaces",
+    "BackUp/DataSet With Spaces",
+]
 ```
 
 ---
@@ -865,6 +885,24 @@ SourceDataset
 DestinationDataSet
 Source
 Destination
+```
+
+---
+
+### Manually escaping spaces
+
+Do not manually add backslashes before spaces.
+
+Correct:
+
+```text
+Storage/DataSet With Spaces
+```
+
+Wrong:
+
+```text
+Storage/DataSet\ With\ Spaces
 ```
 
 ---
