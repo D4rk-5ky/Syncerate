@@ -722,11 +722,6 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
     else:
         exit_code = 1
 
-    def safe_text(value):
-        if value is None:
-            return ""
-        return str(value)
-
     logger.error('')
     logger.error('----------')
     logger.error('')
@@ -853,6 +848,11 @@ def close_child_logfile(child):
 		logger.exception("Could not close pexpect logfile cleanly")
 	finally:
 		child.logfile = None
+
+def safe_text(value):
+    if value is None:
+        return ""
+    return str(value)
 
 def ssh_command(SynCoid_Command):
 
@@ -1010,7 +1010,16 @@ def ssh_command(SynCoid_Command):
 			return child, modified_command
 
 		elif index == PATTERN_GENERIC_WARN:
-			die(child, 'ERROR! Syncoid produced a warning.', 4)
+			warning_text = safe_text(child.after) + safe_text(child.buffer)
+
+			if CONTINUENODESTROYSNAP and "zfs destroy" in warning_text and "failed: 256" in warning_text:
+				logger.info('')
+				logger.info('Syncoid produced the known non-fatal destroy warning.')
+				logger.info('Continuing because CONTINUENODESTROYSNAP is True.')
+				logger.info('')
+				continue
+
+			die(child, 'ERROR! Syncoid produced a warning.', EXIT_WARNING)
 
 		elif index == PATTERN_PASSWORD:
 			if not LogDestination.upper() == "NO":
