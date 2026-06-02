@@ -144,14 +144,25 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			# Open the attachment file and execute the mail command using subprocess
 			with open(LogDestination + 'Syncerate-' + time_now + ".log", 'r') as log_file:
 				log_contents = log_file.read()
-				body = "----------\n\n.log file\n\n----------\n\n" + log_contents + "\n\n----------"
-				mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+				body = backup_header_text() + "----------\n\n.log file\n\n----------\n\n" + log_contents + "\n\n----------"
+			
+			# Send the Mail
+			mail_exit_code, stderr_output = send_mail(
+				subject,
+				body,
+				recipient,
+				attachment_files
+			)
 				
 		else:
 
 			# Define subject and message body
 			subject_and_body = "Successful Syncerate.py run - No errors found (Logs Disabled)"
-			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+			mail_exit_code, stderr_output = send_mail(
+				subject_and_body,
+				backup_header_text() + subject_and_body,
+				recipient
+			)
 		
 		if mail_exit_code == 0:
 			WasMailSent(0, "")
@@ -171,7 +182,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err"]]
 
 			# Start with an empty body
-			body = ""
+			body = backup_header_text()
 
 			# Read contents of .err file
 			with open(LogDestination + 'Syncerate-' + time_now + ".err", 'r') as error_file:
@@ -186,7 +197,12 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 					body += "----------\n\n.out file\n" + out_contents
 
 			# Send the Mail
-			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+			mail_exit_code, stderr_output = send_mail(
+				subject,
+				body,
+				recipient,
+				attachment_files
+			)
 
 		else:
 
@@ -194,7 +210,11 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			subject_and_body = "Error running Syncerate.py - Syncoid error occurred (Logs Disabled)"
 			
 			# Send the Mail
-			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+			mail_exit_code, stderr_output = send_mail(
+				subject_and_body,
+				backup_header_text() + subject_and_body,
+				recipient
+			)
 
 		if mail_exit_code == 0:
 			WasMailSent(0, "")
@@ -215,31 +235,33 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			else:
 				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err"]]
 			
-			# Start with an empty body
-			body = ""
+			body = backup_header_text()
 
-			# Read contents of .err file
 			with open(LogDestination + 'Syncerate-' + time_now + ".err", 'r') as error_file:
 				error_contents = error_file.read()
 				body += "----------\n\n.err file\n\n----------\n\n" + error_contents + "\n\n"
 
-			# Check if .out file exists and read its contents
 			out_file_path = LogDestination + 'Syncerate-' + time_now + ".out"
 			if os.path.isfile(out_file_path):
 				with open(out_file_path, 'r') as out_file:
 					out_contents = out_file.read()
 					body += "----------\n\n.out file\n" + out_contents
 
-			# Send the Mail
-			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+			mail_exit_code, stderr_output = send_mail(
+				subject,
+				body,
+				recipient,
+				attachment_files
+			)
 
 		else:
-
-			# Define subject and message body
 			subject_and_body = "Error running Syncerate.py - This was a script error (Logs Disabled)"
 			
-			# Send the Mail
-			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+			mail_exit_code, stderr_output = send_mail(
+				subject_and_body,
+				backup_header_text() + subject_and_body,
+				recipient
+			)
 
 		if mail_exit_code == 0:
 			WasMailSent(0, "")
@@ -261,7 +283,7 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 				attachment_files = [f"{LogDestination}Syncerate-{time_now}.{ext}" for ext in ["log", "err"]]
 			
 			# Start with an empty body
-			body = ""
+			body = backup_header_text()
 
 			# Read contents of .err file
 			with open(LogDestination + 'Syncerate-' + time_now + ".err", 'r') as error_file:
@@ -276,7 +298,12 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 					body += "----------\n\n.out file\n" + out_contents
 
 			# Send the Mail
-			mail_exit_code, stderr_output = send_mail(subject, body, recipient, attachment_files)
+			mail_exit_code, stderr_output = send_mail(
+				subject,
+				body,
+				recipient,
+				attachment_files
+			)
 
 		else:
 
@@ -284,7 +311,11 @@ def MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None):
 			subject_and_body = "Error sending MQTT message - (Logs Disabled)"
 			
 			# Send the Mail
-			mail_exit_code, stderr_output = send_mail(subject_and_body, subject_and_body, recipient)
+			mail_exit_code, stderr_output = send_mail(
+				subject_and_body,
+				backup_header_text() + subject_and_body,
+				recipient
+			)
 		
 		if mail_exit_code == 0:
 			WasMailSent(0, "")
@@ -457,6 +488,29 @@ time_now  = datetime.datetime.now().strftime(DateTime)
 # This is for the logfile creation
 LogDestination=config.get('Syncerate Config', 'LogDestination')
 
+# Optional title/comment to identify which backup has run
+BackupTitle = config.get('Syncerate Config', 'BackupTitle', fallback='').strip()
+BackupComment = config.get('Syncerate Config', 'BackupComment', fallback='').strip()
+
+def backup_header_text():
+	lines = []
+
+	if BackupTitle:
+		lines.append("Backup title:")
+		lines.append(BackupTitle)
+		lines.append("")
+
+	if BackupComment:
+		lines.append("Backup comment:")
+		lines.append(BackupComment)
+		lines.append("")
+
+	if lines:
+		lines.append("----------")
+		lines.append("")
+
+	return "\n".join(lines)
+
 # This is to enable or disable Loggin
 if not LogDestination.upper() == "NO":
 	if not LogDestination.endswith('/'):
@@ -516,6 +570,18 @@ logger.info('')
 logger.info('----------')
 logger.info('')
 logger.info('Config file destination  :   %s', args.conf)
+
+if BackupTitle or BackupComment:
+	logger.info('')
+	logger.info('----------')
+	logger.info('')
+	logger.info('Backup information')
+
+	if BackupTitle:
+		logger.info('Backup title    :   %s', BackupTitle)
+
+	if BackupComment:
+		logger.info('Backup comment  :   %s', BackupComment)
 
 # Write Date format to screen
 logger.info('')
@@ -722,11 +788,6 @@ def die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=No
     else:
         exit_code = 1
 
-    def safe_text(value):
-        if value is None:
-            return ""
-        return str(value)
-
     logger.error('')
     logger.error('----------')
     logger.error('')
@@ -854,6 +915,11 @@ def close_child_logfile(child):
 	finally:
 		child.logfile = None
 
+def safe_text(value):
+    if value is None:
+        return ""
+    return str(value)
+
 def ssh_command(SynCoid_Command):
 
 	global ISREPEATED
@@ -914,7 +980,7 @@ def ssh_command(SynCoid_Command):
 		pexpect.EOF,
 		'WARN Skipping dataset',
 		'used in the initial send no longer exists',
-		'WARN',
+		'WARN|WARNING',
 		'password',
 	]
 
@@ -1010,7 +1076,16 @@ def ssh_command(SynCoid_Command):
 			return child, modified_command
 
 		elif index == PATTERN_GENERIC_WARN:
-			die(child, 'ERROR! Syncoid produced a warning.', 4)
+			warning_text = safe_text(child.after) + safe_text(child.buffer)
+
+			if CONTINUENODESTROYSNAP and "zfs destroy" in warning_text and "failed: 256" in warning_text:
+				logger.info('')
+				logger.info('Syncoid produced the known non-fatal destroy warning.')
+				logger.info('Continuing because CONTINUENODESTROYSNAP is True.')
+				logger.info('')
+				continue
+
+			die(child, 'ERROR! Syncoid produced a warning.', EXIT_WARNING)
 
 		elif index == PATTERN_PASSWORD:
 			if not LogDestination.upper() == "NO":
