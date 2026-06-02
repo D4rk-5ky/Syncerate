@@ -13,6 +13,7 @@ It can also optionally:
 
 - write log files
 - send mail on success or failure
+- add an optional backup title/comment at the start of the log and mail body
 - publish MQTT messages
 - publish a Home Assistant MQTT availability topic
 - run a system command after a successful run
@@ -61,9 +62,10 @@ Syncerate can:
 7. Add extra Syncoid arguments per destination line.
 8. Write `.log`, `.err`, and `.out` files.
 9. Send mail on success or error.
-10. Send MQTT messages.
-11. Send Home Assistant MQTT availability messages.
-12. Run a system action after successful completion.
+10. Add an optional backup title/comment to the start of logs and mail bodies.
+11. Send MQTT messages.
+12. Send Home Assistant MQTT availability messages.
+13. Run a system action after successful completion.
 
 ---
 
@@ -430,6 +432,9 @@ Example:
 ```ini
 [Syncerate Config]
 
+BackupTitle=Main NAS backup
+BackupComment=Storage/Docker to backup server
+
 SourceListPath=/path/to/source-list.txt
 DestListPath=/path/to/destination-list.txt
 
@@ -462,6 +467,8 @@ HomeAssistant_Available=home-assistant/syncerate/available
 
 | Option | Required | Description |
 | --- | --- | --- |
+| `BackupTitle` | Optional | Short title written at the start of the script log and mail body |
+| `BackupComment` | Optional | Longer comment written at the start of the script log and mail body |
 | `SourceListPath` | Yes | Path to the source dataset list |
 | `DestListPath` | Yes | Path to the destination dataset list |
 | `SyncoidCommand` | Yes | Syncoid command template containing `SourceDataSet` and `DestDataSet` |
@@ -479,6 +486,54 @@ HomeAssistant_Available=home-assistant/syncerate/available
 | `mqtt_message` | Required if MQTT is enabled | MQTT message payload |
 | `Use_HomeAssistant` | Optional | `Yes` or `No` |
 | `HomeAssistant_Available` | Required if Home Assistant MQTT is enabled | MQTT availability topic |
+
+---
+
+## Optional backup title and comment
+
+You can add an optional title and comment to the config file.
+
+These values are useful when you run multiple Syncerate configs and want the mail body and log to clearly show which backup job has run.
+
+Example:
+
+```ini
+BackupTitle=Main NAS backup
+BackupComment=Storage/Docker to backup server
+```
+
+Both values are optional.
+
+You can leave them empty:
+
+```ini
+BackupTitle=
+BackupComment=
+```
+
+Or you can omit them completely from the config file.
+
+When set, Syncerate writes them near the start of the script log and at the start of every mail body.
+
+The mail subject/title still stays the normal success or failure subject.
+
+Example success mail subject:
+
+```text
+Successful Syncerate.py run - No errors found (Attaching logs)
+```
+
+Example start of mail body:
+
+```text
+Backup title:
+Main NAS backup
+
+Backup comment:
+Storage/Docker to backup server
+
+----------
+```
 
 ---
 
@@ -606,6 +661,10 @@ Mail can be sent on:
 - MQTT error
 
 If logging is enabled, logs are attached to the mail.
+
+If `BackupTitle` and/or `BackupComment` are set, they are written at the beginning of the mail body before the log/error content.
+
+The mail subject is not changed by `BackupTitle` or `BackupComment`; it still shows whether the run succeeded or failed.
 
 ---
 
