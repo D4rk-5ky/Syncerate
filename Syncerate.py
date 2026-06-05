@@ -342,50 +342,55 @@ def WasMailSent(MailExitCode, popenstderr):
 		logger.error('----------')
 
 def SystemAction():
-	if not MailOption.upper() == "NO":
-		logger.info('')
-		logger.info('----------')
-		logger.info('')
-		logger.info('The system has an option after the script finishes')
-		logger.info('')
-		logger.info('The options is')
-		logger.info('')
-		logger.info(SystemOption)
-		logger.info('')
-		logger.info('Gonna sleep for 2 minutes to insure mail is sent')
-		logger.info('')
-		logger.info('Then execute the command	:	' + SystemOption)
-		logger.info('')
-		logger.info('----------')
+	if SystemOption.upper() == "NO":
+		return
 
-		# Sleep before executing the desired action
+	logger.info('')
+	logger.info('----------')
+	logger.info('')
+	logger.info('The system has an option after the script finishes')
+	logger.info('')
+	logger.info('The option is:')
+	logger.info(SystemOption)
+	logger.info('')
+
+	if MailOption.upper() != "NO":
+		logger.info('Gonna sleep for 2 minutes to ensure mail is sent')
 		time.sleep(120)
-
-		try:
-			subprocess.run(SystemOption, shell=True, check=False)
-		except Exception:
-			logger.exception("Failed running SystemAction")
-
-	elif not SystemOption.upper() == "NO" and MailOption.upper() == "NO":
-		logger.info('')
-		logger.info('----------')
-		logger.info('')
-		logger.info('The system has an option after the script finishes')
-		logger.info('')
-		logger.info('The options is')
-		logger.info('')
-		logger.info(SystemOption)
-		logger.info('')
+	else:
 		logger.info('No mail option chosen')
-		logger.info('')
-		logger.info('Gonna execute the command	:	' + SystemOption)
-		logger.info('')
-		logger.info('----------')
 
-		try:
-			subprocess.run(SystemOption, shell=True, check=False)
-		except Exception:
-			logger.exception("Failed running SystemAction")
+	logger.info('')
+	logger.info('Executing command: %s', SystemOption)
+	logger.info('----------')
+
+	try:
+		command = shlex.split(SystemOption)
+
+		result = subprocess.run(
+			command,
+			text=True,
+			capture_output=True,
+			check=False
+		)
+
+		logger.info('SystemAction return code: %s', result.returncode)
+
+		if result.stdout:
+			logger.info('SystemAction stdout:')
+			logger.info(result.stdout.strip())
+
+		if result.stderr:
+			logger.error('SystemAction stderr:')
+			logger.error(result.stderr.strip())
+
+		if result.returncode != 0:
+			logger.error('SystemAction failed')
+			sys.exit(EXIT_SYSTEM_ACTION_ERROR)
+
+	except Exception:
+		logger.exception("Failed running SystemAction")
+		sys.exit(EXIT_SYSTEM_ACTION_ERROR)
 
 def successfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 
