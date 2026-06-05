@@ -62,11 +62,25 @@ def send_mail(subject, body, recipient, attachment_files=None):
 		for file in attachment_files:
 			mail_command.extend(['--attach', file])
 
-	process = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-	_, stderr_output = process.communicate(input=body.encode())
+	process = subprocess.Popen(
+		mail_command,
+		stdin=subprocess.PIPE,
+		stdout=subprocess.PIPE,
+		stderr=subprocess.PIPE,
+		text=True
+	)
 
-	mail_exit_code = process.returncode
-	return mail_exit_code, stderr_output.decode().strip()
+	try:
+		stdout_output, stderr_output = process.communicate(
+			input=body,
+			timeout=60
+		)
+	except subprocess.TimeoutExpired:
+		process.kill()
+		stdout_output, stderr_output = process.communicate()
+		return 124, "Mail command timed out after 60 seconds"
+
+	return process.returncode, stderr_output.strip()
 
 def send_mqtt_messages():
     broker_address = config.get('Syncerate Config', 'broker_address')
