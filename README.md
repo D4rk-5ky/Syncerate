@@ -1,1020 +1,471 @@
 # Syncerate
 
-Syncerate is a Python 3 wrapper script for [Syncoid](https://github.com/jimsalterjrs/sanoid), from the [Sanoid](https://github.com/jimsalterjrs/sanoid) project.
+Syncerate runs one Syncoid command for each paired source and destination ZFS dataset in two list files.
 
-It lets you run Syncoid against many ZFS datasets by using two simple text files:
-
-- one source dataset list
-- one destination dataset list
-
-The script reads both lists line by line and runs one Syncoid command for each source/destination pair.
-
-It can also optionally:
-
-- write log files
-- send mail on success or failure
-- add an optional backup title/comment at the start of the log and mail body
-- publish MQTT messages
-- publish a Home Assistant MQTT availability topic
-- run a system command after a successful run
-- pass extra Syncoid arguments per destination dataset
-
----
-
-## Disclaimer
-
-Use this at your own risk.
-
-This script runs ZFS/Syncoid commands and may affect your datasets, snapshots, or backup targets.  
-Always test with non-critical datasets first.
-
-I am not responsible for data loss, damaged pools, deleted snapshots, broken backups, or anything else that happens while using this script.
-
----
-
-## Why I made this
-
-A friend and I started using ZFS around 2020 on Raspberry Pis and homemade servers built from older hardware.
-
-We quickly found [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid), which is a great tool for handling ZFS snapshots and replication.
-
-Syncoid worked well, but we wanted an easy way to transfer many datasets in sequence without manually writing the same command over and over again.
-
-That idea became Syncerate.
-
-This is my first open source GitHub project.  
-I am not a professional programmer, and this has been a learning project for me.
-
-The script currently works for our own use case, but I would be happy if others fork it, improve it, or use parts of it for their own setup.
-
----
-
-## Features
-
-Syncerate can:
-
-1. Iterate through a list of source ZFS datasets.
-2. Iterate through a matching list of destination ZFS datasets.
-3. Run Syncoid once for each source/destination pair.
-4. Check that the number of source and destination entries match.
-5. Check that the final dataset names match.
-6. Support dataset names with spaces.
-7. Add extra Syncoid arguments per destination line.
-8. Write `.log`, `.err`, and `.out` files.
-9. Send mail on success or error.
-10. Add an optional backup title/comment to the start of logs and mail bodies.
-11. Send MQTT messages.
-12. Send Home Assistant MQTT availability messages.
-13. Run a system action after successful completion.
-
----
+Current version: `0.4.2`
 
 ## Requirements
 
-You need:
+Required:
 
 - Python 3
 - ZFS
-- Syncoid / Sanoid
-- SSH access between source and destination systems
-- `pexpect`
-- `paho-mqtt`, if MQTT is enabled
-- `mail`, if mail notifications are enabled
+- Sanoid/Syncoid
+- Python `pexpect`
+- SSH access when either side is remote
 
-Example package installation on Debian/Ubuntu:
+Optional:
+
+- Python `paho-mqtt` only when MQTT is enabled
+- a configured local `mail` command only when email is enabled
+- Home Assistant only when using the optional MQTT availability integration
+
+On Debian or Ubuntu, install the required packages:
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-pexpect python3-paho-mqtt sanoid mailutils
+sudo apt install python3 python3-pexpect sanoid
 ```
 
-Depending on your distro, the package names may be different.
-
----
-
-## Installation
-
-Clone the repository:
+Install MQTT support only when needed:
 
 ```bash
-cd /your/script/location
-git clone https://github.com/D4rk-5ky/Syncerate Syncerate
-cd Syncerate
+sudo apt install python3-paho-mqtt
 ```
 
-Make the script executable:
-
-```bash
-chmod +x Syncerate.py
-```
-
----
-
-## Basic usage
-
-Run the script with a config file:
-
-```bash
-./Syncerate.py -c ./config/Syncerate.cfg
-```
-
-or:
-
-```bash
-python3 Syncerate.py -c ./config/Syncerate.cfg
-```
-
----
-
-## How Syncerate works
-
-Syncerate uses three main files:
-
-```text
-Syncerate.py
-Syncerate.cfg
-source-list.txt
-destination-list.txt
-```
-
-The source list and destination list must have the same number of lines.
-
-Example:
-
-```text
-source-list.txt line 1       -> destination-list.txt line 1
-source-list.txt line 2       -> destination-list.txt line 2
-source-list.txt line 3       -> destination-list.txt line 3
-```
-
-For every matching pair, Syncerate builds and runs a Syncoid command.
-
----
-
-## Source list
-
-The source list contains the datasets you want to send or pull from.
-
-Example:
-
-```text
-Storage/Archivy
-Storage/DataSet With Spaces
-Storage/Grafana
-Storage/HedgeDoc
-Storage/Heimdall
-Storage/Home-Assistant
-Storage/Joplin
-Storage/Kavita
-Storage/Media
-Storage/Mosquitto
-Storage/NextCloud
-Storage/Podcasts
-Storage/Portainer
-Storage/SyncThing
-Storage/Vikunja
-Storage/WallaBag
-Storage/WatchTower
-```
-
-You can create a list from existing datasets with:
-
-```bash
-zfs list -o name
-```
-
-Then copy the wanted dataset names into your source list file.
-
-Blank lines and lines starting with `#` are ignored.
-
-Example:
-
-```text
-# Docker services
-Storage/Grafana
-Storage/Home-Assistant
-
-# Media
-Storage/Media
-```
-
----
-
-## Destination list
-
-The destination list contains where each source dataset should be replicated to.
-
-Example:
-
-```text
-BackUp/Docker-Syncerate-Test/Archivy
-BackUp/Docker-Syncerate-Test/DataSet With Spaces
-BackUp/Docker-Syncerate-Test/Grafana
-BackUp/Docker-Syncerate-Test/HedgeDoc
-BackUp/Docker-Syncerate-Test/Heimdall
-BackUp/Docker-Syncerate-Test/Home-Assistant
-BackUp/Docker-Syncerate-Test/Joplin
-BackUp/Docker-Syncerate-Test/Kavita
-BackUp/Docker-Syncerate-Test/Media
-BackUp/Docker-Syncerate-Test/Mosquitto
-BackUp/Docker-Syncerate-Test/NextCloud
-BackUp/Docker-Syncerate-Test/Podcasts
-BackUp/Docker-Syncerate-Test/Portainer
-BackUp/Docker-Syncerate-Test/SyncThing
-BackUp/Docker-Syncerate-Test/Vikunja
-BackUp/Docker-Syncerate-Test/WallaBag
-BackUp/Docker-Syncerate-Test/WatchTower
-```
-
-Before running Syncerate, create the parent dataset on the receiving side.
-
-Example:
-
-```bash
-zfs create BackUp/Docker-Syncerate-Test
-```
-
-Syncoid can create the final child dataset, but the parent path should already exist.
-
----
-
-## Dataset name safety check
-
-Syncerate checks that the final part of each source and destination dataset name matches.
-
-Example accepted pair:
-
-```text
-Source:
-Storage/Home-Assistant
-
-Destination:
-BackUp/Docker-Syncerate-Test/Home-Assistant
-```
-
-Both end with:
-
-```text
-Home-Assistant
-```
-
-Example rejected pair:
-
-```text
-Source:
-Storage/Home-Assistant
-
-Destination:
-BackUp/Docker-Syncerate-Test/Grafana
-```
-
-These do not match, so Syncerate stops with an error.
-
-This helps avoid accidentally sending a dataset to the wrong destination.
-
----
-
-# Per-destination extra arguments
-
-Syncerate supports adding extra Syncoid arguments to individual lines in the destination list.
-
-This is useful when only some destination datasets need special receive options.
-
-For example, you may want one destination dataset to be created with:
-
-```text
-recordsize=1M
-compression=zstd-9
-```
-
-while other datasets use normal Syncoid behavior.
-
----
-
-## Destination list syntax with extra arguments
-
-The format is:
-
-```text
-DestinationDataset: extra syncoid arguments
-```
-
-Important:
-
-```text
-colon + space
-```
-
-Syncerate splits the destination line on:
-
-```text
-: 
-```
-
-That means a remote destination like this is still safe:
-
-```text
-root@10.0.0.2:BackUp/Docker/Home-Assistant
-```
-
-because it does not contain `colon + space`.
-
----
-
-## Example destination list with extra arguments
-
-```text
-BackUp/Docker-Syncerate-Test/Archivy
-BackUp/Docker-Syncerate-Test/DataSet With Spaces
-BackUp/Docker-Syncerate-Test/Grafana
-BackUp/Docker-Syncerate-Test/Media: --recvoptions="o recordsize=1M o compression=zstd-9"
-BackUp/Docker-Syncerate-Test/NextCloud: --recvoptions="o recordsize=1M o compression=zstd-9"
-BackUp/Docker-Syncerate-Test/Portainer
-```
-
-In this example:
-
-- `Archivy` uses the normal Syncoid command
-- `DataSet With Spaces` uses the normal Syncoid command
-- `Grafana` uses the normal Syncoid command
-- `Media` gets extra receive options
-- `NextCloud` gets extra receive options
-- `Portainer` uses the normal Syncoid command
-
----
-
-## Example generated command
-
-If your config contains:
-
-```ini
-SyncoidCommand=syncoid SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation
-```
-
-And your source list contains:
-
-```text
-Storage/Media
-```
-
-And your destination list contains:
-
-```text
-BackUp/Docker-Syncerate-Test/Media: --recvoptions="o recordsize=1M o compression=zstd-9"
-```
-
-Syncerate will run something like:
-
-```bash
-syncoid Storage/Media BackUp/Docker-Syncerate-Test/Media --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation --recvoptions="o recordsize=1M o compression=zstd-9"
-```
-
----
-
-## Important note about `--recvoptions`
-
-`--recvoptions` are only used by Syncoid when the destination dataset is created during receive.
-
-If the destination dataset already exists, changing `recordsize` or `compression` this way may not change existing dataset properties.
-
-To set properties manually on an existing destination dataset, use ZFS directly.
-
-Example:
-
-```bash
-zfs set recordsize=1M BackUp/Docker-Syncerate-Test/Media
-zfs set compression=zstd-9 BackUp/Docker-Syncerate-Test/Media
-```
-
-Future writes to that dataset will then use the new properties.
-
-Existing blocks are not automatically rewritten.
-
----
-
-## Repeated transfers after setting properties
-
-If a destination dataset has already been created with:
-
-```bash
-recordsize=1M
-compression=zstd-9
-```
-
-then later Syncoid runs do not need to repeat the same `--recvoptions`.
-
-The dataset keeps its ZFS properties until you change them.
-
-So this is valid:
-
-First run:
-
-```text
-BackUp/Docker-Syncerate-Test/Media: --recvoptions="o recordsize=1M o compression=zstd-9"
-```
-
-Later runs:
-
-```text
-BackUp/Docker-Syncerate-Test/Media
-```
-
-The destination dataset keeps its existing ZFS properties.
-
----
-
-## Config file
-
-The config file controls the script behavior.
-
-Example:
-
-```ini
-[Syncerate Config]
-
-BackupTitle=Main NAS backup
-BackupComment=Storage/Docker to backup server
-
-SourceListPath=/path/to/source-list.txt
-DestListPath=/path/to/destination-list.txt
-
-SyncoidCommand=syncoid SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation
-
-PassWord=No
-
-DateTime=%Y-%m-%d_%H-%M-%S
-LogDestination=/var/log/syncerate
-
-Mail=No
-SystemAction=No
-
-Use_MQTT=No
-broker_address=10.0.0.10
-broker_port=1883
-mqtt_username=
-mqtt_password=
-mqtt_topic=home-assistant/syncerate/command
-mqtt_message=ON
-
-Use_HomeAssistant=No
-HomeAssistant_Available=home-assistant/syncerate/available
-
-```
-
----
-
-## Config options
-
-| Option | Required | Description |
-| --- | --- | --- |
-| `BackupTitle` | Optional | Short title written at the start of the script log and mail body |
-| `BackupComment` | Optional | Longer comment written at the start of the script log and mail body |
-| `SourceListPath` | Yes | Path to the source dataset list |
-| `DestListPath` | Yes | Path to the destination dataset list |
-| `SyncoidCommand` | Yes | Syncoid command template containing `SourceDataSet` and `DestDataSet` |
-| `PassWord` | Optional | `No`, `Ask`, or a password/passphrase |
-| `DateTime` | Yes | Date/time format used for log filenames |
-| `LogDestination` | Optional | Log folder path, or `No` to disable file logging |
-| `Mail` | Optional | Recipient email address, or `No` |
-| `SystemAction` | Optional | Command to run after successful completion, or `No` |
-| `Use_MQTT` | Optional | `Yes` or `No` |
-| `broker_address` | Required if MQTT is enabled | MQTT broker hostname or IP |
-| `broker_port` | Required if MQTT is enabled | MQTT broker port |
-| `mqtt_username` | Optional | MQTT username |
-| `mqtt_password` | Optional | MQTT password |
-| `mqtt_topic` | Required if MQTT is enabled | MQTT topic to publish to |
-| `mqtt_message` | Required if MQTT is enabled | MQTT message payload |
-| `Use_HomeAssistant` | Optional | `Yes` or `No` |
-| `HomeAssistant_Available` | Required if Home Assistant MQTT is enabled | MQTT availability topic |
-
----
-
-## Optional backup title and comment
-
-You can add an optional title and comment to the config file.
-
-These values are useful when you run multiple Syncerate configs and want the mail body and log to clearly show which backup job has run.
-
-Example:
-
-```ini
-BackupTitle=Main NAS backup
-BackupComment=Storage/Docker to backup server
-```
-
-Both values are optional.
-
-You can leave them empty:
-
-```ini
-BackupTitle=
-BackupComment=
-```
-
-Or you can omit them completely from the config file.
-
-When set, Syncerate writes them near the start of the script log and at the start of every mail body.
-
-The mail subject/title still stays the normal success or failure subject.
-
-Example success mail subject:
-
-```text
-Successful Syncerate.py run - No errors found (Attaching logs)
-```
-
-Example start of mail body:
-
-```text
-Backup title:
-Main NAS backup
-
-Backup comment:
-Storage/Docker to backup server
-
-----------
-```
-
----
-
-## Syncoid command template
-
-The Syncoid command must contain these two placeholders:
-
-```text
-SourceDataSet
-DestDataSet
-```
-
-Syncerate replaces them with the current source and destination dataset from the list files.
-
-Example pull command:
-
-```ini
-SyncoidCommand=syncoid username@10.0.0.50:SourceDataSet DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation
-```
-
-Example push command:
-
-```ini
-SyncoidCommand=syncoid SourceDataSet username@10.0.0.60:DestDataSet --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation
-```
-
-Do not rename these placeholders:
-
-```text
-SourceDataSet
-DestDataSet
-```
-
-They are required by the script.
-
----
-
-## Password / passphrase handling
-
-The `PassWord` option supports three modes.
-
-No password:
-
-```ini
-PassWord=No
-```
-
-Ask in terminal:
-
-```ini
-PassWord=Ask
-```
-
-Store password in config:
-
-```ini
-PassWord=your-password-here
-```
-
-Using `Ask` is safer than storing the password in the config file.
-
-The password is not written to the log files.
-
----
-
-## Logging
-
-Enable logging by setting:
-
-```ini
-LogDestination=/path/to/log/folder
-```
-
-Disable file logging with:
-
-```ini
-LogDestination=No
-```
-
-When logging is enabled, Syncerate can create:
-
-```text
-Syncerate-YYYY-MM-DD_HH-MM-SS.log
-Syncerate-YYYY-MM-DD_HH-MM-SS.err
-Syncerate-YYYY-MM-DD_HH-MM-SS.out
-```
-
-File meaning:
-
-| File | Description |
-| --- | --- |
-| `.log` | Main script log |
-| `.err` | Error-only log |
-| `.out` | Syncoid output |
-
----
-
-## Mail notifications
-
-To disable mail:
-
-```ini
-Mail=No
-```
-
-To enable mail:
-
-```ini
-Mail=you@example.com
-```
-
-This requires a working local mail setup, such as Postfix and the `mail` command.
-
-Example packages on Debian/Ubuntu:
+Install local mail support only when needed:
 
 ```bash
 sudo apt install postfix mailutils
 ```
 
-Mail can be sent on:
-
-- successful run
-- Syncoid error
-- script error
-- MQTT error
-
-If logging is enabled, logs are attached to the mail.
-
-If `BackupTitle` and/or `BackupComment` are set, they are written at the beginning of the mail body before the log/error content.
-
-The mail subject is not changed by `BackupTitle` or `BackupComment`; it still shows whether the run succeeded or failed.
-
----
-
-## MQTT
-
-To disable MQTT:
-
-```ini
-Use_MQTT=No
-```
-
-To enable MQTT:
-
-```ini
-Use_MQTT=Yes
-broker_address=10.0.0.10
-broker_port=1883
-mqtt_username=myuser
-mqtt_password=mypassword
-mqtt_topic=home-assistant/syncerate/command
-mqtt_message=ON
-```
-
-Syncerate publishes the configured message to the configured topic after a successful run.
-
----
-
-## Home Assistant MQTT availability
-
-If you use Home Assistant MQTT availability, enable:
-
-```ini
-Use_HomeAssistant=Yes
-HomeAssistant_Available=home-assistant/syncerate/available
-```
-
-Syncerate will publish:
+## Project files
 
 ```text
-online
+Syncerate.py
+README.md
+VERSIONING.md
+commented_code_map.md
+config/example-Syncerate.cfg
+config/example-source-file
+config/example-dest-file
+config/HomeAssistant-Configuration-For-MQTT.yaml
 ```
 
-to the availability topic.
+The Home Assistant YAML and screenshots are optional reference files. Syncerate itself does not load them.
 
-Example Home Assistant MQTT binary sensor:
+## Prepare the script
 
-```yaml
-mqtt:
-  binary_sensor:
-    - name: "Syncerate"
-      state_topic: "home-assistant/syncerate/command"
-      payload_on: "ON"
-      availability:
-        - topic: "home-assistant/syncerate/available"
-          payload_available: "online"
-          payload_not_available: "offline"
-      qos: 0
+Make it executable:
+
+```bash
+chmod +x Syncerate.py
 ```
 
-Note:
+Show help:
 
-If you use retained MQTT messages, remember to reset the Home Assistant entity or automation state after it has triggered, otherwise automations may repeat unexpectedly.
-
----
-
-## System action after successful run
-
-To disable:
-
-```ini
-SystemAction=No
+```bash
+./Syncerate.py --help
 ```
 
-To shut down after a successful run:
+Show the installed version:
 
-```ini
-SystemAction=shutdown -P now
+```bash
+./Syncerate.py --version
 ```
 
-To reboot:
+## Create the source list
 
-```ini
-SystemAction=reboot
-```
-
-To run your own script:
-
-```ini
-SystemAction=/path/to/my-script.sh
-```
-
-The system action only runs after a successful Syncerate run.
-
-If a Syncoid or script error happens, the system action is not executed.
-
----
-
-## Dataset names with spaces
-
-Syncerate supports dataset names with spaces.
-
-Example:
-
-```text
-Storage/DataSet With Spaces
-```
-
-Do not escape spaces manually with backslashes in the source or destination list.
-
-Use this:
-
-```text
-Storage/DataSet With Spaces
-```
-
-Do not use this:
-
-```text
-Storage/DataSet\ With\ Spaces
-```
-
-The script builds the Syncoid command as a Python argument list instead of one large shell string.
-
-That means dataset names with spaces are kept as one argument.
-
-Example internal command list:
-
-```python
-[
-    "syncoid",
-    "Storage/DataSet With Spaces",
-    "BackUp/DataSet With Spaces",
-]
-```
-
----
-
-## Example source and destination pair
-
-Source list:
+Create one source dataset per active line:
 
 ```text
 Storage/Home-Assistant
 Storage/Media
-Storage/NextCloud
+Storage/DataSet With Spaces
 ```
 
-Destination list:
+Blank lines and lines beginning with `#` are ignored.
+
+Do not manually escape spaces:
 
 ```text
-BackUp/Docker-Syncerate-Test/Home-Assistant
-BackUp/Docker-Syncerate-Test/Media: --recvoptions="o recordsize=1M o compression=zstd-9"
-BackUp/Docker-Syncerate-Test/NextCloud: --recvoptions="o recordsize=1M o compression=zstd-9"
+Storage/DataSet With Spaces
 ```
 
-Generated commands will be similar to:
+## Create the destination list
 
-```bash
-syncoid Storage/Home-Assistant BackUp/Docker-Syncerate-Test/Home-Assistant --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation
-```
-
-```bash
-syncoid Storage/Media BackUp/Docker-Syncerate-Test/Media --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation --recvoptions="o recordsize=1M o compression=zstd-9"
-```
-
-```bash
-syncoid Storage/NextCloud BackUp/Docker-Syncerate-Test/NextCloud --compress none --sshcipher chacha20-poly1305@openssh.com --sshport 22 --sshkey /root/.ssh/mykey --no-privilege-elevation --recvoptions="o recordsize=1M o compression=zstd-9"
-```
-
----
-
-## Testing safely
-
-Before using Syncerate on important data, test with a small dataset.
-
-Example:
-
-```bash
-zfs create Storage/Syncerate-Test
-touch /Storage/Syncerate-Test/testfile
-```
-
-Add it to your source list:
+Create one destination dataset for each source-line position:
 
 ```text
-Storage/Syncerate-Test
+BackUp/Home-Assistant
+BackUp/Media
+BackUp/DataSet With Spaces
 ```
 
-Add a matching destination:
+Line pairing is positional:
 
 ```text
-BackUp/Syncerate-Test
+source line 1 -> destination line 1
+source line 2 -> destination line 2
+source line 3 -> destination line 3
 ```
 
-Run Syncerate:
+The two lists must contain the same number of active lines. The final dataset name in each pair must also match.
 
-```bash
-./Syncerate.py -c ./config/Syncerate.cfg
-```
-
-Then verify the destination:
-
-```bash
-zfs list
-zfs list -t snapshot
-```
-
----
-
-## Exit codes
-
-Syncerate uses different exit codes for different error types.
-
-| Exit code | Meaning |
-| --- | --- |
-| `0` | Success |
-| `1` | Source/destination list error |
-| `2` | Script error |
-| `4` | Warning detected |
-| `5` | Password denied / permission denied |
-| `6` | Connection timeout |
-| `7` | Connection refused |
-| `8` | Dataset missing or skipped |
-| `9` | Repeated pattern detected |
-| `10` | MQTT error |
-| `11` | System action error |
-
----
-
-## Common mistakes
-
-### Wrong number of source and destination lines
-
-The source and destination lists must have the same number of active lines.
-
-Blank lines and lines starting with `#` are ignored.
-
----
-
-### Final dataset names do not match
-
-This will fail:
+Valid pair:
 
 ```text
-Source:
 Storage/Home-Assistant
-
-Destination:
-BackUp/Docker-Syncerate-Test/Grafana
+BackUp/Home-Assistant
 ```
 
-This will work:
+Invalid pair:
 
 ```text
-Source:
 Storage/Home-Assistant
-
-Destination:
-BackUp/Docker-Syncerate-Test/Home-Assistant
+BackUp/Grafana
 ```
 
----
+## Per-destination Syncoid arguments
 
-### Wrong placeholder names
+A destination line can append extra Syncoid arguments after a colon followed by one space:
 
-Use exactly:
+```text
+BackUp/Media: --recvoptions="o recordsize=1M o compression=zstd-9"
+```
+
+The required separator is:
+
+```text
+: 
+```
+
+Remote destination syntax remains supported because Syncerate splits only on the final colon-space sequence:
+
+```text
+root@192.0.2.20:BackUp/Media: --recvoptions="o compression=zstd"
+```
+
+## Create the configuration
+
+Copy the supplied example:
+
+```bash
+cp config/example-Syncerate.cfg config/Syncerate.cfg
+```
+
+Edit `config/Syncerate.cfg`:
+
+```ini
+[Syncerate Config]
+
+BackupTitle = Main ZFS backup
+BackupComment = Replicate selected datasets to the backup pool
+
+SourceListPath = /absolute/path/to/source-list
+DestListPath = /absolute/path/to/destination-list
+
+SyncoidCommand = syncoid username@192.0.2.10:SourceDataSet DestDataSet --compress none --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation
+
+PassWord = No
+Mail = No
+DateTime = %Y-%m-%d_%H_%M_%S
+LogDestination = No
+SystemAction = No
+
+Use_MQTT = No
+broker_address = mqtt.example.com
+broker_port = 1883
+mqtt_username =
+mqtt_password =
+mqtt_topic = home-assistant/syncerate/command
+mqtt_message = ON
+
+Use_HomeAssistant = No
+HomeAssistant_Available = home-assistant/syncerate/available
+```
+
+## Configuration options
+
+| Option | Required | Purpose |
+| --- | --- | --- |
+| `BackupTitle` | No | Short job name written to logs and email bodies |
+| `BackupComment` | No | Longer job description written to logs and email bodies |
+| `SourceListPath` | Yes | Absolute or relative path to the source dataset list |
+| `DestListPath` | Yes | Absolute or relative path to the destination dataset list |
+| `SyncoidCommand` | Yes | Syncoid template containing `SourceDataSet` and `DestDataSet` |
+| `PassWord` | No | `No`, `Ask`, or a literal password/passphrase |
+| `Mail` | No | Recipient address, or `No` to disable email |
+| `DateTime` | Yes | Python `strftime` format for log filenames |
+| `LogDestination` | No | Log directory, or `No` for terminal-only output |
+| `SystemAction` | No | Trusted shell command after success, or `No` |
+| `Use_MQTT` | No | Enables optional MQTT success publishing |
+| `broker_address` | With MQTT | MQTT broker hostname or address |
+| `broker_port` | With MQTT | MQTT broker TCP port |
+| `mqtt_username` | No | Optional MQTT username |
+| `mqtt_password` | No | Optional MQTT password |
+| `mqtt_topic` | With MQTT | Topic for the configured success payload |
+| `mqtt_message` | With MQTT | Success payload |
+| `Use_HomeAssistant` | No | Enables optional retained availability publishing |
+| `HomeAssistant_Available` | With HA | Home Assistant availability topic |
+
+## Syncoid command templates
+
+Keep these placeholders exactly as written:
 
 ```text
 SourceDataSet
 DestDataSet
 ```
 
-Do not use:
+Local to local:
 
-```text
-SourceDataset
-DestinationDataSet
-Source
-Destination
+```ini
+SyncoidCommand = syncoid SourceDataSet DestDataSet
 ```
 
----
+Pull from a remote source:
 
-### Manually escaping spaces
-
-Do not manually add backslashes before spaces.
-
-Correct:
-
-```text
-Storage/DataSet With Spaces
+```ini
+SyncoidCommand = syncoid username@192.0.2.10:SourceDataSet DestDataSet --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation
 ```
 
-Wrong:
+Push to a remote destination:
 
-```text
-Storage/DataSet\ With\ Spaces
+```ini
+SyncoidCommand = syncoid SourceDataSet username@192.0.2.20:DestDataSet --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation
 ```
 
----
+Syncerate splits the template before replacing the placeholders, preserving dataset names containing spaces as single command arguments.
 
-### Wrong destination extra argument separator
+## Password and passphrase handling
 
-Correct:
+Do not provide one:
 
-```text
-BackUp/Media: --recvoptions="o recordsize=1M o compression=zstd-9"
+```ini
+PassWord = No
 ```
 
-Wrong:
+Prompt securely at startup:
 
-```text
-BackUp/Media:--recvoptions="o recordsize=1M o compression=zstd-9"
+```ini
+PassWord = Ask
 ```
 
-The separator must be:
+Use a literal configured value:
 
-```text
-: 
+```ini
+PassWord = your-secret
 ```
 
-That means colon followed by a space.
+`Ask` is safer than storing a secret in the config. Password values are omitted from logs.
 
----
+## Logging
 
-## Contributing
+Disable file logging:
 
-If you want to improve Syncerate, please fork the repository and make a pull request.
-
-The project branch intended for future work is:
-
-```text
-Syncerate-Next
+```ini
+LogDestination = No
 ```
 
-Ideas for improvement are welcome.
+Enable file logging:
 
----
+```ini
+LogDestination = /var/log/syncerate
+```
 
-## Credits
+Generated files can include:
 
-Thanks to:
+```text
+Syncerate-<timestamp>.log
+Syncerate-<timestamp>.err
+Syncerate-<timestamp>.out
+```
 
-- [Jim Salter](https://github.com/jimsalterjrs)
-- [Sanoid/Syncoid](https://github.com/jimsalterjrs/sanoid)
-- [2.5 Admins](https://2.5admins.com/)
-- [Late Night Linux Family](https://latenightlinux.com/)
+- `.log`: main application messages.
+- `.err`: ERROR-level messages only.
+- `.out`: Syncoid process output.
 
----
+## Email
 
-## Author
+Disable email:
 
-Made by Darkyere & Skynet.
+```ini
+Mail = No
+```
+
+Enable email:
+
+```ini
+Mail = user@example.com
+```
+
+Email requires a working local `mail` command. Syncerate can send successful-run, Syncoid-error, script-error, and MQTT-error notifications. Available logs are attached when file logging is enabled.
+
+## MQTT
+
+MQTT is disabled by default:
+
+```ini
+Use_MQTT = No
+```
+
+These values also disable it:
+
+```text
+False
+0
+Off
+```
+
+When MQTT is disabled:
+
+- `paho-mqtt` is not imported;
+- the package does not need to be installed;
+- broker and topic values are not read by the MQTT publishing function;
+- Home Assistant MQTT settings are not loaded.
+
+Enable MQTT:
+
+```ini
+Use_MQTT = Yes
+broker_address = 192.0.2.30
+broker_port = 1883
+mqtt_username = syncerate
+mqtt_password = secret
+mqtt_topic = home-assistant/syncerate/command
+mqtt_message = ON
+```
+
+These values also enable it:
+
+```text
+True
+1
+On
+```
+
+After all Syncoid jobs succeed, Syncerate publishes the configured retained message. When MQTT is enabled but `paho-mqtt` is not installed, Syncerate exits with code `10` and explains the missing optional dependency.
+
+## Home Assistant MQTT availability
+
+Home Assistant support is optional and disabled by default:
+
+```ini
+Use_HomeAssistant = No
+```
+
+The option may be omitted completely. It is read only when MQTT is enabled.
+
+Enable availability publishing:
+
+```ini
+Use_MQTT = Yes
+Use_HomeAssistant = Yes
+HomeAssistant_Available = home-assistant/syncerate/available
+```
+
+Syncerate then publishes retained payload `online` to the availability topic before publishing the normal MQTT success payload.
+
+An example binary sensor is supplied in:
+
+```text
+config/HomeAssistant-Configuration-For-MQTT.yaml
+```
+
+## Successful-run system action
+
+Disable it:
+
+```ini
+SystemAction = No
+```
+
+Examples:
+
+```ini
+SystemAction = shutdown -P now
+SystemAction = reboot
+SystemAction = /path/to/trusted-script.sh
+```
+
+The command runs only after every dataset transfer succeeds. It is executed through a shell, so only configure trusted commands.
+
+## Run Syncerate
+
+Using the long option:
+
+```bash
+./Syncerate.py --conf ./config/Syncerate.cfg
+```
+
+Using the short option:
+
+```bash
+./Syncerate.py -c ./config/Syncerate.cfg
+```
+
+## Safe initial test
+
+Create a small source dataset and test file:
+
+```bash
+sudo zfs create Storage/Syncerate-Test
+sudo touch /Storage/Syncerate-Test/testfile
+```
+
+Use matching list entries:
+
+```text
+Storage/Syncerate-Test
+```
+
+```text
+BackUp/Syncerate-Test
+```
+
+Run the job:
+
+```bash
+./Syncerate.py --conf ./config/Syncerate.cfg
+```
+
+Verify after the run:
+
+```bash
+sudo zfs list
+sudo zfs list -t snapshot
+```
+
+## Handled Syncoid and SSH conditions
+
+Syncerate watches for:
+
+- first-time SSH host-key confirmation;
+- password and passphrase prompts;
+- permission denied;
+- connection timeout;
+- connection refused;
+- skipped datasets;
+- an unusable previous resume state, followed by one retry with `--no-resume`;
+- repeated prompt patterns;
+- general warnings;
+- the specifically recognized nonfatal missing destroy-snapshot condition.
+
+General Syncoid warnings remain fatal unless they match the explicitly handled nonfatal condition.
+
+## Exit codes
+
+| Code | Meaning |
+| ---: | --- |
+| `0` | Success |
+| `1` | Source/destination list validation error |
+| `2` | Script error |
+| `4` | Fatal warning detected |
+| `5` | Password, authentication, or permission failure |
+| `6` | Connection timeout |
+| `7` | Connection refused |
+| `8` | Dataset missing or skipped |
+| `9` | Repeated matched pattern |
+| `10` | MQTT dependency or publishing error |
+| `11` | Reserved system-action error |

@@ -37,9 +37,6 @@ import time
 
 import shlex
 
-# For sending a message over MQTT
-import paho.mqtt.publish as publish
-
 logger = logging.getLogger("syncerate")
 
 EXIT_OK = 0
@@ -53,7 +50,15 @@ EXIT_DATASET_MISSING = 8
 EXIT_REPEATED_PATTERN = 9
 EXIT_MQTT_ERROR = 10
 EXIT_SYSTEM_ACTION_ERROR = 11
-	
+
+VERSION = "0.4.2"
+
+
+def option_is_enabled(value):
+	"""Return True for supported enabled values used in the config file."""
+	return str(value).strip().upper() in {"YES", "TRUE", "1", "ON"}
+
+
 # This is is for the send mail part
 def send_mail(subject, body, recipient, attachment_files=None):
 	mail_command = ['mail', '-s', subject, recipient]
@@ -62,27 +67,28 @@ def send_mail(subject, body, recipient, attachment_files=None):
 		for file in attachment_files:
 			mail_command.extend(['--attach', file])
 
-	process = subprocess.Popen(
-		mail_command,
-		stdin=subprocess.PIPE,
-		stdout=subprocess.PIPE,
-		stderr=subprocess.PIPE,
-		text=True
-	)
+	process = subprocess.Popen(mail_command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+	_, stderr_output = process.communicate(input=body.encode())
 
-	try:
-		stdout_output, stderr_output = process.communicate(
-			input=body,
-			timeout=60
-		)
-	except subprocess.TimeoutExpired:
-		process.kill()
-		stdout_output, stderr_output = process.communicate()
-		return 124, "Mail command timed out after 60 seconds"
-
-	return process.returncode, stderr_output.strip()
+	mail_exit_code = process.returncode
+	return mail_exit_code, stderr_output.decode().strip()
 
 def send_mqtt_messages():
+    # Import paho-mqtt only when MQTT is actually enabled and this function runs.
+    # Systems that use Syncerate without MQTT therefore do not need paho-mqtt.
+    try:
+        from paho.mqtt import publish
+    except ImportError as exc:
+        logger.error(
+            "MQTT is enabled, but the optional paho-mqtt package could not be loaded: %s",
+            exc,
+        )
+
+        if MailOption.upper() != "NO":
+            MailTo(None, None, EXIT_MQTT_ERROR)
+
+        sys.exit(EXIT_MQTT_ERROR)
+
     broker_address = config.get('Syncerate Config', 'broker_address')
     broker_port = config.getint('Syncerate Config', 'broker_port')
 
@@ -98,7 +104,17 @@ def send_mqtt_messages():
 
     messages = []
 
-    if Use_HomeAssistant == "YES":
+    # Home Assistant support is also lazy and optional. Its option and topic
+    # are not read unless MQTT publishing has actually been reached.
+    use_home_assistant = option_is_enabled(
+        config.get(
+            'Syncerate Config',
+            'Use_HomeAssistant',
+            fallback='No',
+        )
+    )
+
+    if use_home_assistant:
         messages.append({
             "topic": config.get('Syncerate Config', 'HomeAssistant_Available'),
             "payload": "online",
@@ -356,55 +372,50 @@ def WasMailSent(MailExitCode, popenstderr):
 		logger.error('----------')
 
 def SystemAction():
-	if SystemOption.upper() == "NO":
-		return
+	if not MailOption.upper() == "NO":
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
+		logger.info('The system has an option after the script finishes')
+		logger.info('')
+		logger.info('The options is')
+		logger.info('')
+		logger.info(SystemOption)
+		logger.info('')
+		logger.info('Gonna sleep for 2 minutes to insure mail is sent')
+		logger.info('')
+		logger.info('Then execute the command	:	' + SystemOption)
+		logger.info('')
+		logger.info('----------')
 
-	logger.info('')
-	logger.info('----------')
-	logger.info('')
-	logger.info('The system has an option after the script finishes')
-	logger.info('')
-	logger.info('The option is:')
-	logger.info(SystemOption)
-	logger.info('')
-
-	if MailOption.upper() != "NO":
-		logger.info('Gonna sleep for 2 minutes to ensure mail is sent')
+		# Sleep before executing the desired action
 		time.sleep(120)
-	else:
+
+		try:
+			subprocess.run(SystemOption, shell=True, check=False)
+		except Exception:
+			logger.exception("Failed running SystemAction")
+
+	elif not SystemOption.upper() == "NO" and MailOption.upper() == "NO":
+		logger.info('')
+		logger.info('----------')
+		logger.info('')
+		logger.info('The system has an option after the script finishes')
+		logger.info('')
+		logger.info('The options is')
+		logger.info('')
+		logger.info(SystemOption)
+		logger.info('')
 		logger.info('No mail option chosen')
+		logger.info('')
+		logger.info('Gonna execute the command	:	' + SystemOption)
+		logger.info('')
+		logger.info('----------')
 
-	logger.info('')
-	logger.info('Executing command: %s', SystemOption)
-	logger.info('----------')
-
-	try:
-		command = shlex.split(SystemOption)
-
-		result = subprocess.run(
-			command,
-			text=True,
-			capture_output=True,
-			check=False
-		)
-
-		logger.info('SystemAction return code: %s', result.returncode)
-
-		if result.stdout:
-			logger.info('SystemAction stdout:')
-			logger.info(result.stdout.strip())
-
-		if result.stderr:
-			logger.error('SystemAction stderr:')
-			logger.error(result.stderr.strip())
-
-		if result.returncode != 0:
-			logger.error('SystemAction failed')
-			sys.exit(EXIT_SYSTEM_ACTION_ERROR)
-
-	except Exception:
-		logger.exception("Failed running SystemAction")
-		sys.exit(EXIT_SYSTEM_ACTION_ERROR)
+		try:
+			subprocess.run(SystemOption, shell=True, check=False)
+		except Exception:
+			logger.exception("Failed running SystemAction")
 
 def successfull_run(MQTT=None, SendMail=None, PerformSystemAction=None):
 
@@ -475,6 +486,7 @@ def missmatchinglists(Lenght, Names):
 parser = argparse.ArgumentParser(description='Iterate though 2 lists of ZFS DataSets with Syncoid')
 parser.add_argument('--conf', '-c', type=str, required=True,
 					help='The destination for the config file')
+parser.add_argument('--version', action='version', version=f'%(prog)s {VERSION}')
 
 # Save the arguments to 'args'
 args = parser.parse_args()
@@ -492,13 +504,15 @@ MailOption = (config.get('Syncerate Config', 'Mail'))
 SystemOption = (config.get('Syncerate Config', 'SystemAction'))
 
 
-# This is for the MQTT option
-Use_MQTT = config.get('Syncerate Config', 'Use_MQTT')
-Use_MQTT = Use_MQTT.upper()
-
-# This is for the HomeAssistant MQTT option
-Use_HomeAssistant = config.get('Syncerate Config', 'Use_HomeAssistant')
-Use_HomeAssistant = Use_HomeAssistant.upper()
+# MQTT is optional. Missing, No, False, 0, or Off all disable it.
+# paho-mqtt is imported later only if this value is enabled.
+Use_MQTT = (
+	"YES"
+	if option_is_enabled(
+		config.get('Syncerate Config', 'Use_MQTT', fallback='No')
+	)
+	else "NO"
+)
 
 # This is for creating the Date format for the Log Files
 DateTime = config.get('Syncerate Config', 'DateTime')
@@ -623,10 +637,23 @@ for section in config.sections():
 	logger.info(section)
 	logger.info('')
 	for option in config.options(section):
+		if option in ['password', 'mqtt_username', 'mqtt_password']:
+			continue
+
+		if option in ['use_homeassistant', 'homeassistant_available']:
+			continue
+
+		if Use_MQTT != "YES" and option in [
+			'broker_address',
+			'broker_port',
+			'mqtt_topic',
+			'mqtt_message',
+		]:
+			continue
+
 		value = config.get(section, option)
-		if option not in ['password', 'mqtt_username', 'mqtt_password']:
-			logger.info(f'{option} {value}')
-			logger.info('')
+		logger.info(f'{option} {value}')
+		logger.info('')
 		
 
 # Check if the "syncoid command" is in use

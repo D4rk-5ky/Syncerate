@@ -1,0 +1,6 @@
+Storage/Docker-SyncoidTest/Test Dataset With Spaces
+Storage/Docker-SyncoidTest/Billeder
+Storage/Docker-SyncoidTest/DataSet With Spaces
+#Storage/Docker-SyncoidTest/Ebooks: --recvoptions="o recordsize=1M o compression=zstd-9"
+Storage/Docker-SyncoidTest/Ebooks
+Storage/Docker-SyncoidTest/Frigate: --recvoptions="o recordsize=1M o compression=zstd-9"
