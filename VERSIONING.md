@@ -16,6 +16,29 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.7
+
+Previous version: `0.4.6`.
+
+- Split the application implementation from the single `Syncerate.py` file into the requested `syncerate/` package.
+- Added `syncerate/__init__.py` as the single source of the application version.
+- Added `syncerate/app.py` for application orchestration, successful-run processing, final error logging, and the top-level `main()` exception boundary.
+- Added `syncerate/cli.py` for `argparse` command-line handling.
+- Added `syncerate/config.py` for INI loading and optional Boolean normalization.
+- Added `syncerate/datasets.py` for source/destination list parsing, validation, and `DatasetPair` creation.
+- Added `syncerate/errors.py` for exit-code constants and `SyncerateError`.
+- Added `syncerate/logging_setup.py` for timestamp creation, log paths, logger handlers, and safe startup configuration logging.
+- Added `syncerate/models.py` for `AppConfig`, `RunContext`, `DatasetPair`, and `SyncoidAttemptResult`.
+- Added `syncerate/notifications.py` for email, MQTT, Home Assistant MQTT availability, and error-mail handling.
+- Added `syncerate/syncoid_runner.py` for password resolution, Syncoid command construction, `pexpect` monitoring, retries, and replication execution.
+- Added `syncerate/system_actions.py` for the optional successful-run system command.
+- Reduced `Syncerate.py` to an executable compatibility entry point that imports and re-exports the existing public classes, constants, and functions.
+- Preserved the existing command line: `./Syncerate.py --conf ...`, `--help`, and `--version`.
+- Preserved the version 0.4.6 runtime-state objects and kept importing both `Syncerate.py` and the package free of application startup work.
+- Preserved lazy `paho-mqtt` loading and lazy Home Assistant configuration access.
+- Preserved all dataset validation, Syncoid output matching, one-time `--no-resume` retry, unavailable-resume continuation, missing-destroy-snapshot handling, local effective-user behavior, remote SSH-user behavior, notification ordering, and exit codes.
+- Updated `README.md`, `VERSIONING.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` for the modular application.
+
 ## 0.4.6
 
 Previous version: `0.4.5`.

@@ -2,7 +2,7 @@
 
 Syncerate runs one Syncoid command for each paired source and destination ZFS dataset in two list files.
 
-Current version: `0.4.6`
+Current version: `0.4.7`
 
 ## Requirements
 
@@ -43,6 +43,18 @@ sudo apt install postfix mailutils
 
 ```text
 Syncerate.py
+syncerate/
+├── __init__.py
+├── app.py
+├── cli.py
+├── config.py
+├── datasets.py
+├── errors.py
+├── logging_setup.py
+├── models.py
+├── notifications.py
+├── syncoid_runner.py
+└── system_actions.py
 README.md
 VERSIONING.md
 commented_code_map.md
@@ -51,6 +63,8 @@ config/example-source-file
 config/example-dest-file
 config/HomeAssistant-Configuration-For-MQTT.yaml
 ```
+
+`Syncerate.py` remains the executable entry point. The implementation lives in the `syncerate/` package, but all normal commands remain unchanged.
 
 The Home Assistant YAML and screenshots are optional reference files. Syncerate itself does not load them.
 
