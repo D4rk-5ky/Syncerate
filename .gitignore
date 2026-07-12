@@ -1,19 +1,36 @@
-# Syncerate private config
+# Syncerate private configuration
 *.cfg
 *.conf
+sourcelist*
+destlist*
 
-# Keep example configs
+# Keep example configurations
 !*.example.cfg
 !*.example.conf
+!config/example-Syncerate.cfg
 
-# Logs
+# Runtime logs and output
 *.log
 *.err
 *.out
 
-# Python cache
+# Python bytecode and caches
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build and packaging caches
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+*.tmp
+*.temp
+*~
 
 # Local editor files
 .vscode/
