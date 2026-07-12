@@ -16,6 +16,36 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.6
+
+Previous version: `0.4.5`.
+
+- Corrected the current release number to `0.4.6` so the project continues from version `0.4.5` without reusing an already-created version number.
+- Updated `Syncerate.py`, `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` so every current-version reference is `0.4.6`.
+- Rebuilt and reverified the complete project package.
+- No application behavior was changed from version `0.4.5`.
+
+## 0.4.5
+
+- Completed the single-file runtime-state refactor while keeping all application code in `Syncerate.py`.
+- Moved command-line parsing, configuration loading, timestamp creation, logger setup, dataset loading, password resolution, replication startup, success handling, and top-level error handling into `main()` and functions called by it.
+- Made importing `Syncerate.py` side-effect free: importing defines constants, dataclasses, exceptions, and functions only; it does not require `--conf`, read files, create logs, ask for a password, or start Syncoid.
+- Added `AppConfig` to carry configuration values explicitly instead of using runtime configuration globals.
+- Added `RunContext` to carry the per-run timestamp and optional `.log`, `.err`, and `.out` paths.
+- Added `DatasetPair` to keep each validated source, destination, and per-destination argument set together.
+- Added `SyncoidAttemptResult` to return the child process, modified command, repeat state, resume-retry request, and known missing-destroy-snapshot state explicitly.
+- Removed runtime globals including parsed arguments, raw configuration state, source/destination lists, resolved passwords, timestamp/log paths, and Syncoid control flags.
+- Replaced internal `sys.exit()` calls in list validation, Syncoid monitoring, MQTT handling, mail handling, and error handling with `SyncerateError` exceptions or explicit result objects.
+- Kept `sys.exit(main())` only at the executable program boundary.
+- Preserved existing exit codes, command construction, source/destination validation, password behavior, lazy MQTT/HA behavior, notification order, one-time `--no-resume` retry, the exact nonfatal unavailable-resume warning, generic warning failure, known missing-destroy-snapshot handling, local effective-user behavior, and remote SSH-user behavior.
+- Updated `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` for the refactored application behavior.
+
+## 0.4.4
+
+- Created the first intermediate build of the single-file runtime-state refactor.
+- Began moving startup work into `main()` and replacing runtime globals with explicit state objects.
+- This intermediate build was completed and fully documented in version `0.4.5`.
+
 ## 0.4.3
 
 - Kept local Syncoid and ZFS execution under the effective user that starts `Syncerate.py`; no alternate local account is introduced.

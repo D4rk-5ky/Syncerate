@@ -1,191 +1,352 @@
 # Syncerate commented code map
 
-This document maps the current `Syncerate.py` implementation. It explains what each function, command, configuration stage, and important safety branch does and why it exists.
+This document maps the current `Syncerate.py` implementation in version `0.4.6`. It explains what each class, function, command stage, and safety branch does and why it exists.
 
-## Program entry and global setup
+## Overall design
 
-### Shebang
+Version `0.4.6` remains a single Python file, but runtime state is no longer stored in module globals.
 
-```python
-#!/usr/bin/python3
-```
+Importing `Syncerate.py` now only:
 
-Allows the script to be executed directly when it has executable permission.
+- imports required Python modules;
+- defines constants;
+- defines dataclasses and the application exception;
+- defines functions.
 
-### Standard-library imports
+Importing the file does **not**:
 
-- `argparse`: parses `--conf`, `-c`, and `--version`.
-- `configparser`: reads the INI-style Syncerate configuration file.
-- `sys`: supplies exit handling and terminal streams.
-- `getpass.getpass`: securely asks for a password or SSH-key passphrase without echoing it.
-- `logging`: writes terminal, `.log`, and `.err` output.
-- `datetime`: creates timestamps for log filenames.
-- `os`: handles paths, directories, file existence checks, and the effective UID inherited by local Syncoid processes.
-- `pwd`: resolves the effective UID to the actual local username, including when Syncerate is started through `sudo`.
-- `traceback`: retained for unexpected-error support.
-- `subprocess`: runs the local `mail` command and the optional successful-run system action.
-- `time`: waits before a system action when email is enabled.
-- `shlex`: safely splits command templates and renders commands for logs.
+- parse command-line arguments;
+- require `--conf`;
+- read a configuration file;
+- create log files;
+- read dataset lists;
+- ask for a password;
+- import `paho-mqtt`;
+- start Syncoid.
 
-### Required third-party import
+All runtime work begins inside `main()`.
 
-- `pexpect`: starts Syncoid and reacts to SSH prompts, password prompts, warnings, failures, and end-of-process events.
+## Program-level constants
 
-### Optional third-party import
-
-`paho-mqtt` is deliberately not imported at program startup. `send_mqtt_messages()` imports it only when MQTT is enabled and a successful run reaches the MQTT publishing stage. This lets non-MQTT installations run without the package.
-
-### Global logger
-
-```python
-logger = logging.getLogger("syncerate")
-```
-
-Creates the named logger used by all functions. `get_logger()` later assigns its handlers.
-
-### Exit-code constants
+### Exit codes
 
 - `EXIT_OK = 0`: successful run.
-- `EXIT_LIST_ERROR = 1`: source/destination list validation failed.
+- `EXIT_LIST_ERROR = 1`: source/destination list parsing or validation failed.
 - `EXIT_SCRIPT_ERROR = 2`: unexpected Python or application error.
-- `EXIT_WARNING = 4`: Syncoid produced a warning treated as fatal.
-- `EXIT_PASSWORD_DENIED = 5`: authentication or permission failure.
+- `EXIT_WARNING = 4`: Syncoid produced a warning that remains fatal.
+- `EXIT_PASSWORD_DENIED = 5`: SSH authentication, ZFS permission, password, or passphrase failure.
 - `EXIT_CONNECTION_TIMEOUT = 6`: remote connection timed out.
 - `EXIT_CONNECTION_REFUSED = 7`: remote connection was refused.
-- `EXIT_DATASET_MISSING = 8`: Syncoid skipped or could not use a dataset.
-- `EXIT_REPEATED_PATTERN = 9`: the same `pexpect` pattern repeated too many times.
-- `EXIT_MQTT_ERROR = 10`: MQTT dependency or publish failure.
-- `EXIT_SYSTEM_ACTION_ERROR = 11`: reserved for system-action failures.
+- `EXIT_DATASET_MISSING = 8`: Syncoid skipped a dataset.
+- `EXIT_REPEATED_PATTERN = 9`: one `pexpect` pattern repeated too many times.
+- `EXIT_MQTT_ERROR = 10`: optional MQTT dependency or publishing failure.
+- `EXIT_SYSTEM_ACTION_ERROR = 11`: reserved for system-action failures; the current system-action behavior remains unchanged and logs exceptions without converting them to this code.
 
-### Version constant
+### `VERSION`
 
 ```python
-VERSION = "0.4.3"
+VERSION = "0.4.6"
 ```
 
-Provides one authoritative application version for `--version` and release tracking.
+Provides the value returned by `--version` and the release version recorded in project documentation.
+
+### `CONFIG_SECTION`
+
+```python
+CONFIG_SECTION = "Syncerate Config"
+```
+
+Keeps the INI section name in one place so configuration functions and optional MQTT handling use the same exact section.
+
+## Runtime state classes
+
+### `AppConfig`
+
+`AppConfig` is an immutable dataclass containing settings read from the selected configuration file.
+
+It replaces runtime globals such as:
+
+- `config`;
+- `MailOption`;
+- `SystemOption`;
+- `Use_MQTT`;
+- `DateTime`;
+- `LogDestination`;
+- `BackupTitle`;
+- `BackupComment`;
+- `PassWordOption`;
+- `SyncoidCommand`.
+
+Important fields:
+
+- `config_path`: selected config filename, used in startup logs;
+- `raw_config`: the `RawConfigParser` object retained for lazy MQTT/HA reads;
+- `mail_option`: recipient address or `No`;
+- `system_option`: successful-run shell command or `No`;
+- `use_mqtt`: normalized Boolean for the optional MQTT path;
+- `datetime_format`: `strftime` format for run filenames;
+- `log_destination`: normalized directory ending in `/`, or `None` when disabled;
+- `backup_title` / `backup_comment`: optional descriptive metadata;
+- `source_list_path` / `destination_list_path`: dataset-list paths;
+- `password_option`: `No`, `Ask`, or a literal secret;
+- `syncoid_command`: command template containing `SourceDataSet` and `DestDataSet`.
+
+Properties:
+
+- `mail_enabled`: true unless `Mail` is exactly `No`, ignoring case and surrounding whitespace;
+- `system_action_enabled`: true unless `SystemAction` is `No`;
+- `logging_enabled`: true when a log directory is configured.
+
+The raw parser remains inside `AppConfig` so optional broker and Home Assistant options can stay unread until MQTT publishing is actually reached.
+
+### `RunContext`
+
+`RunContext` is an immutable dataclass containing values created for one invocation:
+
+- `timestamp`;
+- `log_destination`;
+- `.log` path;
+- `.err` path;
+- `.out` path.
+
+It replaces runtime globals such as `time_now` and derived log filenames. When logging is disabled, all paths are `None` and terminal logging remains active.
+
+### `DatasetPair`
+
+`DatasetPair` is an immutable dataclass containing:
+
+- one source dataset;
+- its matching destination dataset;
+- that destination's optional Syncoid arguments.
+
+It replaces three parallel runtime lists (`SourceLines`, `DestLines`, and `DestExtraArgs`). Keeping related values in one object prevents an argument list from becoming associated with the wrong destination.
+
+### `SyncoidAttemptResult`
+
+`SyncoidAttemptResult` is returned by `ssh_command()` after one monitored Syncoid attempt. It contains:
+
+- `child`: the `pexpect` child process;
+- `command`: the original or modified command used by the caller;
+- `repeated_pattern`: whether the same output pattern exceeded its safety limit;
+- `retry_without_resume`: whether one retry with `--no-resume` is requested;
+- `ignored_missing_destroy_snapshot`: whether the known missing Syncoid-created snapshot condition was observed.
+
+It replaces the former mutable globals:
+
+- `ISREPEATED`;
+- `CONTINUENORESUME`;
+- `CONTINUENODESTROYSNAP`.
+
+### `SyncerateError`
+
+`SyncerateError` is the known application exception used instead of internal `sys.exit()` calls.
+
+It carries:
+
+- the human-readable message;
+- the intended exit code;
+- an error category (`list`, `known_child`, `syncoid`, `mqtt`, or `script`);
+- captured Syncoid output when relevant.
+
+Only the final executable boundary calls:
+
+```python
+sys.exit(main())
+```
+
+This allows lower-level functions to return results or raise an application error while `main()` remains responsible for logging, error mail, and the final process status.
 
 ## Functions
 
 ### `option_is_enabled(value)`
 
-Converts a configuration value to text, trims it, uppercases it, and returns `True` for:
+Normalizes optional Boolean-style configuration values. It returns true for:
 
 ```text
 YES, TRUE, 1, ON
 ```
 
-All other values, including `No`, `False`, `0`, `Off`, an empty value, or a missing option fallback, are disabled. This helper keeps MQTT and Home Assistant option handling consistent.
+All other values are disabled. It is used for MQTT and Home Assistant options.
 
-### `send_mail(subject, body, recipient, attachment_files=None)`
+### `parse_arguments(argv=None)`
 
-Builds and runs the local command:
+Builds the `argparse` parser and supports:
 
-```text
-mail -s <subject> [--attach <file> ...] <recipient>
+```bash
+./Syncerate.py --conf /path/to/Syncerate.cfg
+./Syncerate.py -c /path/to/Syncerate.cfg
+./Syncerate.py --help
+./Syncerate.py --version
 ```
 
-The email body is sent to the command through standard input. The function returns the command exit code and decoded standard-error text so the caller can report success or failure.
+The optional `argv` parameter lets tests supply an argument list directly. In normal execution, `None` makes `argparse` read the real command line.
 
-### `send_mqtt_messages()`
+The parser is created only when this function is called from `main()`, so importing the file never requires `--conf`.
 
-Runs only after a successful Syncerate operation when MQTT is enabled.
+### `load_app_config(config_path)`
 
-Execution order:
-
-1. Imports `paho.mqtt.publish` locally.
-2. Exits with MQTT error code `10` if the optional dependency is unavailable.
-3. Reads broker address, port, optional username, optional password, topic, and payload.
-4. Creates authentication data only when a username is present.
-5. Lazily reads `Use_HomeAssistant` only after MQTT publishing is reached.
-6. Adds a retained Home Assistant `online` availability message only when that option is enabled.
-7. Always adds the configured retained Syncerate status message.
-8. Publishes all messages with `publish.multiple()`.
-9. Logs and exits with code `10` if publishing fails.
-
-The Home Assistant availability topic is not read unless Home Assistant support is enabled.
-
-### `MailTo(Exit_Code=None, SynCoidFail=None, MQTT_Fail=None)`
-
-Central email-notification dispatcher.
-
-It selects the email subject, body, and attachments for:
-
-- successful completion;
-- a Syncoid failure;
-- a general script failure;
-- an MQTT failure.
-
-When file logging is enabled, it includes the available `.log`, `.err`, and `.out` files. It calls `send_mail()` and then `WasMailSent()`.
-
-For error paths, it exits using the supplied failure code after attempting notification.
-
-### `WasMailSent(MailExitCode, popenstderr)`
-
-Logs whether the `mail` command succeeded. When it fails, the function records the command’s standard-error output for diagnosis.
-
-### `SystemAction()`
-
-Runs the configured `SystemAction` shell command after a successful Syncerate run.
-
-- When email is enabled, it waits 120 seconds first so the mail process has time to complete.
-- When email is disabled, it runs the command immediately.
-- It uses `subprocess.run(..., shell=True, check=False)` because the configuration can contain a complete shell command.
-
-This function is only called from the successful-run path.
-
-### `successfull_run(MQTT=None, SendMail=None, PerformSystemAction=None)`
-
-Final successful-completion coordinator.
+Reads the selected INI file and returns `AppConfig`.
 
 It:
 
-1. logs that all dataset transfers completed;
-2. appends the completion text to the `.out` file when logging is enabled;
-3. publishes MQTT messages only when normalized `Use_MQTT` is `YES`;
-4. sends success email when configured;
-5. runs the configured system action when configured.
+- verifies that the file was readable;
+- verifies the `[Syncerate Config]` section exists;
+- loads required startup settings;
+- applies safe fallbacks for optional backup metadata and `Use_MQTT`;
+- converts `LogDestination = No` to `None`;
+- appends `/` to an enabled log directory when needed;
+- keeps broker and Home Assistant details lazy inside `raw_config`.
 
-The order is MQTT, mail, then system action.
+It does not create logs, read dataset files, or request a password.
 
-### `missmatchinglists(Lenght, Names)`
+### `create_run_context(app_config)`
 
-Handles dataset-list validation failures.
+Creates the timestamp using the configured `DateTime` format and derives the optional paths:
 
-- `Lenght=True` reports unequal source and destination item counts.
-- `Names=True` reports source and destination pairs whose final dataset names differ.
+```text
+Syncerate-<timestamp>.log
+Syncerate-<timestamp>.err
+Syncerate-<timestamp>.out
+```
 
-It attempts email notification when enabled and exits with code `1`.
+When logging is disabled, it returns a context with no file paths.
 
-### `backup_header_text()`
+### `get_logger(run_context)`
 
-Builds the optional backup title and comment section used at the start of email bodies. Empty or omitted values are skipped.
-
-### `get_logger(enable_file_logging=True)`
-
-Configures the named Syncerate logger.
+Configures the named `syncerate` logger.
 
 Always creates:
 
-- an INFO-level terminal handler writing to standard output.
+- one INFO-level terminal handler writing to standard output.
 
 When file logging is enabled, it also creates:
 
-- `Syncerate-<timestamp>.log` for INFO and ERROR messages;
-- `Syncerate-<timestamp>.err` for ERROR messages only.
+- an INFO-level `.log` file containing normal and error messages;
+- an ERROR-level `.err` file containing errors only.
 
-Existing handlers are cleared first to avoid duplicate output if the logger is configured more than once.
+It receives `RunContext` explicitly instead of reading global path variables.
+
+### `get_console_logger()`
+
+Creates a terminal-only logger for failures that occur before configuration and `RunContext` creation complete, such as an unreadable config file.
+
+### `log_startup_configuration(app_config, run_context, logger)`
+
+Writes startup information to the configured logger.
+
+It logs:
+
+- whether file logging is disabled;
+- selected config path;
+- optional backup title/comment;
+- generated timestamp;
+- non-secret configuration options;
+- whether the command template begins with `syncoid`.
+
+It deliberately omits:
+
+- `PassWord`;
+- MQTT username/password;
+- Home Assistant options from general startup logging;
+- broker/topic settings when MQTT is disabled.
+
+### `backup_header_text(app_config)`
+
+Builds the optional backup-title and backup-comment prefix used in mail bodies. Returning one reusable string keeps successful, Syncoid-error, script-error, and MQTT-error mail consistent.
+
+### `send_mail(subject, body, recipient, attachment_files=None)`
+
+Runs the local mail command:
+
+```bash
+mail -s <subject> <recipient> [--attach <file> ...]
+```
+
+The message body is sent through standard input. The function returns:
+
+- the mail process exit code;
+- decoded stderr text.
+
+It does not exit the application.
+
+### `WasMailSent(mail_exit_code, popen_stderr, logger)`
+
+Logs whether the local mail process succeeded. It preserves the existing mail-result messages and does not change the main Syncerate exit code.
+
+### `MailTo(app_config, run_context, logger, Exit_Code=None, SynCoidFail=None, MQTT_Fail=None)`
+
+Builds and sends the existing mail variants:
+
+- successful run;
+- unknown Syncoid failure;
+- general/script failure;
+- MQTT failure.
+
+When logs are enabled, it attaches the available `.log`, `.err`, and `.out` files and includes relevant contents in the body.
+
+In version `0.4.6`, `MailTo()` no longer calls `sys.exit()`. It sends the notification and returns; `main()` owns the final exit code.
+
+### `send_mqtt_messages(app_config, logger)`
+
+Handles optional MQTT and Home Assistant publication.
+
+Important lazy behavior:
+
+1. The function is called only after all replications succeed and `Use_MQTT` is enabled.
+2. `paho.mqtt.publish` is imported inside this function.
+3. Broker settings are read only after the function is reached.
+4. `Use_HomeAssistant` is read only inside this MQTT path.
+5. `HomeAssistant_Available` is read only when HA integration is enabled.
+
+Messages:
+
+- optional HA availability message with payload `online`;
+- configured normal Syncerate MQTT topic/message.
+
+A missing `paho-mqtt` package or publish failure raises `SyncerateError` with exit code `10`; error mail is handled later by `main()`.
+
+### `SystemAction(app_config, logger)`
+
+Runs the optional successful-run shell command with:
+
+```python
+subprocess.run(command, shell=True, check=False)
+```
+
+If mail is enabled, it preserves the existing two-minute delay before running the action. If mail is disabled, it runs the action immediately. Exceptions are logged without changing the existing system-action exit behavior.
+
+### `successfull_run(app_config, run_context, logger)`
+
+Runs the post-replication success stage in the existing order:
+
+1. writes the completion section to `.out` when enabled;
+2. publishes MQTT/HA messages when enabled;
+3. sends success mail when enabled;
+4. runs the system action when enabled.
+
+Because MQTT occurs first, an MQTT failure still prevents a success mail/system action and is converted to exit code `10`, matching the prior ordering.
+
+### `missmatchinglists(Lenght, Names, logger)`
+
+Logs either:
+
+- unequal source/destination item counts; or
+- mismatching final dataset names.
+
+It raises `SyncerateError` with exit code `1` rather than sending mail and terminating internally. `main()` sends the matching general error mail and returns the exit code.
+
+The historical parameter spellings are retained in this first refactor to avoid mixing naming cleanup with state-management changes.
 
 ### `read_dataset_list(path)`
 
-Reads a source or destination list as UTF-8 and returns active entries only.
+Reads a list file as UTF-8 and returns active lines only.
 
-It removes surrounding whitespace and ignores:
+It ignores:
 
 - blank lines;
-- lines whose trimmed text begins with `#`.
+- lines whose trimmed form begins with `#`.
 
-Dataset names containing internal spaces remain intact.
+Each retained line is stripped of surrounding whitespace.
 
 ### `parse_destination_line(line)`
 
@@ -194,180 +355,299 @@ Parses one destination-list entry.
 Supported forms:
 
 ```text
-BackUp/Dataset
-BackUp/Dataset: --recvoptions="o compression=zstd"
+Pool/Dataset
+Pool/Dataset: --recvoptions="o compression=zstd"
+user@host:Pool/Dataset
+user@host:Pool/Dataset: --recvoptions="o compression=zstd"
 ```
 
-It uses `rsplit(": ", 1)` so a remote dataset prefix such as `user@host:pool/dataset` is not broken. Extra arguments are parsed with `shlex.split()` so quoted values remain one argument.
-
-A malformed quoted argument raises `ValueError`, which becomes a list error before Syncoid starts.
+It uses `rsplit(": ", 1)` so the colon in `user@host:Pool/Dataset` is not mistaken for the optional-arguments separator. `shlex.split()` preserves quoted multi-word option values as single arguments.
 
 ### `parse_destination_list(destination_lines)`
 
-Calls `parse_destination_line()` for every destination entry and returns two parallel lists:
+Parses all destination lines and returns two matching lists:
 
-1. destination dataset names;
-2. per-destination extra argument lists.
+- destination dataset strings;
+- extra argument lists.
 
-Keeping these lists parallel lets `main()` append the correct extra arguments to each paired command.
+`load_dataset_pairs()` immediately combines those values with source entries into `DatasetPair` objects.
 
-### `die(child=None, errstr=None, error_code=None, SynCoidFail=None, MQTT_Fail=None, SynCoidFailChild=None)`
+### `load_dataset_pairs(app_config, logger)`
 
-Central fatal-error handler.
+Performs all source/destination loading and validation.
 
-It determines the exit code, records the relevant context, attempts to terminate an active child process, optionally sends email, and exits.
+It:
 
-It has separate reporting branches for:
+1. reads both list files;
+2. parses optional destination arguments;
+3. logs raw and parsed values;
+4. verifies equal item counts;
+5. verifies each source/destination pair has the same final dataset component;
+6. returns one `DatasetPair` per valid replication.
 
-- a known active-child error;
-- an unknown Syncoid nonzero exit;
-- an MQTT error;
-- a general script error.
+Example accepted pair:
 
-### `log_command_debug(command_list)`
+```text
+source:      user@host:Pool/Media
+ destination: Backup/Media
+```
 
-Logs a generated command in three diagnostic forms:
+The final component `Media` matches even though the parent paths and remote/local forms differ.
 
-- shell-style text from `shlex.join()`;
-- the raw Python argument list;
-- every individual argument and index.
+### `resolve_password(app_config, logger)`
 
-This is useful for verifying that spaces, SSH options, placeholders, and per-destination arguments are preserved correctly.
+Converts the configured password mode into a runtime value:
 
-### `build_syncoid_command(command_template, source_dataset, dest_dataset, extra_args=None)`
+- `No`: returns `None`;
+- `Ask`: calls `getpass()` and returns the hidden user input;
+- any other text: returns that literal value.
 
-Safely builds the argument list passed to `pexpect.spawn()`.
-
-Important order:
-
-1. split the command template with `shlex.split()`;
-2. replace `SourceDataSet` and `DestDataSet` inside each already-separated argument;
-3. append per-destination extra arguments.
-
-Splitting before replacement keeps a dataset such as `Storage/DataSet With Spaces` as one argument rather than three.
-
-### `close_child_logfile(child)`
-
-Flushes and closes the file attached to `child.logfile`, then sets the attribute to `None`. This prevents leaked file handles and duplicate close attempts.
+The resolved secret is a local variable passed only to Syncoid monitoring. It is never stored as a module global or written to logs.
 
 ### `safe_text(value)`
 
-Returns an empty string for `None`; otherwise returns `str(value)`. Error logging uses this helper because some `pexpect` fields may be unset.
+Safely converts optional `pexpect` values (`before`, `after`, or `buffer`) to text. `None` becomes an empty string so error logging cannot fail while handling another failure.
+
+### `close_child_logfile(child, logger=None)`
+
+Flushes and closes the `.out` handle attached to `child.logfile`, then clears the reference. This ensures Syncoid output is available to mail and log readers before the process result is handled.
+
+### `die(...)`
+
+Retains the historical helper name but changes its behavior.
+
+It now:
+
+- determines the intended exit code;
+- captures relevant child output;
+- terminates a known failing child when necessary;
+- closes the child logfile;
+- raises `SyncerateError`.
+
+It does **not**:
+
+- send mail;
+- call `sys.exit()`;
+- modify runtime globals.
+
+This keeps existing call sites readable while moving final error policy to `main()`.
+
+### `log_syncerate_error(error, logger)`
+
+Writes the detailed diagnostics formerly written directly by `die()`.
+
+It distinguishes:
+
+- known matched child errors;
+- unknown nonzero Syncoid exits;
+- MQTT failures;
+- general script failures.
+
+List-validation functions already write their specific messages, so `kind="list"` does not add duplicate generic diagnostics.
+
+### `log_command_debug(command_list, logger)`
+
+Logs the generated command in three forms:
+
+1. shell-style rendering using `shlex.join()`;
+2. raw Python argv list;
+3. one indexed line per argument.
+
+This is important for diagnosing quoting, remote endpoints, paths, and destination-specific arguments without executing through a shell.
+
+### `build_syncoid_command(command_template, source_dataset, destination_dataset, extra_args=None)`
+
+Builds the argv list passed to `pexpect.spawn()`.
+
+Order is important:
+
+1. `shlex.split()` separates the command template;
+2. `SourceDataSet` and `DestDataSet` are replaced inside existing argv elements;
+3. destination-specific arguments are appended.
+
+Replacing after splitting keeps a dataset containing spaces as one argv element.
+
+No shell is used for Syncoid execution.
 
 ### `effective_user_name()`
 
-Resolves `os.geteuid()` through the local password database. This reports the real effective account inherited by Syncoid and local ZFS commands. When a UID has no local name, it returns the numeric UID instead of failing.
+Resolves `os.geteuid()` through the local password database.
 
-### `ssh_command(SynCoid_Command)`
+This documents the real local execution identity:
 
-Starts one Syncoid command with `pexpect.spawn()` and watches its output until completion or a handled failure.
+- local Syncoid/ZFS work runs as the effective user that started Syncerate;
+- when started through `sudo`, this is normally `root`;
+- remote work uses the SSH user embedded in the remote endpoint.
 
-Despite the function name, it also runs local-to-local Syncoid commands. `pexpect.spawn()` does not switch users: the child inherits Syncerate's effective local UID. Remote endpoints are left unchanged, so Syncoid uses the SSH username written in the source or destination argument. The function logs this local identity before starting each child.
+### `ssh_command(syncoid_command, password, run_context, logger)`
 
-It initializes three transfer-state flags:
+Starts one Syncoid process with:
 
-- `ISREPEATED`: the same matched pattern exceeded the safety limit;
-- `CONTINUENODESTROYSNAP`: the known missing Syncoid-created snapshot warning was seen;
-- `CONTINUENORESUME`: the previous resume state is unusable and the command must be retried with `--no-resume`.
-
-Recognized patterns and actions:
-
-- SSH host-key confirmation: sends `yes`.
-- Missing snapshot-to-destroy message: records the known nonfatal condition and continues.
-- Permission denied: exits with code `5`.
-- Connection timed out: exits with code `6`.
-- Connection refused: exits with code `7`.
-- Passphrase or password prompt: sends the configured value, or fails safely when `PassWord=No`.
-- End of file: closes output logging and returns the child process.
-- `WARN Skipping dataset`: exits with code `8`.
-- Missing resume snapshot: returns a modified command containing `--no-resume`.
-- Resume capability unavailable: logs Syncoid's exact message as nonfatal and continues because Syncoid explicitly says the transfer will proceed without resume support.
-- Generic warning: treats it as fatal except for the specifically recognized nonfatal destroy warning.
-
-Each pattern may match at most five times. More matches trigger the repeated-pattern safety exit instead of allowing an endless prompt loop.
-
-### `main()`
-
-Runs all paired dataset transfers.
-
-For each source, destination, and destination-extra-argument set, it:
-
-1. builds the complete Syncoid argument list;
-2. logs the command and its arguments;
-3. logs the effective local user and executes it through `ssh_command()`;
-4. allows only the exact nonfatal resume-capability message to continue to Syncoid's real exit status;
-5. retries once with `--no-resume` when an old resume state is unusable;
-6. detects signal termination;
-7. handles nonzero Syncoid exit codes;
-8. permits only the specifically recognized nonfatal destroy-snapshot condition.
-
-After every pair succeeds, it calls `successfull_run()`.
-
-## Module-level configuration and validation flow
-
-The current script performs configuration preparation before `main()` starts:
-
-1. Creates the argument parser.
-2. Reads `--conf` / `-c`.
-3. Supports `--version` without requiring a config file.
-4. Loads the INI configuration.
-5. Reads mail and system-action options.
-6. Normalizes `Use_MQTT` with a default of disabled.
-7. Leaves Home Assistant options untouched until successful MQTT publishing is reached.
-8. Creates the timestamp and logger.
-9. Logs non-secret configuration values while omitting password, MQTT credentials, and lazy Home Assistant settings; disabled MQTT settings are skipped.
-10. Reads and parses both dataset lists.
-11. Verifies equal active-line counts.
-12. Verifies each source and destination pair has the same final dataset name.
-13. Resolves password handling.
-14. Reads the Syncoid command template.
-
-## CLI commands
-
-### Show help
-
-```bash
-./Syncerate.py --help
+```python
+pexpect.spawn(
+    syncoid_command[0],
+    syncoid_command[1:],
+    timeout=None,
+    encoding="utf-8",
+)
 ```
 
-Displays the available command-line options and exits without loading a config file or MQTT dependency.
+It receives all runtime dependencies explicitly and returns `SyncoidAttemptResult`.
 
-### Show version
+#### Output patterns
 
-```bash
-./Syncerate.py --version
+The pattern order is intentional because specific safe/known messages must be matched before the generic warning expression.
+
+1. `Are you sure you want to continue connecting`
+   - sends `yes` for a first SSH host-key prompt.
+
+2. `could not find any snapshots to destroy; check snapshot names.`
+   - marks the known missing Syncoid-created snapshot condition;
+   - allows monitoring to continue so the following destroy warning and final status can be interpreted together.
+
+3. `Permission denied`
+   - raises exit code `5`.
+
+4. `Connection timed out`
+   - raises exit code `6`.
+
+5. `Connection refused`
+   - raises exit code `7`.
+
+6. `passphrase`
+   - temporarily detaches `.out` logging so the secret is not recorded;
+   - sends the resolved password/passphrase;
+   - raises exit code `5` when `PassWord = No`.
+
+7. `pexpect.EOF`
+   - closes the output logfile and returns the attempt result for final exit-status handling.
+
+8. `WARN Skipping dataset`
+   - raises exit code `8` because a requested dataset was not replicated.
+
+9. `used in the initial send no longer exists`
+   - requests one retry with `--no-resume`;
+   - returns a modified command instead of using a global retry flag.
+
+10. Exact resume-capability warning:
+
+```text
+WARN: ZFS resume feature not available on ... - sync will continue without resume support.
 ```
 
-Prints the current application version and exits.
+   - logs a warning;
+   - continues monitoring;
+   - waits for Syncoid's real exit status;
+   - does not add `--no-resume` because Syncoid explicitly says it is continuing.
 
-### Run a configured backup
+11. Generic `WARN|WARNING`
+   - remains fatal with exit code `4`;
+   - exception: the known `zfs destroy ... failed: 256` continuation is allowed only after the matching missing-snapshot message was already seen.
 
-```bash
-./Syncerate.py --conf /path/to/Syncerate.cfg
+12. `password`
+   - handles a normal SSH password prompt using the same secret-protection behavior as `passphrase`.
+
+#### Repetition limit
+
+Each pattern may be handled at most five times. A sixth occurrence sets `repeated_pattern=True`, returns the result, and lets `run_replications()` raise exit code `9`. This prevents a prompt/output loop from running forever.
+
+### `run_replications(app_config, run_context, dataset_pairs, password, logger)`
+
+Runs each validated `DatasetPair` sequentially.
+
+For every pair it:
+
+1. builds the safe argv command;
+2. logs extra destination arguments;
+3. logs detailed command diagnostics;
+4. runs `ssh_command()`;
+5. performs one retry when `retry_without_resume` is true;
+6. closes the child to obtain `exitstatus`/`signalstatus`;
+7. handles repeated-pattern failure;
+8. converts signal termination to `128 + signal number`;
+9. preserves the known missing-destroy-snapshot nonfatal behavior;
+10. raises an unknown Syncoid failure with the actual nonzero exit code otherwise.
+
+The local process user is never replaced. Remote behavior remains determined by remote dataset endpoints in the command.
+
+### `send_error_mail(error, app_config, run_context, logger)`
+
+Maps a `SyncerateError` category to the existing mail type:
+
+- MQTT error -> `MQTT_Fail` mail;
+- unknown Syncoid exit -> `SynCoidFail` mail;
+- all other known errors -> general `Exit_Code` mail.
+
+Mail failure is caught and logged so it cannot replace the original application exit code.
+
+### `main(argv=None)`
+
+Owns the complete runtime sequence:
+
+1. parse CLI arguments;
+2. load `AppConfig`;
+3. create `RunContext`;
+4. configure logging;
+5. log startup configuration;
+6. load and validate `DatasetPair` entries;
+7. resolve the optional password/passphrase;
+8. run all replications;
+9. run the success notification/action stage;
+10. return exit code `0`.
+
+Known `SyncerateError` exceptions are logged, optionally mailed, and returned using their specific exit code.
+
+Unexpected exceptions are logged with a traceback, optionally mailed as a script error, and return exit code `2`.
+
+### Executable boundary
+
+```python
+if __name__ == "__main__":
+    sys.exit(main())
 ```
 
-Equivalent short form:
+This is the only explicit `sys.exit()` call in the application. It converts the integer returned by `main()` into the shell-visible exit status while keeping all internal functions importable and testable.
 
-```bash
-./Syncerate.py -c /path/to/Syncerate.cfg
+## Command flow
+
+For one dataset pair, the effective flow is:
+
+```text
+main
+  -> load_dataset_pairs
+  -> resolve_password
+  -> run_replications
+       -> build_syncoid_command
+       -> log_command_debug
+       -> ssh_command
+            -> pexpect.spawn
+            -> pattern handling
+            -> SyncoidAttemptResult
+       -> optional one-time --no-resume retry
+       -> final Syncoid status evaluation
+  -> successfull_run
+       -> optional MQTT/HA
+       -> optional mail
+       -> optional SystemAction
 ```
 
-## External commands
+## Configuration and command placeholders
 
-### `syncoid`
+The command template must contain the exact placeholders:
 
-Built from `SyncoidCommand`, source-list entries, destination-list entries, and optional per-destination arguments. It performs the actual ZFS replication.
+```text
+SourceDataSet
+DestDataSet
+```
 
-### `mail`
+Example pull from a remote source to a local target:
 
-Used only when `Mail` is not `No`. It sends success or failure notifications and optional log attachments.
+```ini
+SyncoidCommand = syncoid backupuser@server:SourceDataSet DestDataSet --sshkey /root/.ssh/syncerate --no-privilege-elevation
+```
 
-### Configured `SystemAction`
+Runtime identity:
 
-Used only after all transfers and enabled notifications complete successfully. Because it is passed to a shell, the config owner must treat this option as trusted command execution.
-
-## Home Assistant support file
-
-`config/HomeAssistant-Configuration-For-MQTT.yaml` is an optional example MQTT binary sensor. The Python program does not load this YAML file. Home Assistant reads it only when the user installs it in Home Assistant configuration.
-
-The two PNG files in `config/` are retained reference screenshots and are not loaded by Syncerate.
+- the local side runs as the effective user executing `Syncerate.py`;
+- the remote side runs as `backupuser` in this example;
+- `--no-privilege-elevation` prevents Syncoid from invoking `sudo`; it does not switch the local process to a different user.

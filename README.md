@@ -2,7 +2,7 @@
 
 Syncerate runs one Syncoid command for each paired source and destination ZFS dataset in two list files.
 
-Current version: `0.4.3`
+Current version: `0.4.6`
 
 ## Requirements
 
