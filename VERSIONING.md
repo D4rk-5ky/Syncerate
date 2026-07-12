@@ -16,6 +16,32 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.9
+
+Previous version: `0.4.8`.
+
+- Restored a prominent disclaimer and liability notice to `README.md`.
+- Added an explicit AI-assisted / vibe-coded experimental-software warning.
+- Tailored the risk description to Syncerate's actual behavior: Syncoid/ZFS replication, snapshots, target datasets, interrupted-receive handling, optional destructive Syncoid arguments, and the configured shell `SystemAction`.
+- Clarified that Syncerate has no application-level dry-run mode.
+- Added practical safeguards: inspect the command and dataset pairs, test with non-critical datasets, keep a separate verified backup, limit permissions, and verify logs and destination state.
+- Updated current-version references to `0.4.9`.
+- No application behavior or command handling was changed.
+
+## 0.4.8
+
+Previous version: `0.4.7`.
+
+- Rewrote `README.md` as a current how-to guide for installing, configuring, and running Syncerate.
+- Removed historical-version references and explanations that were only relevant to earlier implementations.
+- Audited the README against `syncerate/cli.py`, `syncerate/config.py`, `syncerate/notifications.py`, `syncerate/datasets.py`, and `syncerate/syncoid_runner.py`.
+- Documented every current command-line option: `-c` / `--conf`, `-h` / `--help`, and `--version`.
+- Documented all 19 current configuration options and when each option is required or read.
+- Corrected the required-option descriptions to match the loader: `Mail`, `PassWord`, `DateTime`, `LogDestination`, and `SystemAction` must remain present even when configured as `No`.
+- Expanded practical explanations for source/destination pairing, per-destination Syncoid arguments, local and remote execution users, password handling, logging, email, MQTT, Home Assistant, system actions, safety behavior, and exit codes.
+- Updated current-version references to `0.4.8`.
+- No application behavior or command handling was changed.
+
 ## 0.4.7
 
 Previous version: `0.4.6`.
