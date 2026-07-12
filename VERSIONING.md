@@ -16,6 +16,16 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.3
+
+- Kept local Syncoid and ZFS execution under the effective user that starts `Syncerate.py`; no alternate local account is introduced.
+- Added logging of the effective local username and UID before every Syncoid process starts.
+- Documented that remote ZFS commands use the SSH user written in the remote source or destination endpoint.
+- Added a dedicated handler for Syncoid's exact nonfatal `ZFS resume feature not available ... sync will continue without resume support` message.
+- Changed that exact resume-capability message from fatal exit code `4` to a logged warning that waits for Syncoid's real final exit status.
+- Kept unrelated Syncoid warnings fatal and preserved the existing resume-retry, authentication, dataset, repeated-pattern, and missing-destroy-snapshot safety behavior.
+- Updated `README.md`, `commented_code_map.md`, and the example configuration for current version `0.4.3` behavior.
+
 ## 0.4.2
 
 - Removed the GitHub Pages configuration file `_config.yaml` from the distributed project.

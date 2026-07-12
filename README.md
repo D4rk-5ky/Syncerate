@@ -2,7 +2,7 @@
 
 Syncerate runs one Syncoid command for each paired source and destination ZFS dataset in two list files.
 
-Current version: `0.4.2`
+Current version: `0.4.3`
 
 ## Requirements
 
@@ -238,6 +238,17 @@ SyncoidCommand = syncoid SourceDataSet username@192.0.2.20:DestDataSet --sshport
 
 Syncerate splits the template before replacing the placeholders, preserving dataset names containing spaces as single command arguments.
 
+## Local and remote execution users
+
+Syncerate does not substitute a separate local user when starting Syncoid.
+
+- Local Syncoid and ZFS commands inherit the effective user that executed `Syncerate.py`.
+- When Syncerate is started with `sudo` and has effective UID `0`, local ZFS commands run as `root` and do not require delegated `zfs allow` permissions.
+- A remote source or destination uses the SSH user written before `@` in that endpoint, such as `backupuser@192.0.2.10:pool/data`.
+- `--no-privilege-elevation` does not change either user. It tells Syncoid not to invoke `sudo`, so a non-root remote SSH user must already have the required delegated ZFS permissions.
+
+Each transfer logs the effective local username and UID before Syncoid starts.
+
 ## Password and passphrase handling
 
 Do not provide one:
@@ -448,11 +459,12 @@ Syncerate watches for:
 - connection refused;
 - skipped datasets;
 - an unusable previous resume state, followed by one retry with `--no-resume`;
+- Syncoid's exact nonfatal `ZFS resume feature not available ... sync will continue without resume support` message;
 - repeated prompt patterns;
 - general warnings;
 - the specifically recognized nonfatal missing destroy-snapshot condition.
 
-General Syncoid warnings remain fatal unless they match the explicitly handled nonfatal condition.
+The resume-capability message is logged and allowed to continue because Syncoid explicitly continues without resume support. Syncerate then uses Syncoid's real final exit status. Other Syncoid warnings remain fatal unless they match a separately documented nonfatal condition.
 
 ## Exit codes
 

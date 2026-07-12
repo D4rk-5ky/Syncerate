@@ -26,6 +26,9 @@ import datetime
 # And for the Mail option, if choosen
 import os
 
+# Resolve the effective local user that Syncoid inherits from Syncerate.
+import pwd
+
 #  if there is an unexpected error in the program, traceback.print_exc() will work
 import traceback
 
@@ -51,7 +54,7 @@ EXIT_REPEATED_PATTERN = 9
 EXIT_MQTT_ERROR = 10
 EXIT_SYSTEM_ACTION_ERROR = 11
 
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 
 
 def option_is_enabled(value):
@@ -966,6 +969,15 @@ def safe_text(value):
         return ""
     return str(value)
 
+
+def effective_user_name():
+    """Return the username belonging to Syncerate's effective local UID."""
+    try:
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except (KeyError, OSError):
+        return f"UID {os.geteuid()}"
+
+
 def ssh_command(SynCoid_Command):
 
 	global ISREPEATED
@@ -978,6 +990,20 @@ def ssh_command(SynCoid_Command):
 
 	# Initialize modified command
 	modified_command = SynCoid_Command
+
+	# pexpect.spawn() does not switch users. Local Syncoid/ZFS commands inherit
+	# Syncerate's effective user. Only remote endpoints use the SSH username
+	# written in the source or destination dataset argument.
+	logger.info('')
+	logger.info(
+		'Local Syncoid process identity: %s (effective UID %s)',
+		effective_user_name(),
+		os.geteuid()
+	)
+	logger.info(
+		'Local ZFS commands inherit this identity; remote ZFS commands use the SSH user in the dataset endpoint.'
+	)
+	logger.info('')
 
 	# spawn the child process
 	if not LogDestination.upper() == "NO":
@@ -1013,8 +1039,9 @@ def ssh_command(SynCoid_Command):
 	PATTERN_EOF = 6
 	PATTERN_WARN_SKIPPING = 7
 	PATTERN_NO_RESUME = 8
-	PATTERN_GENERIC_WARN = 9
-	PATTERN_PASSWORD = 10
+	PATTERN_RESUME_UNAVAILABLE = 9
+	PATTERN_GENERIC_WARN = 10
+	PATTERN_PASSWORD = 11
 
 	patterns = [
 		'Are you sure you want to continue connecting',
@@ -1026,6 +1053,7 @@ def ssh_command(SynCoid_Command):
 		pexpect.EOF,
 		'WARN Skipping dataset',
 		'used in the initial send no longer exists',
+		r'WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.',
 		'WARN|WARNING',
 		'password',
 	]
@@ -1120,6 +1148,17 @@ def ssh_command(SynCoid_Command):
 			
 			close_child_logfile(child)
 			return child, modified_command
+
+		elif index == PATTERN_RESUME_UNAVAILABLE:
+			logger.warning('')
+			logger.warning(
+				'Syncoid reported that resumable receive is unavailable for this transfer.'
+			)
+			logger.warning(
+				'Syncoid explicitly continues without resume support, so Syncerate will wait for its real exit status.'
+			)
+			logger.warning('')
+			continue
 
 		elif index == PATTERN_GENERIC_WARN:
 			warning_text = safe_text(child.after) + safe_text(child.buffer)

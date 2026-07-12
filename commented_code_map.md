@@ -20,7 +20,8 @@ Allows the script to be executed directly when it has executable permission.
 - `getpass.getpass`: securely asks for a password or SSH-key passphrase without echoing it.
 - `logging`: writes terminal, `.log`, and `.err` output.
 - `datetime`: creates timestamps for log filenames.
-- `os`: handles paths, directories, and file existence checks.
+- `os`: handles paths, directories, file existence checks, and the effective UID inherited by local Syncoid processes.
+- `pwd`: resolves the effective UID to the actual local username, including when Syncerate is started through `sudo`.
 - `traceback`: retained for unexpected-error support.
 - `subprocess`: runs the local `mail` command and the optional successful-run system action.
 - `time`: waits before a system action when email is enabled.
@@ -59,7 +60,7 @@ Creates the named logger used by all functions. `get_logger()` later assigns its
 ### Version constant
 
 ```python
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 ```
 
 Provides one authoritative application version for `--version` and release tracking.
@@ -253,11 +254,15 @@ Flushes and closes the file attached to `child.logfile`, then sets the attribute
 
 Returns an empty string for `None`; otherwise returns `str(value)`. Error logging uses this helper because some `pexpect` fields may be unset.
 
+### `effective_user_name()`
+
+Resolves `os.geteuid()` through the local password database. This reports the real effective account inherited by Syncoid and local ZFS commands. When a UID has no local name, it returns the numeric UID instead of failing.
+
 ### `ssh_command(SynCoid_Command)`
 
 Starts one Syncoid command with `pexpect.spawn()` and watches its output until completion or a handled failure.
 
-Despite the function name, it also runs local-to-local Syncoid commands.
+Despite the function name, it also runs local-to-local Syncoid commands. `pexpect.spawn()` does not switch users: the child inherits Syncerate's effective local UID. Remote endpoints are left unchanged, so Syncoid uses the SSH username written in the source or destination argument. The function logs this local identity before starting each child.
 
 It initializes three transfer-state flags:
 
@@ -276,6 +281,7 @@ Recognized patterns and actions:
 - End of file: closes output logging and returns the child process.
 - `WARN Skipping dataset`: exits with code `8`.
 - Missing resume snapshot: returns a modified command containing `--no-resume`.
+- Resume capability unavailable: logs Syncoid's exact message as nonfatal and continues because Syncoid explicitly says the transfer will proceed without resume support.
 - Generic warning: treats it as fatal except for the specifically recognized nonfatal destroy warning.
 
 Each pattern may match at most five times. More matches trigger the repeated-pattern safety exit instead of allowing an endless prompt loop.
@@ -288,11 +294,12 @@ For each source, destination, and destination-extra-argument set, it:
 
 1. builds the complete Syncoid argument list;
 2. logs the command and its arguments;
-3. executes it through `ssh_command()`;
-4. retries once with `--no-resume` when required;
-5. detects signal termination;
-6. handles nonzero Syncoid exit codes;
-7. permits only the specifically recognized nonfatal destroy-snapshot condition.
+3. logs the effective local user and executes it through `ssh_command()`;
+4. allows only the exact nonfatal resume-capability message to continue to Syncoid's real exit status;
+5. retries once with `--no-resume` when an old resume state is unusable;
+6. detects signal termination;
+7. handles nonzero Syncoid exit codes;
+8. permits only the specifically recognized nonfatal destroy-snapshot condition.
 
 After every pair succeeds, it calls `successfull_run()`.
 
