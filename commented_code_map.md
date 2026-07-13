@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.9`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.13`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.9"
+VERSION = "0.4.13"
 __version__ = VERSION
 ```
 
@@ -123,7 +123,10 @@ Immutable configuration state loaded from one INI file. It replaces former runti
 - `BackupTitle`;
 - `BackupComment`;
 - `PassWordOption`;
-- `SyncoidCommand`.
+- `SyncoidCommand`;
+- `RetryBrokenPipe`;
+- `BrokenPipeRetryCount`;
+- `BrokenPipeRetryWaitSeconds`.
 
 Fields:
 
@@ -137,7 +140,10 @@ Fields:
 - `backup_title` / `backup_comment`: optional descriptive text;
 - `source_list_path` / `destination_list_path`: dataset-list files;
 - `password_option`: `No`, `Ask`, or a literal credential;
-- `syncoid_command`: command template.
+- `syncoid_command`: command template;
+- `retry_broken_pipe`: normalized Boolean controlling optional per-dataset retries;
+- `broken_pipe_retry_count`: validated retries available to each individual dataset, defaulting to `1`;
+- `broken_pipe_retry_wait_seconds`: validated whole seconds to wait before each retry, defaulting to `10`.
 
 Properties:
 
@@ -169,6 +175,10 @@ One validated replication unit containing:
 
 It replaces three parallel source/destination/argument lists, preventing arguments from becoming associated with the wrong dataset.
 
+### `ReplicationSummary`
+
+Carries nonfatal conditions that apply to the completed dataset list. Its `broken_pipe_failed_datasets` list contains every `DatasetPair` skipped after exhausting its independently configured Broken Pipe retries. `has_broken_pipe_warning` provides the final notification stage with a simple Boolean check.
+
 ### `SyncoidAttemptResult`
 
 Returned by one monitored Syncoid attempt. It contains:
@@ -177,7 +187,8 @@ Returned by one monitored Syncoid attempt. It contains:
 - original or modified command;
 - repeated-pattern status;
 - whether one retry with `--no-resume` is requested;
-- whether the known missing-destroy-snapshot condition was observed.
+- whether the known missing-destroy-snapshot condition was observed;
+- whether this attempt stopped after detecting Broken Pipe.
 
 It replaces former mutable control globals.
 
@@ -216,7 +227,7 @@ Returns true for:
 YES, TRUE, 1, ON
 ```
 
-Everything else is disabled. This allows `No`, `False`, `0`, and `Off` to safely disable MQTT or Home Assistant.
+Everything else is disabled. This allows `No`, `False`, `0`, and `Off` to safely disable MQTT, Home Assistant, or Broken Pipe retry handling.
 
 ### `load_app_config(config_path)`
 
@@ -227,9 +238,10 @@ It:
 - verifies the file can be read;
 - verifies `[Syncerate Config]` exists;
 - reads startup settings;
-- applies fallbacks to optional metadata and `Use_MQTT`;
+- applies fallbacks to optional metadata, `Use_MQTT`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`;
 - converts `LogDestination = No` into `None`;
 - normalizes an enabled log directory to end with `/`;
+- parses `BrokenPipeRetryCount` and `BrokenPipeRetryWaitSeconds` as integers and rejects negative values;
 - deliberately leaves broker, MQTT credentials, MQTT payload, and HA topic inside `raw_config` for lazy reading.
 
 It does not create logs, read datasets, resolve credentials, or load `paho-mqtt`.
@@ -333,6 +345,10 @@ It then returns `list[DatasetPair]`, keeping each pair and its extra arguments t
 
 This module contains all optional email, MQTT, and Home Assistant behavior.
 
+### `BROKEN_PIPE_SUCCESS_SUBJECT`
+
+Stores the exact requested warning-success email subject: `Syncerate Succsful - WARNING BROKEN PIPE`. Keeping it in one constant prevents the logged/body wording and mail subject from drifting apart.
+
 ### `backup_header_text(app_config)`
 
 Builds the optional backup-title/comment prefix reused by all email variants.
@@ -353,14 +369,15 @@ Logs whether the local mail program accepted the message. It keeps the existing 
 
 ### `MailTo(app_config, run_context, logger, ...)`
 
-Builds the existing success and failure message variants:
+Builds the current success and failure message variants:
 
 - successful run;
+- successful run with skipped datasets after exhausting their Broken Pipe retry allowance;
 - script error;
 - Syncoid error;
 - MQTT error.
 
-When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
+When a completed run carries a Broken Pipe warning, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
 
 ### `send_mqtt_messages(app_config, logger)`
 
@@ -459,7 +476,7 @@ Returns the username belonging to the effective UID. It falls back to `UID <numb
 
 This confirms that local commands run as the user executing Syncerate. Remote commands remain under the SSH user written in the endpoint.
 
-### `ssh_command(syncoid_command, password, run_context, logger)`
+### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False)`
 
 Starts one process with:
 
@@ -481,8 +498,9 @@ It monitors these conditions:
 8. **Skipped dataset warning** — code `8`.
 9. **Stale resume state** — returns a request for one retry with `--no-resume`.
 10. **Resume feature unavailable** — logs the exact nonfatal message and waits for Syncoid's real exit status.
-11. **Generic warning** — remains fatal with code `4`, except the separately recognized destroy warning.
-12. **Password prompt** — handled like passphrase.
+11. **Broken Pipe** — when `RetryBrokenPipe` is enabled, terminates the current attempt and returns `broken_pipe_detected=True`; when disabled, logs the detection and waits for the real child exit status.
+12. **Generic warning** — remains fatal with code `4`, except the separately recognized destroy warning.
+13. **Password prompt** — handled like passphrase.
 
 Each pattern is limited to five matches. Exceeding the limit sets `repeated_pattern` so the caller can fail safely with code `9`.
 
@@ -498,12 +516,14 @@ For each pair it:
 2. logs extra arguments and argv details;
 3. starts `ssh_command()`;
 4. performs at most one stale-resume retry;
-5. closes the child;
-6. converts signal termination to `128 + signal`;
-7. preserves the real Syncoid exit code;
-8. ignores a nonzero code only when the specific missing-destroy-snapshot condition was recognized.
+5. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every retry;
+6. records and skips only that pair after its configured Broken Pipe retry allowance is exhausted;
+7. closes the child;
+8. converts signal termination to `128 + signal`;
+9. preserves the real Syncoid exit code for other failures;
+10. ignores a nonzero code only when the specific missing-destroy-snapshot condition was recognized.
 
-No transfer is started in parallel, preserving the existing sequential behavior.
+The function returns `ReplicationSummary`. `broken_pipe_retries_used` is initialized inside the dataset loop, so every dataset pair receives the full configured retry count independently. No transfer is started in parallel, preserving sequential behavior.
 
 ## `syncerate/app.py`
 
@@ -518,9 +538,9 @@ Writes the appropriate final diagnostics for:
 
 List validation already writes its detailed message in `datasets.py`, so it is not duplicated here.
 
-### `successfull_run(app_config, run_context, logger)`
+### `successfull_run(app_config, run_context, logger, replication_summary=None)`
 
-Runs the existing post-transfer order:
+Runs the post-transfer order and uses `ReplicationSummary` to select normal success or warning-success logging and email:
 
 1. append successful-run text to `.out` when enabled;
 2. MQTT and optional HA notification;
@@ -542,8 +562,8 @@ Execution order:
 5. log safe startup settings;
 6. load and validate `DatasetPair` objects;
 7. resolve the optional password/passphrase;
-8. run all replications;
-9. run successful completion actions;
+8. run all replications and collect `ReplicationSummary`;
+9. run successful completion actions with the summary;
 10. return `0`.
 
 Known `SyncerateError` exceptions are logged, optionally mailed, and returned with their original code. Unexpected exceptions are logged with a traceback, optionally mailed as script errors, and return code `2`.
@@ -567,6 +587,7 @@ AppConfig dataset paths
 AppConfig + RunContext + DatasetPair + password
     -> syncoid_runner.run_replications()
     -> SyncoidAttemptResult per attempt
+    -> ReplicationSummary for the full list
 
 Successful completion
     -> notifications

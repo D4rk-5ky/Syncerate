@@ -16,6 +16,59 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.13
+
+Previous version: `0.4.12`.
+
+- Added optional `BrokenPipeRetryCount` configuration directly below `RetryBrokenPipe`.
+- The value is the number of retries allowed after the initial attempt for each individual dataset pair.
+- The retry counter is created inside the per-dataset loop, so every dataset starts with the full configured allowance.
+- The option defaults to `1` when omitted, preserving the previous one-retry behavior.
+- `0` skips an affected dataset immediately after its first detected Broken Pipe. Negative values and non-integers are rejected as configuration errors.
+- `BrokenPipeRetryWaitSeconds` now applies before every configured Broken Pipe retry rather than describing only one retry.
+- When a dataset exhausts its retries, only that dataset is skipped; the remaining dataset list continues and each later dataset receives its own retry count.
+- Preserved the successful final exit code and exact warning-success mail subject when no other fatal error occurs.
+- Updated terminal, log, output, and email wording so it reports retry exhaustion rather than assuming exactly two Broken Pipe occurrences.
+- Updated `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` for all 22 current configuration options.
+
+## 0.4.12
+
+Previous version: `0.4.11`.
+
+- Added optional `BrokenPipeRetryWaitSeconds` configuration directly below `RetryBrokenPipe` in the example configuration.
+- The option controls how many whole seconds Syncerate waits before the one allowed Broken Pipe retry.
+- The option defaults to `10` when omitted, preserving the previous behavior.
+- `0` is accepted for an immediate retry. Negative values and non-integers are rejected as configuration errors.
+- Updated warning-success email text to report the configured wait time instead of a hard-coded value.
+- Updated `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` for the new option.
+- Preserved the existing second-Broken-Pipe behavior, successful warning result, dataset-list continuation, exit code, and mail subject.
+
+## 0.4.11
+
+Previous version: `0.4.10`.
+
+- Added a fixed 10-second wait before retrying a dataset after the first detected Broken Pipe.
+- The wait occurs only when `RetryBrokenPipe` is enabled and only before the one allowed retry for that dataset pair.
+- A second Broken Pipe still skips only the affected dataset, continues the remaining list, keeps the completed run successful when no other fatal error occurs, and uses the existing warning-success email subject.
+- Updated the warning-success email body, `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` to explain the delay.
+- Preserved all other Syncoid warning, retry, exit-code, notification, and safety behavior.
+
+## 0.4.10
+
+Previous version: `0.4.9`.
+
+- Added optional `RetryBrokenPipe` configuration, disabled by default.
+- Added case-insensitive detection of `Broken pipe` in Syncoid output.
+- When enabled, the first Broken Pipe stops the current attempt and retries the same dataset pair once with the same effective command.
+- If Broken Pipe appears on the retry, the affected dataset pair is recorded as skipped and Syncerate continues with the remaining dataset list.
+- Kept the final process exit code successful (`0`) when the list completes and no other fatal error occurs.
+- Added `ReplicationSummary` to carry nonfatal skipped-dataset information from the Syncoid runner to final notification handling.
+- Added `broken_pipe_detected` to `SyncoidAttemptResult` so the process monitor returns the condition explicitly instead of using global state.
+- Added warning-success logging to the terminal, `.log`, and `.out` output.
+- Added the exact warning-success email subject `Syncerate Succsful - WARNING BROKEN PIPE` and included skipped dataset pairs in the email body.
+- Preserved normal Syncoid exit-status behavior when `RetryBrokenPipe` is disabled or omitted.
+- Updated `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` for the new option and behavior.
+
 ## 0.4.9
 
 Previous version: `0.4.8`.

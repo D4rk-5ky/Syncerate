@@ -43,6 +43,7 @@ from syncerate.logging_setup import (
 from syncerate.models import (
     AppConfig,
     DatasetPair,
+    ReplicationSummary,
     RunContext,
     SyncoidAttemptResult,
 )

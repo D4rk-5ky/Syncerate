@@ -13,7 +13,7 @@ from .logging_setup import (
     get_logger,
     log_startup_configuration,
 )
-from .models import AppConfig, RunContext
+from .models import AppConfig, ReplicationSummary, RunContext
 from .notifications import MailTo, send_error_mail, send_mqtt_messages
 from .syncoid_runner import resolve_password, run_replications
 from .system_actions import SystemAction
@@ -76,13 +76,31 @@ def successfull_run(
     app_config: AppConfig,
     run_context: RunContext,
     logger: logging.Logger,
+    replication_summary: Optional[ReplicationSummary] = None,
 ) -> None:
-    """Run the existing success-stage MQTT, mail, and system actions."""
+    """Run success-stage notifications and the optional system action."""
+
+    if replication_summary is None:
+        replication_summary = ReplicationSummary()
 
     logger.info("")
     logger.info("----------")
     logger.info("")
-    logger.info("The Script ended successfully")
+    if replication_summary.has_broken_pipe_warning:
+        logger.warning("The Script ended successfully with Broken Pipe warnings")
+        logger.warning(
+            "%s dataset(s) were skipped after exhausting %s configured Broken Pipe retries per dataset.",
+            len(replication_summary.broken_pipe_failed_datasets),
+            app_config.broken_pipe_retry_count,
+        )
+        for dataset_pair in replication_summary.broken_pipe_failed_datasets:
+            logger.warning(
+                "Skipped after Broken Pipe retry limit: %s -> %s",
+                dataset_pair.source,
+                dataset_pair.destination,
+            )
+    else:
+        logger.info("The Script ended successfully")
     logger.info("")
     logger.info(
         "Now going over MAIL, MQTT and System Option, if option is set in the .cfg file"
@@ -98,15 +116,35 @@ def successfull_run(
                 "",
                 "----------",
                 "",
-                "The Script ended successfully",
-                "",
-                "Now going over MAIL, MQTT and System Option, if option is set in the .cfg file",
-                "",
-                "Errors for these can still be raised, at this point of the script",
-                "",
-                "----------",
+                (
+                    "The Script ended successfully with Broken Pipe warnings"
+                    if replication_summary.has_broken_pipe_warning
+                    else "The Script ended successfully"
+                ),
                 "",
             ]
+
+            if replication_summary.has_broken_pipe_warning:
+                lines_of_text.append(
+                    f"{len(replication_summary.broken_pipe_failed_datasets)} dataset(s) were skipped after exhausting {app_config.broken_pipe_retry_count} configured Broken Pipe retries per dataset."
+                )
+                for dataset_pair in replication_summary.broken_pipe_failed_datasets:
+                    lines_of_text.append(
+                        "Skipped after Broken Pipe retry limit: "
+                        f"{dataset_pair.source} -> {dataset_pair.destination}"
+                    )
+                lines_of_text.append("")
+
+            lines_of_text.extend(
+                [
+                    "Now going over MAIL, MQTT and System Option, if option is set in the .cfg file",
+                    "",
+                    "Errors for these can still be raised, at this point of the script",
+                    "",
+                    "----------",
+                    "",
+                ]
+            )
 
             for line in lines_of_text:
                 output_file.write(line + "\n")
@@ -115,7 +153,14 @@ def successfull_run(
         send_mqtt_messages(app_config, logger)
 
     if app_config.mail_enabled:
-        MailTo(app_config, run_context, logger, Exit_Code=EXIT_OK)
+        MailTo(
+            app_config,
+            run_context,
+            logger,
+            Exit_Code=EXIT_OK,
+            BrokenPipeWarning=replication_summary.has_broken_pipe_warning,
+            BrokenPipeDatasets=replication_summary.broken_pipe_failed_datasets,
+        )
 
     if app_config.system_action_enabled:
         SystemAction(app_config, logger)
@@ -137,14 +182,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         dataset_pairs = load_dataset_pairs(app_config, logger)
         password = resolve_password(app_config, logger)
 
-        run_replications(
+        replication_summary = run_replications(
             app_config,
             run_context,
             dataset_pairs,
             password,
             logger,
         )
-        successfull_run(app_config, run_context, logger)
+        successfull_run(
+            app_config,
+            run_context,
+            logger,
+            replication_summary,
+        )
         return EXIT_OK
 
     except SyncerateError as error:
