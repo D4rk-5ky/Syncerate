@@ -1,8 +1,8 @@
 # Syncerate
 
-Syncerate runs Syncoid once for each matching source and destination ZFS dataset listed in two text files.
+Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.9`
+Current version: `0.4.14`
 
 ## Disclaimer and liability notice
 
@@ -206,6 +206,10 @@ DateTime = %Y-%m-%d_%H_%M_%S
 LogDestination = No
 SystemAction = No
 
+RetryBrokenPipe = No
+BrokenPipeRetryCount = 1
+BrokenPipeRetryWaitSeconds = 10
+
 Use_MQTT = No
 broker_address = mqtt.example.com
 broker_port = 1883
@@ -232,6 +236,9 @@ HomeAssistant_Available = home-assistant/syncerate/available
 | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
 | `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out` files, or `No` for terminal-only logging. |
 | `SystemAction` | Yes | Trusted shell command executed after a successful run, or `No` to disable it. |
+| `RetryBrokenPipe` | No | Enables dataset-level Broken Pipe retry handling. Each dataset receives its own retry allowance. When that allowance is exhausted, only that dataset is skipped, the remaining list continues, and the completed run records a successful warning. Missing or disabled values preserve normal Syncoid failure handling. |
+| `BrokenPipeRetryCount` | No | Number of retries allowed for each individual dataset after its initial attempt. Defaults to `1` when omitted. The count resets for every dataset pair. Use `0` to skip an affected dataset immediately after its first Broken Pipe. Negative values and non-integers are rejected. |
+| `BrokenPipeRetryWaitSeconds` | No | Whole number of seconds to wait before each Broken Pipe retry. Defaults to `10` when omitted. Use `0` to retry immediately. Negative values and non-integers are rejected as configuration errors. |
 | `Use_MQTT` | No | Enables MQTT with `Yes`, `True`, `1`, or `On`. Missing, `No`, `False`, `0`, or `Off` disables it. |
 | `broker_address` | When MQTT is enabled | MQTT broker hostname or IP address. |
 | `broker_port` | When MQTT is enabled | MQTT broker TCP port as an integer, commonly `1883`. |
@@ -305,6 +312,8 @@ PassWord = your-secret
 
 `Ask` avoids storing the secret in the file. Password and MQTT credential values are omitted from normal configuration logging.
 
+When Syncoid/SSH requests either an SSH account password or a private-key passphrase, Syncerate waits up to 3 seconds for the pseudo-terminal to enter no-echo credential-input mode before sending the secret. This avoids sending the credential too early during newer OpenSSH prompt/TTY transitions while preserving the previous send behavior if no-echo is not observed within the timeout. Secret input is excluded from the Pexpect logfile while it is sent.
+
 ## Logging
 
 Terminal-only logging:
@@ -351,7 +360,46 @@ Enable email:
 Mail = user@example.com
 ```
 
-A working local `mail` command is required. Syncerate can send success, Syncoid-error, script-error, and MQTT-error messages. Log files are attached when file logging is enabled and the relevant files are available.
+A working local `mail` command is required. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Log files are attached when file logging is enabled and the relevant files are available.
+
+When `RetryBrokenPipe` is enabled and a dataset is skipped after exhausting its configured retry count, the run still returns success when no other failure occurs. The success email subject is exactly:
+
+```text
+Syncerate Succsful - WARNING BROKEN PIPE
+```
+
+The email body lists the skipped source and destination dataset pairs.
+
+## Optional Broken Pipe retry
+
+The feature is disabled by default:
+
+```ini
+RetryBrokenPipe = No
+```
+
+Enable it and select the retry count and wait time with:
+
+```ini
+RetryBrokenPipe = Yes
+BrokenPipeRetryCount = 1
+BrokenPipeRetryWaitSeconds = 10
+```
+
+`BrokenPipeRetryCount` is the number of retries allowed **after the initial attempt for each individual dataset pair**. It defaults to `1` when omitted. A value of `3` permits up to four total attempts for a dataset: the initial attempt plus three retries. A value of `0` skips an affected dataset immediately after its first detected Broken Pipe.
+
+`BrokenPipeRetryWaitSeconds` is the number of whole seconds to wait before each retry. It defaults to `10` when omitted, and `0` retries immediately.
+
+When enabled, Syncerate watches Syncoid output case-insensitively for the text `Broken pipe` and applies this policy independently to every dataset pair:
+
+1. Broken Pipe stops only the current Syncoid attempt.
+2. If that dataset still has retries available, Syncerate waits for `BrokenPipeRetryWaitSeconds` and retries the same dataset with the same command.
+3. If Broken Pipe continues after all `BrokenPipeRetryCount` retries are used, Syncerate skips only that dataset and continues with the next source/destination pair.
+4. The next dataset starts with a fresh retry counter and receives its full configured retry allowance.
+5. After the remaining list finishes, Syncerate returns exit code `0` when no other fatal error occurred.
+6. Logs and the success email identify every dataset pair skipped after exhausting its retries.
+
+The retry count is never shared between datasets. This option does not retry authentication failures, missing datasets, generic warnings, connection failures, or other nonzero Syncoid exits. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
 
 ## MQTT success notification
 
@@ -485,16 +533,18 @@ Syncerate monitors Syncoid and SSH output for:
 - an unusable interrupted-transfer resume state, followed by one retry using `--no-resume`;
 - unavailable ZFS resume support where Syncoid continues without it;
 - repeated matched prompts or messages;
+- optional per-dataset retries, up to `BrokenPipeRetryCount`, after the configured `BrokenPipeRetryWaitSeconds`, when `Broken pipe` appears;
+- retry exhaustion that skips only the affected dataset, resets the counter, and continues the list;
 - generic warnings;
 - the recognized missing destroy-snapshot condition.
 
-Generic warnings remain fatal. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support.
+Generic warnings remain fatal. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
 
 ## Exit codes
 
 | Code | Meaning |
 | ---: | --- |
-| `0` | Dataset transfers completed and no fatal handled error was returned. Mail-command and system-action failures are currently logged rather than changing this code. |
+| `0` | The dataset list completed and no fatal handled error was returned. This also includes runs where one or more datasets were skipped after exhausting their per-dataset Broken Pipe retries while `RetryBrokenPipe` was enabled. Mail-command and system-action failures are currently logged rather than changing this code. |
 | `1` | Source/destination list validation failed. |
 | `2` | Syncerate encountered a script or configuration error. |
 | `4` | A fatal Syncoid warning was detected. |

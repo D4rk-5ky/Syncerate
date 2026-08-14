@@ -7,7 +7,10 @@ from typing import Any, Optional
 
 from .config import CONFIG_SECTION, option_is_enabled
 from .errors import EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
-from .models import AppConfig, RunContext
+from .models import AppConfig, DatasetPair, RunContext
+
+
+BROKEN_PIPE_SUCCESS_SUBJECT = "Syncerate Succsful - WARNING BROKEN PIPE"
 
 
 def backup_header_text(app_config: AppConfig) -> str:
@@ -83,10 +86,12 @@ def MailTo(
     Exit_Code: Optional[int] = None,
     SynCoidFail: Optional[int] = None,
     MQTT_Fail: Optional[int] = None,
+    BrokenPipeWarning: bool = False,
+    BrokenPipeDatasets: Optional[list[DatasetPair]] = None,
 ) -> None:
-    """Build and send the same success/error mail variants as earlier releases.
+    """Build and send success, warning-success, and error mail variants.
 
-    This function no longer terminates the process. The top-level main()
+    This function does not terminate the process. The top-level main()
     exception boundary owns the final exit code.
     """
 
@@ -106,11 +111,60 @@ def MailTo(
     output_file = run_context.output_file
 
     if Exit_Code == EXIT_OK:
+        broken_pipe_datasets = BrokenPipeDatasets or []
+        warning_body = ""
+
+        if BrokenPipeWarning:
+            wait_unit = (
+                "second"
+                if app_config.broken_pipe_retry_wait_seconds == 1
+                else "seconds"
+            )
+            retry_unit = (
+                "retry"
+                if app_config.broken_pipe_retry_count == 1
+                else "retries"
+            )
+            warning_lines = [
+                BROKEN_PIPE_SUCCESS_SUBJECT,
+                "",
+                "Syncerate completed the dataset list successfully, but one or more datasets were skipped after exhausting their Broken Pipe retry allowance.",
+            ]
+
+            if app_config.broken_pipe_retry_count > 0:
+                warning_lines.append(
+                    "Each affected dataset was allowed "
+                    f"{app_config.broken_pipe_retry_count} {retry_unit}, with a wait of "
+                    f"{app_config.broken_pipe_retry_wait_seconds} {wait_unit} before each retry. "
+                    "After the retry allowance was exhausted, that dataset was skipped and the list continued."
+                )
+            else:
+                warning_lines.append(
+                    "BrokenPipeRetryCount was set to 0, so an affected dataset was skipped immediately after the first detected Broken Pipe and the list continued."
+                )
+
+            warning_lines.append("")
+
+            if broken_pipe_datasets:
+                warning_lines.append("Skipped dataset pairs:")
+                for dataset_pair in broken_pipe_datasets:
+                    warning_lines.append(
+                        f"- {dataset_pair.source} -> {dataset_pair.destination}"
+                    )
+                warning_lines.append("")
+
+            warning_lines.extend(["----------", ""])
+            warning_body = "\n".join(warning_lines)
+
         if logging_enabled:
             assert log_file is not None
             assert output_file is not None
 
-            subject = "Successful Syncerate.py run - No errors found (Attaching logs)"
+            subject = (
+                BROKEN_PIPE_SUCCESS_SUBJECT
+                if BrokenPipeWarning
+                else "Successful Syncerate.py run - No errors found (Attaching logs)"
+            )
             attachment_files = [log_file, output_file]
 
             with open(log_file, "r", encoding="utf-8") as opened_log:
@@ -118,6 +172,7 @@ def MailTo(
 
             body = (
                 backup_header_text(app_config)
+                + warning_body
                 + "----------\n\n.log file\n\n----------\n\n"
                 + log_contents
                 + "\n\n----------"
@@ -129,12 +184,18 @@ def MailTo(
                 attachment_files,
             )
         else:
-            subject_and_body = (
-                "Successful Syncerate.py run - No errors found (Logs Disabled)"
+            subject = (
+                BROKEN_PIPE_SUCCESS_SUBJECT
+                if BrokenPipeWarning
+                else "Successful Syncerate.py run - No errors found (Logs Disabled)"
             )
+            body = backup_header_text(app_config) + warning_body
+            if not BrokenPipeWarning:
+                body += subject
+
             mail_exit_code, stderr_output = send_mail(
-                subject_and_body,
-                backup_header_text(app_config) + subject_and_body,
+                subject,
+                body,
                 recipient,
             )
 

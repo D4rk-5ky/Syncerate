@@ -1,7 +1,7 @@
 """Dataclasses that carry configuration and per-run state explicitly."""
 
 import configparser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
@@ -22,6 +22,9 @@ class AppConfig:
     destination_list_path: str
     password_option: str
     syncoid_command: str
+    retry_broken_pipe: bool = False
+    broken_pipe_retry_count: int = 1
+    broken_pipe_retry_wait_seconds: int = 10
 
     @property
     def mail_enabled(self) -> bool:
@@ -66,3 +69,17 @@ class SyncoidAttemptResult:
     repeated_pattern: bool = False
     retry_without_resume: bool = False
     ignored_missing_destroy_snapshot: bool = False
+    broken_pipe_detected: bool = False
+
+
+@dataclass
+class ReplicationSummary:
+    """Non-fatal conditions collected while processing the dataset list."""
+
+    broken_pipe_failed_datasets: list[DatasetPair] = field(default_factory=list)
+
+    @property
+    def has_broken_pipe_warning(self) -> bool:
+        """Return True when at least one dataset exhausted its Broken Pipe retries."""
+
+        return bool(self.broken_pipe_failed_datasets)

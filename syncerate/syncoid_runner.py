@@ -4,6 +4,7 @@ import logging
 import os
 import pwd
 import shlex
+import time
 from getpass import getpass
 from typing import Any, Optional, Sequence
 
@@ -20,7 +21,13 @@ from .errors import (
     EXIT_WARNING,
     SyncerateError,
 )
-from .models import AppConfig, DatasetPair, RunContext, SyncoidAttemptResult
+from .models import (
+    AppConfig,
+    DatasetPair,
+    ReplicationSummary,
+    RunContext,
+    SyncoidAttemptResult,
+)
 
 
 def resolve_password(
@@ -59,6 +66,24 @@ def safe_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+def send_secret(
+    child: Any,
+    password: str,
+    output_handle: Any,
+    logging_enabled: bool,
+) -> None:
+    """Wait for no-echo credential input, send the secret, and restore logging."""
+
+    if logging_enabled:
+        child.logfile = None
+
+    try:
+        child.waitnoecho(timeout=3)
+        child.sendline(password)
+    finally:
+        if logging_enabled:
+            child.logfile = output_handle
 
 def close_child_logfile(
     child: Any,
@@ -204,12 +229,14 @@ def ssh_command(
     password: Optional[str],
     run_context: RunContext,
     logger: logging.Logger,
+    retry_broken_pipe: bool = False,
 ) -> SyncoidAttemptResult:
     """Start and monitor one Syncoid process and return explicit flags."""
 
     repeated_pattern = False
     ignored_missing_destroy_snapshot = False
     retry_without_resume = False
+    broken_pipe_detected = False
     modified_command = list(syncoid_command)
 
     logger.info("")
@@ -252,8 +279,9 @@ def ssh_command(
     PATTERN_WARN_SKIPPING = 7
     PATTERN_NO_RESUME = 8
     PATTERN_RESUME_UNAVAILABLE = 9
-    PATTERN_GENERIC_WARN = 10
-    PATTERN_PASSWORD = 11
+    PATTERN_BROKEN_PIPE = 10
+    PATTERN_GENERIC_WARN = 11
+    PATTERN_PASSWORD = 12
 
     patterns = [
         "Are you sure you want to continue connecting",
@@ -266,6 +294,7 @@ def ssh_command(
         "WARN Skipping dataset",
         "used in the initial send no longer exists",
         r"WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.",
+        r"(?i)broken pipe",
         "WARN|WARNING",
         "password",
     ]
@@ -329,9 +358,6 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSPHRASE:
-            if run_context.logging_enabled:
-                child.logfile = None
-
             if password is None:
                 die(
                     child,
@@ -340,10 +366,12 @@ def ssh_command(
                     logger=logger,
                 )
 
-            child.sendline(password)
-
-            if run_context.logging_enabled:
-                child.logfile = output_handle
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+            )
 
         elif index == PATTERN_EOF:
             close_child_logfile(child, logger)
@@ -403,6 +431,44 @@ def ssh_command(
             logger.warning("")
             continue
 
+        elif index == PATTERN_BROKEN_PIPE:
+            if not retry_broken_pipe:
+                logger.warning("")
+                logger.warning(
+                    "Broken Pipe appeared in Syncoid output, but RetryBrokenPipe is disabled."
+                )
+                logger.warning(
+                    "Waiting for Syncoid's real exit status and preserving normal failure handling."
+                )
+                logger.warning("")
+                continue
+
+            logger.warning("")
+            logger.warning("Broken Pipe appeared in Syncoid output.")
+            logger.warning(
+                "Stopping this attempt so the dataset-level retry policy can handle it."
+            )
+            logger.warning("")
+
+            broken_pipe_detected = True
+
+            try:
+                child.terminate(force=True)
+            except Exception:
+                logger.exception(
+                    "Could not terminate the Broken Pipe attempt cleanly"
+                )
+
+            close_child_logfile(child, logger)
+            return SyncoidAttemptResult(
+                child=child,
+                command=modified_command,
+                repeated_pattern=repeated_pattern,
+                retry_without_resume=retry_without_resume,
+                ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+                broken_pipe_detected=broken_pipe_detected,
+            )
+
         elif index == PATTERN_GENERIC_WARN:
             warning_text = safe_text(child.after) + safe_text(child.buffer)
 
@@ -427,9 +493,6 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSWORD:
-            if run_context.logging_enabled:
-                child.logfile = None
-
             if password is None:
                 die(
                     child,
@@ -438,10 +501,12 @@ def ssh_command(
                     logger=logger,
                 )
 
-            child.sendline(password)
-
-            if run_context.logging_enabled:
-                child.logfile = output_handle
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+            )
 
     close_child_logfile(child, logger)
     return SyncoidAttemptResult(
@@ -458,8 +523,10 @@ def run_replications(
     dataset_pairs: list[DatasetPair],
     password: Optional[str],
     logger: logging.Logger,
-) -> None:
-    """Run all validated DatasetPair entries sequentially."""
+) -> ReplicationSummary:
+    """Run all dataset pairs and return any non-fatal run warnings."""
+
+    summary = ReplicationSummary()
 
     for dataset_pair in dataset_pairs:
         syncoid_execute = build_syncoid_command(
@@ -486,73 +553,131 @@ def run_replications(
 
         log_command_debug(syncoid_execute, logger)
 
-        result = ssh_command(
-            syncoid_execute,
-            password,
-            run_context,
-            logger,
-        )
+        current_command = list(syncoid_execute)
+        resume_retry_used = False
+        broken_pipe_retries_used = 0
 
-        if result.retry_without_resume:
-            result.child.close()
-
-            logger.info(
-                "Executing the modified Syncoid Command    :    %s",
-                shlex.join(result.command),
-            )
-
+        while True:
             result = ssh_command(
-                result.command,
+                current_command,
                 password,
                 run_context,
                 logger,
+                retry_broken_pipe=app_config.retry_broken_pipe,
             )
-            result.child.close()
-        else:
-            result.child.close()
+            child = result.child
 
-        child = result.child
+            if result.broken_pipe_detected:
+                child.close()
 
-        if result.repeated_pattern:
-            die(
-                child,
-                "ERROR: The script is repeating itself",
-                EXIT_REPEATED_PATTERN,
-                logger=logger,
-            )
+                if broken_pipe_retries_used < app_config.broken_pipe_retry_count:
+                    broken_pipe_retries_used += 1
+                    current_command = list(result.command)
 
-        if child.exitstatus is None and child.signalstatus is not None:
-            exit_code = 128 + int(child.signalstatus)
+                    logger.warning("")
+                    logger.warning("----------")
+                    logger.warning("")
+                    logger.warning(
+                        "Broken Pipe detected for %s -> %s.",
+                        dataset_pair.source,
+                        dataset_pair.destination,
+                    )
+                    logger.warning(
+                        "RetryBrokenPipe is enabled; waiting %s seconds before retry %s of %s for this dataset.",
+                        app_config.broken_pipe_retry_wait_seconds,
+                        broken_pipe_retries_used,
+                        app_config.broken_pipe_retry_count,
+                    )
+                    logger.warning("")
+                    time.sleep(app_config.broken_pipe_retry_wait_seconds)
+                    continue
 
-            logger.error("")
-            logger.error("Syncoid was terminated by signal: %s", child.signalstatus)
-            logger.error("Using exit code: %s", exit_code)
+                summary.broken_pipe_failed_datasets.append(dataset_pair)
 
-            die(
-                SynCoidFail=exit_code,
-                SynCoidFailChild=child,
-                logger=logger,
-            )
+                logger.warning("")
+                logger.warning("----------")
+                logger.warning("")
+                logger.warning(
+                    "Broken Pipe persisted for %s -> %s.",
+                    dataset_pair.source,
+                    dataset_pair.destination,
+                )
+                logger.warning(
+                    "The configured retry count of %s has been exhausted; skipping this dataset and continuing the list.",
+                    app_config.broken_pipe_retry_count,
+                )
+                logger.warning(
+                    "The final run remains successful but will carry a Broken Pipe warning."
+                )
+                logger.warning("")
+                break
 
-        if child.exitstatus != EXIT_OK and result.ignored_missing_destroy_snapshot:
-            logger.warning("")
-            logger.warning(
-                "Syncoid exited with non-zero status %s, but ignored_missing_destroy_snapshot is True.",
-                child.exitstatus,
-            )
-            logger.warning(
-                "Ignoring this because the known no-destroy-snapshot message was seen."
-            )
-            logger.warning("")
+            if result.retry_without_resume and not resume_retry_used:
+                child.close()
+                resume_retry_used = True
+                current_command = list(result.command)
 
-        if child.exitstatus != EXIT_OK and not result.ignored_missing_destroy_snapshot:
-            exit_code = int(child.exitstatus)
+                logger.info(
+                    "Executing the modified Syncoid Command    :    %s",
+                    shlex.join(current_command),
+                )
+                continue
 
-            logger.error("")
-            logger.error("This is the Syncoid exit status: %s", exit_code)
+            child.close()
 
-            die(
-                SynCoidFail=exit_code,
-                SynCoidFailChild=child,
-                logger=logger,
-            )
+            if result.repeated_pattern:
+                die(
+                    child,
+                    "ERROR: The script is repeating itself",
+                    EXIT_REPEATED_PATTERN,
+                    logger=logger,
+                )
+
+            if child.exitstatus is None and child.signalstatus is not None:
+                exit_code = 128 + int(child.signalstatus)
+
+                logger.error("")
+                logger.error(
+                    "Syncoid was terminated by signal: %s",
+                    child.signalstatus,
+                )
+                logger.error("Using exit code: %s", exit_code)
+
+                die(
+                    SynCoidFail=exit_code,
+                    SynCoidFailChild=child,
+                    logger=logger,
+                )
+
+            if (
+                child.exitstatus != EXIT_OK
+                and result.ignored_missing_destroy_snapshot
+            ):
+                logger.warning("")
+                logger.warning(
+                    "Syncoid exited with non-zero status %s, but ignored_missing_destroy_snapshot is True.",
+                    child.exitstatus,
+                )
+                logger.warning(
+                    "Ignoring this because the known no-destroy-snapshot message was seen."
+                )
+                logger.warning("")
+
+            if (
+                child.exitstatus != EXIT_OK
+                and not result.ignored_missing_destroy_snapshot
+            ):
+                exit_code = int(child.exitstatus)
+
+                logger.error("")
+                logger.error("This is the Syncoid exit status: %s", exit_code)
+
+                die(
+                    SynCoidFail=exit_code,
+                    SynCoidFailChild=child,
+                    logger=logger,
+                )
+
+            break
+
+    return summary
