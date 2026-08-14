@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.13`
+Current version: `0.4.14`
 
 ## Disclaimer and liability notice
 
@@ -311,6 +311,8 @@ PassWord = your-secret
 ```
 
 `Ask` avoids storing the secret in the file. Password and MQTT credential values are omitted from normal configuration logging.
+
+When Syncoid/SSH requests either an SSH account password or a private-key passphrase, Syncerate waits up to 3 seconds for the pseudo-terminal to enter no-echo credential-input mode before sending the secret. This avoids sending the credential too early during newer OpenSSH prompt/TTY transitions while preserving the previous send behavior if no-echo is not observed within the timeout. Secret input is excluded from the Pexpect logfile while it is sent.
 
 ## Logging
 

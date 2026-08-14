@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.13`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.14`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.13"
+VERSION = "0.4.14"
 __version__ = VERSION
 ```
 
@@ -433,6 +433,12 @@ The credential is never written to logs.
 
 Converts optional `pexpect` values into safe strings. `None` becomes an empty string so error construction does not fail while handling another failure.
 
+### `send_secret(child, password, output_handle, logging_enabled)`
+
+Handles both SSH account-password prompts and encrypted private-key passphrase prompts through one credential-send path. It temporarily disables the Pexpect logfile, waits up to 3 seconds with `child.waitnoecho(timeout=3)` for the pseudo-terminal to enter no-echo mode, sends the secret with `child.sendline()`, and restores the original output logfile in a `finally` block.
+
+The wait reduces the risk of sending a credential before newer OpenSSH versions have completed their TTY transition. If no-echo is not observed within 3 seconds, Pexpect returns `False` and Syncerate still sends the credential, preserving the previous behavior as a fallback. The `finally` block restores logging even if waiting or sending raises an exception.
+
 ### `close_child_logfile(child, logger=None)`
 
 Flushes and closes the per-child `.out` handle without closing the child itself. It clears `child.logfile` to prevent duplicate closes.
@@ -493,14 +499,14 @@ It monitors these conditions:
 3. **Permission denied** — exits through code `5`.
 4. **Connection timeout** — code `6`.
 5. **Connection refused** — code `7`.
-6. **Passphrase prompt** — temporarily disables logfile echo, sends the configured credential, then restores logging.
+6. **Passphrase prompt** — uses `send_secret()` to wait up to 3 seconds for no-echo mode, send the configured credential without logging it, and restore logging.
 7. **EOF** — returns the real child and current result flags.
 8. **Skipped dataset warning** — code `8`.
 9. **Stale resume state** — returns a request for one retry with `--no-resume`.
 10. **Resume feature unavailable** — logs the exact nonfatal message and waits for Syncoid's real exit status.
 11. **Broken Pipe** — when `RetryBrokenPipe` is enabled, terminates the current attempt and returns `broken_pipe_detected=True`; when disabled, logs the detection and waits for the real child exit status.
 12. **Generic warning** — remains fatal with code `4`, except the separately recognized destroy warning.
-13. **Password prompt** — handled like passphrase.
+13. **Password prompt** — uses the same `send_secret()` path as a private-key passphrase.
 
 Each pattern is limited to five matches. Exceeding the limit sets `repeated_pattern` so the caller can fail safely with code `9`.
 

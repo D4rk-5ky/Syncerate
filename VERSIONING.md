@@ -16,6 +16,19 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.14
+
+Previous version: `0.4.13`.
+
+- Added shared `send_secret()` handling for both SSH account-password prompts and encrypted private-key passphrase prompts.
+- Before sending either credential, Syncerate now calls `child.waitnoecho(timeout=3)` so newer OpenSSH versions have time to finish switching the pseudo-terminal into no-echo credential-input mode.
+- If no-echo is not observed within the 3-second timeout, the credential is still sent, preserving the previous behavior as a fallback.
+- Pexpect output logging is disabled while waiting for and sending the secret, then restored in a `finally` block so credentials are not intentionally written to the `.out` logfile and logging is restored even if the operation raises.
+- Kept `PassWord = No` safety behavior unchanged: an unexpected password/passphrase prompt remains a fatal authentication error instead of waiting indefinitely.
+- Preserved all 0.4.13 Broken Pipe retry, retry-count, retry-wait, dataset continuation, warning-success, Syncoid warning, resume, exit-code, notification, and system-action behavior.
+- Re-exported `send_secret()` from the compatibility `Syncerate.py` entry point alongside the other Syncoid-runner helpers.
+- Updated `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` for the current credential-input behavior and version.
+
 ## 0.4.13
 
 Previous version: `0.4.12`.

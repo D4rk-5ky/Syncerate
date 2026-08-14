@@ -67,6 +67,24 @@ def safe_text(value: Any) -> str:
         return ""
     return str(value)
 
+def send_secret(
+    child: Any,
+    password: str,
+    output_handle: Any,
+    logging_enabled: bool,
+) -> None:
+    """Wait for no-echo credential input, send the secret, and restore logging."""
+
+    if logging_enabled:
+        child.logfile = None
+
+    try:
+        child.waitnoecho(timeout=3)
+        child.sendline(password)
+    finally:
+        if logging_enabled:
+            child.logfile = output_handle
+
 def close_child_logfile(
     child: Any,
     logger: Optional[logging.Logger] = None,
@@ -340,9 +358,6 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSPHRASE:
-            if run_context.logging_enabled:
-                child.logfile = None
-
             if password is None:
                 die(
                     child,
@@ -351,10 +366,12 @@ def ssh_command(
                     logger=logger,
                 )
 
-            child.sendline(password)
-
-            if run_context.logging_enabled:
-                child.logfile = output_handle
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+            )
 
         elif index == PATTERN_EOF:
             close_child_logfile(child, logger)
@@ -476,9 +493,6 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSWORD:
-            if run_context.logging_enabled:
-                child.logfile = None
-
             if password is None:
                 die(
                     child,
@@ -487,10 +501,12 @@ def ssh_command(
                     logger=logger,
                 )
 
-            child.sendline(password)
-
-            if run_context.logging_enabled:
-                child.logfile = output_handle
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+            )
 
     close_child_logfile(child, logger)
     return SyncoidAttemptResult(
