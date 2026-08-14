@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.14`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.15`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.14"
+VERSION = "0.4.15"
 __version__ = VERSION
 ```
 
@@ -124,6 +124,8 @@ Immutable configuration state loaded from one INI file. It replaces former runti
 - `BackupComment`;
 - `PassWordOption`;
 - `SyncoidCommand`;
+- `UseSSHAgent`;
+- `SSHAgentKeyLifetimeSeconds`;
 - `RetryBrokenPipe`;
 - `BrokenPipeRetryCount`;
 - `BrokenPipeRetryWaitSeconds`.
@@ -141,6 +143,8 @@ Fields:
 - `source_list_path` / `destination_list_path`: dataset-list files;
 - `password_option`: `No`, `Ask`, or a literal credential;
 - `syncoid_command`: command template;
+- `use_ssh_agent`: normalized Boolean enabling the isolated per-run agent path;
+- `ssh_agent_key_lifetime_seconds`: positive lifetime for the loaded private-agent identity, defaulting to `3600`;
 - `retry_broken_pipe`: normalized Boolean controlling optional per-dataset retries;
 - `broken_pipe_retry_count`: validated retries available to each individual dataset, defaulting to `1`;
 - `broken_pipe_retry_wait_seconds`: validated whole seconds to wait before each retry, defaulting to `10`.
@@ -174,6 +178,10 @@ One validated replication unit containing:
 - destination-specific Syncoid arguments.
 
 It replaces three parallel source/destination/argument lists, preventing arguments from becoming associated with the wrong dataset.
+
+### `SSHAgentSession`
+
+Mutable per-run state for the isolated OpenSSH agent. It stores only process/socket metadata and never stores the passphrase. Fields include the foreground agent process, private temporary directory, socket path, child environment, selected identity path, `ssh-add` executable, and key lifetime. Keeping this state explicit lets `app.main()` guarantee cleanup around the complete replication list.
 
 ### `ReplicationSummary`
 
@@ -227,7 +235,7 @@ Returns true for:
 YES, TRUE, 1, ON
 ```
 
-Everything else is disabled. This allows `No`, `False`, `0`, and `Off` to safely disable MQTT, Home Assistant, or Broken Pipe retry handling.
+Everything else is disabled. This allows `No`, `False`, `0`, and `Off` to safely disable MQTT, Home Assistant, private SSH-agent mode, or Broken Pipe retry handling.
 
 ### `load_app_config(config_path)`
 
@@ -238,9 +246,10 @@ It:
 - verifies the file can be read;
 - verifies `[Syncerate Config]` exists;
 - reads startup settings;
-- applies fallbacks to optional metadata, `Use_MQTT`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`;
+- applies fallbacks to optional metadata, `Use_MQTT`, `UseSSHAgent`, `SSHAgentKeyLifetimeSeconds`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`;
 - converts `LogDestination = No` into `None`;
 - normalizes an enabled log directory to end with `/`;
+- parses `SSHAgentKeyLifetimeSeconds` as a positive integer and rejects zero/negative values;
 - parses `BrokenPipeRetryCount` and `BrokenPipeRetryWaitSeconds` as integers and rejects negative values;
 - deliberately leaves broker, MQTT credentials, MQTT payload, and HA topic inside `raw_config` for lazy reading.
 
@@ -439,6 +448,62 @@ Handles both SSH account-password prompts and encrypted private-key passphrase p
 
 The wait reduces the risk of sending a credential before newer OpenSSH versions have completed their TTY transition. If no-echo is not observed within 3 seconds, Pexpect returns `False` and Syncerate still sends the credential, preserving the previous behavior as a fallback. The `finally` block restores logging even if waiting or sending raises an exception.
 
+### `extract_ssh_key_path(command_template)`
+
+Parses `SyncoidCommand` with `shlex.split()` and returns the last `--sshkey FILE` or `--sshkey=FILE` value, matching Syncoid's single scalar key option. Private-agent mode deliberately reuses the existing Syncoid key setting instead of introducing a second identity path that could drift out of sync. A malformed `--sshkey` fails before replication starts.
+
+### `start_private_ssh_agent(app_config, logger)`
+
+Creates one isolated agent for the whole Syncerate run. It:
+
+1. requires an existing regular file selected by `--sshkey`;
+2. requires `ssh-agent` and `ssh-add`;
+3. creates a random `syncerate-ssh-agent-*` temporary directory and forces mode `0700`;
+4. discards any inherited `SSH_AUTH_SOCK`, `SSH_AGENT_PID`, and `SSH_ASKPASS`;
+5. forces `SSH_ASKPASS_REQUIRE=never`;
+6. starts `ssh-agent -D` in the foreground with a fixed private socket and configured identity lifetime;
+7. waits up to five seconds for the Unix socket and validates that it is actually a socket;
+8. forces the socket mode to `0600`;
+9. returns `SSHAgentSession` with the environment that only points at this agent.
+
+Running the agent in the foreground gives Syncerate a real child PID it can terminate directly instead of parsing/evaluating shell output. The bounded OpenSSH identity lifetime limits how long an orphaned agent can still authenticate if the parent is terminated without running Python cleanup.
+
+### `add_identity_to_private_agent(session, password, logger)`
+
+Runs `ssh-add -q -t <lifetime> <identity>` under Pexpect **directly**, which is the path verified to accept the encrypted-key passphrase on newer OpenSSH. It matches the complete `Enter passphrase for ...:` prompt, reuses `send_secret()` for no-echo input, never attaches the Syncerate output logfile, and fails instead of repeatedly sending the same rejected secret. Unencrypted keys can load with `PassWord = No`; encrypted keys require a resolved passphrase.
+
+### `private_agent_has_identity(session)`
+
+Checks that the private agent process is alive and runs `ssh-add -l` against only its socket. Return code `0` means an identity is present, `1` means the bounded lifetime expired or the agent is empty, and other statuses are treated as an agent failure. This check avoids blindly assuming a long Syncerate job still has a usable key.
+
+### `ensure_private_agent_identity(session, password, logger)`
+
+Runs before each dataset when agent mode is enabled. If the isolated agent became empty because the configured lifetime expired, it reloads the same identity using direct Pexpect/`ssh-add`. An already-authenticated Syncoid SSH control connection does not need the key to remain loaded, so refresh is only needed before starting the next dataset.
+
+### `harden_syncoid_command_for_agent(syncoid_command, session)`
+
+Prepends Syncoid `--sshoption` values so they become the first command-line values OpenSSH receives:
+
+```text
+ForwardAgent=no
+StrictHostKeyChecking=yes
+IdentitiesOnly=yes
+IdentityAgent=<private socket>
+AddKeysToAgent=no
+BatchMode=yes
+PreferredAuthentications=publickey
+```
+
+These options make private-agent mode deterministic: Syncoid must use only the selected key from Syncerate's isolated agent, cannot forward the agent to the remote host, cannot add more keys, cannot fall back to interactive account-password/passphrase prompts, and cannot automatically accept a new or changed host key. The intended remote host key must already be trusted in the executing user's `known_hosts`.
+
+### `stop_private_ssh_agent(session, logger)`
+
+Best-effort cleanup first asks the private agent to remove all identities with `ssh-add -D`, then terminates the foreground agent, escalates to kill only if it fails to stop within three seconds, and removes the random socket directory. Cleanup errors are logged instead of hiding the original replication/application error.
+
+### `private_ssh_agent(app_config, password, logger)`
+
+A context manager around the complete replication list. When `UseSSHAgent` is disabled it simply yields `None`, preserving legacy behavior. When enabled it starts the isolated agent, loads the key, yields the session to `run_replications()`, and always calls cleanup in `finally` for normal completion and Python exceptions.
+
 ### `close_child_logfile(child, logger=None)`
 
 Flushes and closes the per-child `.out` handle without closing the child itself. It clears `child.logfile` to prevent duplicate closes.
@@ -482,15 +547,15 @@ Returns the username belonging to the effective UID. It falls back to `UID <numb
 
 This confirms that local commands run as the user executing Syncerate. Remote commands remain under the SSH user written in the endpoint.
 
-### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False)`
+### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False, process_env=None)`
 
 Starts one process with:
 
 ```python
-pexpect.spawn(command[0], command[1:], timeout=None, encoding="utf-8")
+pexpect.spawn(command[0], command[1:], timeout=None, encoding="utf-8", env=process_env)
 ```
 
-Using an argv list avoids shell re-parsing.
+Using an argv list avoids shell re-parsing. `process_env` is normally `None`; private-agent mode passes only the isolated agent environment to Syncoid and its nested SSH children.
 
 It monitors these conditions:
 
@@ -512,22 +577,23 @@ Each pattern is limited to five matches. Exceeding the limit sets `repeated_patt
 
 The exact unavailable-resume regular expression accepts source, target, or both machines while requiring Syncoid's explicit “will continue without resume support” wording.
 
-### `run_replications(app_config, run_context, dataset_pairs, password, logger)`
+### `run_replications(app_config, run_context, dataset_pairs, password, logger, ssh_agent_session=None)`
 
 Runs all validated pairs sequentially.
 
 For each pair it:
 
 1. builds the command;
-2. logs extra arguments and argv details;
-3. starts `ssh_command()`;
-4. performs at most one stale-resume retry;
-5. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every retry;
-6. records and skips only that pair after its configured Broken Pipe retry allowance is exhausted;
-7. closes the child;
-8. converts signal termination to `128 + signal`;
-9. preserves the real Syncoid exit code for other failures;
-10. ignores a nonzero code only when the specific missing-destroy-snapshot condition was recognized.
+2. when private-agent mode is active, verifies/reloads the one agent identity and prepends the SSH hardening options;
+3. logs extra arguments and argv details;
+4. starts `ssh_command()` with the isolated agent environment and no nested-Syncoid credential sending in agent mode;
+5. performs at most one stale-resume retry;
+6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every retry;
+7. records and skips only that pair after its configured Broken Pipe retry allowance is exhausted;
+8. closes the child;
+9. converts signal termination to `128 + signal`;
+10. preserves the real Syncoid exit code for other failures;
+11. ignores a nonzero code only when the specific missing-destroy-snapshot condition was recognized.
 
 The function returns `ReplicationSummary`. `broken_pipe_retries_used` is initialized inside the dataset loop, so every dataset pair receives the full configured retry count independently. No transfer is started in parallel, preserving sequential behavior.
 
@@ -568,9 +634,11 @@ Execution order:
 5. log safe startup settings;
 6. load and validate `DatasetPair` objects;
 7. resolve the optional password/passphrase;
-8. run all replications and collect `ReplicationSummary`;
-9. run successful completion actions with the summary;
-10. return `0`.
+8. enter `private_ssh_agent()` (a no-op when disabled);
+9. run all replications and collect `ReplicationSummary`;
+10. leave the agent context so identities/socket/process are cleaned before success notifications;
+11. run successful completion actions with the summary;
+12. return `0`.
 
 Known `SyncerateError` exceptions are logged, optionally mailed, and returned with their original code. Unexpected exceptions are logged with a traceback, optionally mailed as script errors, and return code `2`.
 
@@ -590,7 +658,11 @@ AppConfig dataset paths
     -> datasets.load_dataset_pairs()
     -> list[DatasetPair]
 
-AppConfig + RunContext + DatasetPair + password
+AppConfig + password
+    -> syncoid_runner.private_ssh_agent()
+    -> optional SSHAgentSession
+
+AppConfig + RunContext + DatasetPair + password + optional SSHAgentSession
     -> syncoid_runner.run_replications()
     -> SyncoidAttemptResult per attempt
     -> ReplicationSummary for the full list
