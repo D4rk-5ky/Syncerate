@@ -16,6 +16,23 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.15
+
+Previous version: `0.4.14`.
+
+- Added optional `UseSSHAgent` authentication mode, disabled by default so existing installations retain the legacy Pexpect-through-Syncoid behavior unless explicitly enabled.
+- Added `SSHAgentKeyLifetimeSeconds`, defaulting to `3600`, and require it to be a positive whole number.
+- Private-agent mode reuses the identity already configured in `SyncoidCommand --sshkey`; it fails before replication if agent mode is enabled without a usable key path or without `ssh-agent`/`ssh-add`.
+- Added one isolated foreground `ssh-agent` per Syncerate run with a random mode-`0700` temporary directory, a dedicated mode-`0600` Unix socket, no inherited `SSH_AUTH_SOCK`/`SSH_AGENT_PID`, and no inherited `SSH_ASKPASS`.
+- Added direct Pexpect control of `ssh-add` for encrypted-key passphrase entry. This uses the same direct `Pexpect -> OpenSSH` relationship that was verified to work on Ubuntu 26.04, instead of trying to type the passphrase through the nested `Syncoid -> ssh` process chain.
+- Added a bounded OpenSSH identity lifetime and a pre-dataset identity check. If the private agent becomes empty after the lifetime expires, Syncerate reloads the same key before starting the next dataset.
+- Hardened Syncoid SSH only while private-agent mode is enabled by prepending `ForwardAgent=no`, `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes`, the exact private `IdentityAgent` socket, `AddKeysToAgent=no`, `BatchMode=yes`, and `PreferredAuthentications=publickey`. This prevents agent forwarding, automatic host-key trust, and interactive account-password fallback in agent mode.
+- Private-agent cleanup removes identities with `ssh-add -D`, terminates the foreground agent, escalates to kill only when needed, and removes the temporary socket directory in a context-manager `finally` block.
+- Preserved the existing `send_secret()`/Pexpect prompt path when `UseSSHAgent` is disabled, including `PassWord = No` safety behavior.
+- Preserved Broken Pipe retry, resume, warning, notification, system-action, dataset validation, and exit-code behavior.
+- Restored original project files `_config.yaml` and `_layouts/default.html`, which were missing from the 0.4.14 archive, without changing their contents.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, compatibility exports, and current version metadata.
+
 ## 0.4.14
 
 Previous version: `0.4.13`.

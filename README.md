@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.14`
+Current version: `0.4.15`
 
 ## Disclaimer and liability notice
 
@@ -44,6 +44,7 @@ Required:
 
 Optional:
 
+- OpenSSH `ssh-agent` and `ssh-add` when `UseSSHAgent = Yes`
 - Python `paho-mqtt` when MQTT publishing is enabled
 - a configured local `mail` command when email is enabled
 - Home Assistant when using the supplied MQTT availability example
@@ -52,7 +53,7 @@ On Debian or Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-pexpect sanoid
+sudo apt install python3 python3-pexpect sanoid openssh-client
 ```
 
 Install MQTT support only when needed:
@@ -201,6 +202,8 @@ DestListPath = /absolute/path/to/destination-list
 SyncoidCommand = syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --compress none --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation
 
 PassWord = No
+UseSSHAgent = No
+SSHAgentKeyLifetimeSeconds = 3600
 Mail = No
 DateTime = %Y-%m-%d_%H_%M_%S
 LogDestination = No
@@ -231,7 +234,9 @@ HomeAssistant_Available = home-assistant/syncerate/available
 | `SourceListPath` | Yes | Path to the source dataset list. Relative paths are resolved from the current working directory. |
 | `DestListPath` | Yes | Path to the destination dataset list. Relative paths are resolved from the current working directory. |
 | `SyncoidCommand` | Yes | Syncoid command template containing the exact placeholders `SourceDataSet` and `DestDataSet`. |
-| `PassWord` | Yes | `No`, `Ask`, or a literal SSH password/key passphrase. |
+| `PassWord` | Yes | `No`, `Ask`, or a literal SSH password/key passphrase. With private-agent mode, `Ask` is recommended for encrypted keys so the passphrase is not stored in the configuration. |
+| `UseSSHAgent` | No | Enables an isolated per-run OpenSSH agent with `Yes`, `True`, `1`, or `On`. Requires `--sshkey` in `SyncoidCommand`. Disabled values preserve the legacy Pexpect-through-Syncoid authentication path. |
+| `SSHAgentKeyLifetimeSeconds` | No | Positive whole-number lifetime for the identity loaded into the private agent. Defaults to `3600`. If it expires during a long run, Syncerate reloads it before the next dataset. |
 | `Mail` | Yes | Recipient address, or `No` to disable email. |
 | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
 | `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out` files, or `No` for terminal-only logging. |
@@ -290,29 +295,60 @@ Any other Syncoid options can be included in `SyncoidCommand` or added to indivi
 
 ## Password and passphrase handling
 
-Do not answer password or key-passphrase prompts:
+`PassWord` still supports three modes:
 
 ```ini
 PassWord = No
-```
-
-Use this when SSH keys are unencrypted or authentication is already handled without an interactive prompt. If a prompt appears while this is set to `No`, Syncerate stops with an authentication error instead of waiting indefinitely.
-
-Prompt once when Syncerate starts:
-
-```ini
 PassWord = Ask
-```
-
-Store a literal value in the configuration:
-
-```ini
 PassWord = your-secret
 ```
 
-`Ask` avoids storing the secret in the file. Password and MQTT credential values are omitted from normal configuration logging.
+`Ask` prompts once with `getpass()` when Syncerate starts and is recommended for an encrypted SSH key because the passphrase is not stored in the configuration. Password and MQTT credential values are omitted from normal configuration logging.
 
-When Syncoid/SSH requests either an SSH account password or a private-key passphrase, Syncerate waits up to 3 seconds for the pseudo-terminal to enter no-echo credential-input mode before sending the secret. This avoids sending the credential too early during newer OpenSSH prompt/TTY transitions while preserving the previous send behavior if no-echo is not observed within the timeout. Secret input is excluded from the Pexpect logfile while it is sent.
+### Recommended encrypted-key mode: private ssh-agent
+
+Enable the isolated agent path with:
+
+```ini
+UseSSHAgent = Yes
+SSHAgentKeyLifetimeSeconds = 3600
+PassWord = Ask
+```
+
+The `SyncoidCommand` must contain the identity explicitly, for example:
+
+```ini
+SyncoidCommand = syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --sshkey /root/.ssh/syncerate --no-privilege-elevation
+```
+
+When enabled, Syncerate does not try to type the key passphrase through the nested `Syncoid -> ssh` terminal path. Instead it:
+
+1. creates a random per-run temporary directory with mode `0700`;
+2. starts a new foreground `ssh-agent` bound to a socket inside that directory;
+3. ignores any pre-existing `SSH_AUTH_SOCK` / `SSH_AGENT_PID`;
+4. removes inherited `SSH_ASKPASS` use for the private-agent path;
+5. runs `ssh-add` under Pexpect directly and sends the passphrase only to that direct prompt;
+6. loads only the configured `--sshkey` identity with the configured bounded lifetime;
+7. gives Syncoid only this private agent;
+8. forces Syncoid SSH options `ForwardAgent=no`, `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes`, `AddKeysToAgent=no`, `BatchMode=yes`, `PreferredAuthentications=publickey`, and the exact private `IdentityAgent` socket;
+9. checks that the agent still contains an identity before each dataset and reloads it if the configured lifetime expired;
+10. removes all agent identities, terminates the agent, and removes its temporary socket directory when the run exits normally or raises an application error.
+
+The one-hour default limits the usefulness of an orphaned agent if the Python process is terminated in a way that prevents cleanup. A transfer already authenticated through Syncoid's SSH control connection can continue if the identity lifetime expires; Syncerate reloads the key before the next dataset.
+
+Because private-agent mode forces `BatchMode=yes`, public-key-only authentication, and `StrictHostKeyChecking=yes`, it intentionally does **not** fall back to an SSH account password or automatically trust a new/changed host key. The remote host key must already be present in the executing user's `known_hosts`; verify it once with normal `ssh` before using private-agent mode.
+
+Agent forwarding is explicitly disabled. This is important because a forwarded agent can otherwise allow a compromised remote host to request authentication operations from identities held by the local agent. The private key and passphrase are not intentionally written to Syncerate logs.
+
+### Legacy authentication mode
+
+With:
+
+```ini
+UseSSHAgent = No
+```
+
+Syncerate preserves the existing Pexpect-through-Syncoid behavior. If Syncoid/SSH produces an account-password or private-key-passphrase prompt, Syncerate waits up to 3 seconds for no-echo mode and sends `PassWord`. If `PassWord = No`, an observed credential prompt is treated as an authentication error.
 
 ## Logging
 

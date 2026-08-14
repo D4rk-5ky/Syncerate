@@ -4,7 +4,12 @@ import logging
 import os
 import pwd
 import shlex
+import shutil
+import stat
+import subprocess
+import tempfile
 import time
+from contextlib import contextmanager
 from getpass import getpass
 from typing import Any, Optional, Sequence
 
@@ -18,6 +23,7 @@ from .errors import (
     EXIT_OK,
     EXIT_PASSWORD_DENIED,
     EXIT_REPEATED_PATTERN,
+    EXIT_SCRIPT_ERROR,
     EXIT_WARNING,
     SyncerateError,
 )
@@ -26,6 +32,7 @@ from .models import (
     DatasetPair,
     ReplicationSummary,
     RunContext,
+    SSHAgentSession,
     SyncoidAttemptResult,
 )
 
@@ -84,6 +91,374 @@ def send_secret(
     finally:
         if logging_enabled:
             child.logfile = output_handle
+
+
+def extract_ssh_key_path(command_template: str) -> Optional[str]:
+    """Return the last Syncoid --sshkey value from the configured command."""
+
+    command_parts = shlex.split(command_template)
+    identity_file: Optional[str] = None
+
+    for index, argument in enumerate(command_parts):
+        if argument == "--sshkey":
+            if index + 1 >= len(command_parts):
+                raise SyncerateError(
+                    "UseSSHAgent is enabled, but --sshkey has no identity-file value.",
+                    EXIT_SCRIPT_ERROR,
+                    kind="script",
+                )
+            identity_file = command_parts[index + 1]
+        elif argument.startswith("--sshkey="):
+            identity_file = argument.split("=", 1)[1]
+
+    return identity_file
+
+
+def start_private_ssh_agent(
+    app_config: AppConfig,
+    logger: logging.Logger,
+) -> SSHAgentSession:
+    """Start one isolated foreground ssh-agent with a private per-run socket."""
+
+    identity_file = extract_ssh_key_path(app_config.syncoid_command)
+    if not identity_file:
+        raise SyncerateError(
+            "UseSSHAgent is enabled, but SyncoidCommand does not contain --sshkey.",
+            EXIT_SCRIPT_ERROR,
+            kind="script",
+        )
+
+    identity_file = os.path.expanduser(identity_file)
+    if not os.path.isfile(identity_file):
+        raise SyncerateError(
+            f"UseSSHAgent identity file does not exist or is not a regular file: {identity_file}",
+            EXIT_SCRIPT_ERROR,
+            kind="script",
+        )
+
+    ssh_agent_path = shutil.which("ssh-agent")
+    ssh_add_path = shutil.which("ssh-add")
+    if ssh_agent_path is None or ssh_add_path is None:
+        raise SyncerateError(
+            "UseSSHAgent requires both ssh-agent and ssh-add from OpenSSH.",
+            EXIT_SCRIPT_ERROR,
+            kind="script",
+        )
+
+    temp_directory = tempfile.mkdtemp(prefix="syncerate-ssh-agent-")
+    os.chmod(temp_directory, 0o700)
+    socket_path = os.path.join(temp_directory, "agent.sock")
+
+    environment = os.environ.copy()
+    environment.pop("SSH_AUTH_SOCK", None)
+    environment.pop("SSH_AGENT_PID", None)
+    environment.pop("SSH_ASKPASS", None)
+    environment["SSH_ASKPASS_REQUIRE"] = "never"
+
+    process: Optional[subprocess.Popen[str]] = None
+    try:
+        process = subprocess.Popen(
+            [
+                ssh_agent_path,
+                "-D",
+                "-a",
+                socket_path,
+                "-t",
+                str(app_config.ssh_agent_key_lifetime_seconds),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+            umask=0o077,
+        )
+
+        environment["SSH_AUTH_SOCK"] = socket_path
+        environment["SSH_AGENT_PID"] = str(process.pid)
+
+        deadline = time.monotonic() + 5
+        while not os.path.exists(socket_path):
+            if process.poll() is not None:
+                stderr_text = ""
+                if process.stderr is not None:
+                    stderr_text = process.stderr.read().strip()
+                raise SyncerateError(
+                    "Private ssh-agent exited during startup"
+                    + (f": {stderr_text}" if stderr_text else "."),
+                    EXIT_SCRIPT_ERROR,
+                    kind="script",
+                )
+
+            if time.monotonic() >= deadline:
+                raise SyncerateError(
+                    "Timed out waiting for the private ssh-agent socket.",
+                    EXIT_SCRIPT_ERROR,
+                    kind="script",
+                )
+
+            time.sleep(0.05)
+
+        socket_stat = os.stat(socket_path)
+        if not stat.S_ISSOCK(socket_stat.st_mode):
+            raise SyncerateError(
+                "Private ssh-agent path exists but is not a Unix-domain socket.",
+                EXIT_SCRIPT_ERROR,
+                kind="script",
+            )
+
+        os.chmod(socket_path, 0o600)
+
+        logger.info("")
+        logger.info("----------")
+        logger.info("")
+        logger.info("Started isolated per-run ssh-agent")
+        logger.info("SSH identity file: %s", identity_file)
+        logger.info(
+            "Agent identity lifetime: %s seconds",
+            app_config.ssh_agent_key_lifetime_seconds,
+        )
+        logger.info("Agent forwarding will be forced off for Syncoid SSH commands")
+        logger.info("")
+
+        return SSHAgentSession(
+            process=process,
+            temp_directory=temp_directory,
+            socket_path=socket_path,
+            environment=environment,
+            identity_file=identity_file,
+            ssh_add_path=ssh_add_path,
+            key_lifetime_seconds=app_config.ssh_agent_key_lifetime_seconds,
+        )
+
+    except Exception:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        shutil.rmtree(temp_directory, ignore_errors=True)
+        raise
+
+
+def add_identity_to_private_agent(
+    session: SSHAgentSession,
+    password: Optional[str],
+    logger: logging.Logger,
+) -> None:
+    """Load the configured identity into the isolated agent using direct Pexpect."""
+
+    child = pexpect.spawn(
+        session.ssh_add_path,
+        [
+            "-q",
+            "-t",
+            str(session.key_lifetime_seconds),
+            session.identity_file,
+        ],
+        timeout=30,
+        encoding="utf-8",
+        env=session.environment,
+    )
+
+    passphrase_sent = False
+    prompt_pattern = r"(?i)enter passphrase for [^\r\n]*:\s*"
+    bad_passphrase_pattern = r"(?i)bad passphrase[^\r\n]*"
+
+    while True:
+        index = child.expect(
+            [
+                prompt_pattern,
+                bad_passphrase_pattern,
+                pexpect.EOF,
+                pexpect.TIMEOUT,
+            ]
+        )
+
+        if index == 0:
+            if password is None:
+                child.terminate(force=True)
+                child.close()
+                raise SyncerateError(
+                    "The SSH identity requires a passphrase, but PassWord is set to No.",
+                    EXIT_PASSWORD_DENIED,
+                    kind="script",
+                )
+
+            if passphrase_sent:
+                child.terminate(force=True)
+                child.close()
+                raise SyncerateError(
+                    "ssh-add rejected the configured SSH-key passphrase.",
+                    EXIT_PASSWORD_DENIED,
+                    kind="script",
+                )
+
+            send_secret(child, password, None, False)
+            passphrase_sent = True
+            continue
+
+        if index == 1:
+            child.terminate(force=True)
+            child.close()
+            raise SyncerateError(
+                "ssh-add rejected the configured SSH-key passphrase.",
+                EXIT_PASSWORD_DENIED,
+                kind="script",
+            )
+
+        if index == 2:
+            child.close()
+            if child.exitstatus != EXIT_OK:
+                raise SyncerateError(
+                    "ssh-add could not load the configured SSH identity into the private agent.",
+                    EXIT_PASSWORD_DENIED,
+                    kind="script",
+                )
+
+            logger.info("SSH identity loaded into the isolated agent")
+            return
+
+        child.terminate(force=True)
+        child.close()
+        raise SyncerateError(
+            "Timed out while loading the SSH identity into the private agent.",
+            EXIT_CONNECTION_TIMEOUT,
+            kind="script",
+        )
+
+
+def private_agent_has_identity(session: SSHAgentSession) -> bool:
+    """Return whether the isolated agent currently contains an identity."""
+
+    if session.process.poll() is not None:
+        raise SyncerateError(
+            "The private ssh-agent exited before replication completed.",
+            EXIT_SCRIPT_ERROR,
+            kind="script",
+        )
+
+    try:
+        result = subprocess.run(
+            [session.ssh_add_path, "-l"],
+            env=session.environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SyncerateError(
+            "Timed out while checking the private ssh-agent identity.",
+            EXIT_SCRIPT_ERROR,
+            kind="script",
+        ) from exc
+
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+
+    raise SyncerateError(
+        "ssh-add could not query the private ssh-agent.",
+        EXIT_SCRIPT_ERROR,
+        kind="script",
+    )
+
+
+def ensure_private_agent_identity(
+    session: SSHAgentSession,
+    password: Optional[str],
+    logger: logging.Logger,
+) -> None:
+    """Reload the one private-agent identity if its bounded lifetime expired."""
+
+    if private_agent_has_identity(session):
+        return
+
+    logger.info(
+        "Private ssh-agent identity lifetime expired; reloading the configured key before the next dataset."
+    )
+    add_identity_to_private_agent(session, password, logger)
+
+
+def harden_syncoid_command_for_agent(
+    syncoid_command: list[str],
+    session: SSHAgentSession,
+) -> list[str]:
+    """Force Syncoid SSH to use only the isolated agent key without forwarding."""
+
+    if not syncoid_command:
+        return []
+
+    hardening_options = [
+        "--sshoption=ForwardAgent=no",
+        "--sshoption=StrictHostKeyChecking=yes",
+        "--sshoption=IdentitiesOnly=yes",
+        f"--sshoption=IdentityAgent={session.socket_path}",
+        "--sshoption=AddKeysToAgent=no",
+        "--sshoption=BatchMode=yes",
+        "--sshoption=PreferredAuthentications=publickey",
+    ]
+
+    return [syncoid_command[0], *hardening_options, *syncoid_command[1:]]
+
+
+def stop_private_ssh_agent(
+    session: SSHAgentSession,
+    logger: logging.Logger,
+) -> None:
+    """Delete agent identities, terminate the private agent, and remove its socket."""
+
+    try:
+        subprocess.run(
+            [session.ssh_add_path, "-D"],
+            env=session.environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+    except Exception:
+        logger.warning("Could not explicitly remove identities from the private ssh-agent")
+
+    try:
+        if session.process.poll() is None:
+            session.process.terminate()
+            try:
+                session.process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                session.process.kill()
+                session.process.wait(timeout=3)
+    except Exception:
+        logger.exception("Could not terminate the private ssh-agent cleanly")
+    finally:
+        shutil.rmtree(session.temp_directory, ignore_errors=True)
+        logger.info("Private ssh-agent stopped and its temporary socket directory removed")
+
+
+@contextmanager
+def private_ssh_agent(
+    app_config: AppConfig,
+    password: Optional[str],
+    logger: logging.Logger,
+):
+    """Yield an isolated agent session when UseSSHAgent is enabled."""
+
+    if not app_config.use_ssh_agent:
+        yield None
+        return
+
+    session = start_private_ssh_agent(app_config, logger)
+    try:
+        add_identity_to_private_agent(session, password, logger)
+        yield session
+    finally:
+        stop_private_ssh_agent(session, logger)
 
 def close_child_logfile(
     child: Any,
@@ -230,6 +605,7 @@ def ssh_command(
     run_context: RunContext,
     logger: logging.Logger,
     retry_broken_pipe: bool = False,
+    process_env: Optional[dict[str, str]] = None,
 ) -> SyncoidAttemptResult:
     """Start and monitor one Syncoid process and return explicit flags."""
 
@@ -261,6 +637,7 @@ def ssh_command(
         syncoid_command[1:],
         timeout=None,
         encoding="utf-8",
+        env=process_env,
     )
 
     output_handle = None
@@ -523,6 +900,7 @@ def run_replications(
     dataset_pairs: list[DatasetPair],
     password: Optional[str],
     logger: logging.Logger,
+    ssh_agent_session: Optional[SSHAgentSession] = None,
 ) -> ReplicationSummary:
     """Run all dataset pairs and return any non-fatal run warnings."""
 
@@ -545,6 +923,13 @@ def run_replications(
             logger.info("%s", list(dataset_pair.extra_arguments))
             logger.info("")
 
+        if ssh_agent_session is not None:
+            ensure_private_agent_identity(ssh_agent_session, password, logger)
+            syncoid_execute = harden_syncoid_command_for_agent(
+                syncoid_execute,
+                ssh_agent_session,
+            )
+
         logger.info(
             "Executing the altered Syncoid Command    :   %s",
             shlex.join(syncoid_execute),
@@ -560,10 +945,15 @@ def run_replications(
         while True:
             result = ssh_command(
                 current_command,
-                password,
+                None if ssh_agent_session is not None else password,
                 run_context,
                 logger,
                 retry_broken_pipe=app_config.retry_broken_pipe,
+                process_env=(
+                    ssh_agent_session.environment
+                    if ssh_agent_session is not None
+                    else None
+                ),
             )
             child = result.child
 

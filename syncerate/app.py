@@ -15,7 +15,7 @@ from .logging_setup import (
 )
 from .models import AppConfig, ReplicationSummary, RunContext
 from .notifications import MailTo, send_error_mail, send_mqtt_messages
-from .syncoid_runner import resolve_password, run_replications
+from .syncoid_runner import private_ssh_agent, resolve_password, run_replications
 from .system_actions import SystemAction
 
 
@@ -182,13 +182,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         dataset_pairs = load_dataset_pairs(app_config, logger)
         password = resolve_password(app_config, logger)
 
-        replication_summary = run_replications(
-            app_config,
-            run_context,
-            dataset_pairs,
-            password,
-            logger,
-        )
+        with private_ssh_agent(app_config, password, logger) as ssh_agent_session:
+            replication_summary = run_replications(
+                app_config,
+                run_context,
+                dataset_pairs,
+                password,
+                logger,
+                ssh_agent_session=ssh_agent_session,
+            )
         successfull_run(
             app_config,
             run_context,

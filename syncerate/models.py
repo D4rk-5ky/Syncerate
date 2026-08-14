@@ -22,6 +22,8 @@ class AppConfig:
     destination_list_path: str
     password_option: str
     syncoid_command: str
+    use_ssh_agent: bool = False
+    ssh_agent_key_lifetime_seconds: int = 3600
     retry_broken_pipe: bool = False
     broken_pipe_retry_count: int = 1
     broken_pipe_retry_wait_seconds: int = 10
@@ -70,6 +72,19 @@ class SyncoidAttemptResult:
     retry_without_resume: bool = False
     ignored_missing_destroy_snapshot: bool = False
     broken_pipe_detected: bool = False
+
+
+@dataclass
+class SSHAgentSession:
+    """One isolated per-run ssh-agent and the environment used by Syncoid."""
+
+    process: Any
+    temp_directory: str
+    socket_path: str
+    environment: dict[str, str]
+    identity_file: str
+    ssh_add_path: str
+    key_lifetime_seconds: int
 
 
 @dataclass
