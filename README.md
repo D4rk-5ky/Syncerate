@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.17`
+Current version: `0.4.18`
 
 ## Disclaimer and liability notice
 
@@ -408,6 +408,20 @@ Syncerate Succsful - WARNING BROKEN PIPE
 
 The email body lists the skipped source and destination dataset pairs.
 
+## Interrupted receive recovery
+
+Syncerate lets Syncoid own ZFS resumable-receive recovery. If Syncoid reports that the source snapshot used by an interrupted `zfs receive -s` no longer exists, Syncerate does **not** stop the Syncoid process and does not modify the command to bypass resume handling.
+
+During this recovery Syncerate logs the stages explicitly:
+
+1. the resume source snapshot is no longer available;
+2. Syncoid is being allowed to run its built-in stale receive-state recovery;
+3. when Syncoid reports `resetting partially receive state because the snapshot source no longer exists`, Syncerate logs that Syncoid is resetting the stale partially received stream;
+4. a `Broken pipe` produced by the failed resume pipeline is treated as part of that recovery and does not trigger the normal Broken Pipe retry policy;
+5. when Syncoid reports a new `INFO: Sending incremental` or `INFO: Sending full`, Syncerate logs that recovery completed and restores normal Broken Pipe handling for the replacement transfer.
+
+This keeps ownership of the receive token and reset operation inside Syncoid instead of duplicating ZFS receive-state manipulation in Syncerate. If Syncoid cannot recover and exits nonzero, Syncerate preserves the real Syncoid failure handling.
+
 ## Optional Broken Pipe retry
 
 The feature is disabled by default:
@@ -428,7 +442,7 @@ BrokenPipeRetryWaitSeconds = 10
 
 `BrokenPipeRetryWaitSeconds` is the number of whole seconds to wait before each retry. It defaults to `10` when omitted, and `0` retries immediately.
 
-When enabled, Syncerate watches Syncoid output case-insensitively for the text `Broken pipe` and applies this policy independently to every dataset pair:
+When enabled, Syncerate watches Syncoid output case-insensitively for the text `Broken pipe` and applies this policy independently to every dataset pair. The exception is a Broken Pipe emitted while Syncoid is actively resetting a stale interrupted receive; that expected recovery symptom is logged and ignored until Syncoid starts the replacement send. For ordinary Broken Pipe events:
 
 1. Broken Pipe stops only the current Syncoid attempt.
 2. If that dataset still has retries available, Syncerate waits for `BrokenPipeRetryWaitSeconds` and retries the same dataset with the same command.
@@ -633,7 +647,7 @@ Syncerate monitors Syncoid and SSH output for:
 - connection timeout;
 - connection refusal;
 - skipped datasets;
-- an unusable interrupted-transfer resume state, followed by one retry using `--no-resume`;
+- an interrupted receive whose original resume snapshot no longer exists, allowing Syncoid to reset the stale receive state and start a valid replacement send;
 - unavailable ZFS resume support where Syncoid continues without it;
 - repeated matched prompts or messages;
 - optional per-dataset retries, up to `BrokenPipeRetryCount`, after the configured `BrokenPipeRetryWaitSeconds`, when `Broken pipe` appears;
@@ -641,7 +655,7 @@ Syncerate monitors Syncoid and SSH output for:
 - generic warnings;
 - the recognized missing destroy-snapshot condition.
 
-Generic warnings remain fatal. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
+Generic warnings remain fatal except for the specifically recognized Syncoid stale-receive reset warning and the exact unavailable-resume message. During stale receive recovery, Syncerate waits for Syncoid to reset the receive state and suppresses only the Broken Pipe associated with that failed resume pipeline. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Ordinary Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
 
 ## Exit codes
 
