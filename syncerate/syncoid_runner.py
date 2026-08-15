@@ -611,7 +611,8 @@ def ssh_command(
 
     repeated_pattern = False
     ignored_missing_destroy_snapshot = False
-    retry_without_resume = False
+    stale_resume_recovery_active = False
+    stale_resume_reset_announced = False
     broken_pipe_detected = False
     modified_command = list(syncoid_command)
 
@@ -654,11 +655,13 @@ def ssh_command(
     PATTERN_PASSPHRASE = 5
     PATTERN_EOF = 6
     PATTERN_WARN_SKIPPING = 7
-    PATTERN_NO_RESUME = 8
-    PATTERN_RESUME_UNAVAILABLE = 9
-    PATTERN_BROKEN_PIPE = 10
-    PATTERN_GENERIC_WARN = 11
-    PATTERN_PASSWORD = 12
+    PATTERN_STALE_RESUME_SOURCE = 8
+    PATTERN_RESUME_RESET = 9
+    PATTERN_FRESH_SEND = 10
+    PATTERN_RESUME_UNAVAILABLE = 11
+    PATTERN_BROKEN_PIPE = 12
+    PATTERN_GENERIC_WARN = 13
+    PATTERN_PASSWORD = 14
 
     patterns = [
         "Are you sure you want to continue connecting",
@@ -669,7 +672,9 @@ def ssh_command(
         "passphrase",
         pexpect.EOF,
         "WARN Skipping dataset",
-        "used in the initial send no longer exists",
+        r"(?i)used in the initial send no longer exists",
+        r"(?i)(?:WARN|WARNING): resetting partially receive state because the snapshot source no longer exists",
+        r"(?i)INFO: Sending (?:incremental|full)",
         r"WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.",
         r"(?i)broken pipe",
         "WARN|WARNING",
@@ -756,7 +761,6 @@ def ssh_command(
                 child=child,
                 command=modified_command,
                 repeated_pattern=repeated_pattern,
-                retry_without_resume=retry_without_resume,
                 ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
             )
 
@@ -768,34 +772,50 @@ def ssh_command(
                 logger=logger,
             )
 
-        elif index == PATTERN_NO_RESUME:
-            retry_without_resume = True
+        elif index == PATTERN_STALE_RESUME_SOURCE:
+            stale_resume_recovery_active = True
+            stale_resume_reset_announced = False
 
-            logger.info("")
-            logger.info("----------")
-            logger.info("")
-            logger.info("The last transfer failed and the resume snapshot no longer exists.")
-            logger.info("Gonna rerun the command with --no-resume.")
-            logger.info("")
-
-            if "--no-resume" not in syncoid_command:
-                modified_command = syncoid_command + ["--no-resume"]
-            else:
-                modified_command = list(syncoid_command)
-
-            logger.info("The modified command reads : %s", shlex.join(modified_command))
-            logger.info("")
-            logger.info("----------")
-            logger.info("")
-
-            close_child_logfile(child, logger)
-            return SyncoidAttemptResult(
-                child=child,
-                command=modified_command,
-                repeated_pattern=repeated_pattern,
-                retry_without_resume=retry_without_resume,
-                ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+            logger.warning("")
+            logger.warning("----------")
+            logger.warning("")
+            logger.warning(
+                "Syncoid reported that the source snapshot required by the interrupted receive no longer exists."
             )
+            logger.warning(
+                "Allowing Syncoid to finish its built-in stale receive-state recovery instead of interrupting it."
+            )
+            logger.warning(
+                "Syncerate will keep the original Syncoid command unchanged and wait for Syncoid to reset the partial receive state itself."
+            )
+            logger.warning("")
+            continue
+
+        elif index == PATTERN_RESUME_RESET:
+            stale_resume_recovery_active = True
+            stale_resume_reset_announced = True
+
+            logger.warning("")
+            logger.warning("Syncoid is resetting the stale partially received ZFS stream.")
+            logger.warning(
+                "The old resumable receive token points to a source snapshot that no longer exists."
+            )
+            logger.warning(
+                "Waiting for Syncoid to clear the receive state and start a fresh valid send."
+            )
+            logger.warning("")
+            continue
+
+        elif index == PATTERN_FRESH_SEND:
+            if stale_resume_recovery_active:
+                logger.info("")
+                logger.info(
+                    "Syncoid stale receive-state recovery completed; a new valid send is starting."
+                )
+                logger.info("")
+                stale_resume_recovery_active = False
+                stale_resume_reset_announced = False
+            continue
 
         elif index == PATTERN_RESUME_UNAVAILABLE:
             logger.warning("")
@@ -809,6 +829,22 @@ def ssh_command(
             continue
 
         elif index == PATTERN_BROKEN_PIPE:
+            if stale_resume_recovery_active:
+                logger.warning("")
+                logger.warning(
+                    "Broken Pipe occurred while Syncoid is recovering a stale interrupted receive."
+                )
+                if stale_resume_reset_announced:
+                    logger.warning(
+                        "This is treated as part of Syncoid's reset sequence; Syncerate will keep waiting for the replacement send."
+                    )
+                else:
+                    logger.warning(
+                        "This is an expected secondary symptom of the failed resume attempt; Syncerate will keep waiting for Syncoid's reset."
+                    )
+                logger.warning("")
+                continue
+
             if not retry_broken_pipe:
                 logger.warning("")
                 logger.warning(
@@ -841,7 +877,6 @@ def ssh_command(
                 child=child,
                 command=modified_command,
                 repeated_pattern=repeated_pattern,
-                retry_without_resume=retry_without_resume,
                 ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
                 broken_pipe_detected=broken_pipe_detected,
             )
@@ -890,7 +925,6 @@ def ssh_command(
         child=child,
         command=modified_command,
         repeated_pattern=repeated_pattern,
-        retry_without_resume=retry_without_resume,
         ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
     )
 
@@ -939,7 +973,6 @@ def run_replications(
         log_command_debug(syncoid_execute, logger)
 
         current_command = list(syncoid_execute)
-        resume_retry_used = False
         broken_pipe_retries_used = 0
 
         while True:
@@ -1002,16 +1035,6 @@ def run_replications(
                 logger.warning("")
                 break
 
-            if result.retry_without_resume and not resume_retry_used:
-                child.close()
-                resume_retry_used = True
-                current_command = list(result.command)
-
-                logger.info(
-                    "Executing the modified Syncoid Command    :    %s",
-                    shlex.join(current_command),
-                )
-                continue
 
             child.close()
 

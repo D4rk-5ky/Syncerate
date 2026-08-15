@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.17`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.18`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.17"
+VERSION = "0.4.18"
 __version__ = VERSION
 ```
 
@@ -194,11 +194,10 @@ Carries nonfatal conditions that apply to the completed dataset list. Its `broke
 Returned by one monitored Syncoid attempt. It contains:
 
 - the `pexpect` child;
-- original or modified command;
+- the exact command used for the attempt;
 - repeated-pattern status;
-- whether one retry with `--no-resume` is requested;
 - whether the known missing-destroy-snapshot condition was observed;
-- whether this attempt stopped after detecting Broken Pipe.
+- whether this attempt stopped after detecting an ordinary Broken Pipe.
 
 It replaces former mutable control globals.
 
@@ -592,11 +591,13 @@ It monitors these conditions:
 6. **Passphrase prompt** — uses `send_secret()` to wait up to 3 seconds for no-echo mode, send the configured credential without logging it, and restore logging.
 7. **EOF** — returns the real child and current result flags.
 8. **Skipped dataset warning** — code `8`.
-9. **Stale resume state** — returns a request for one retry with `--no-resume`.
-10. **Resume feature unavailable** — logs the exact nonfatal message and waits for Syncoid's real exit status.
-11. **Broken Pipe** — when `RetryBrokenPipe` is enabled, terminates the current attempt and returns `broken_pipe_detected=True`; when disabled, logs the detection and waits for the real child exit status.
-12. **Generic warning** — remains fatal with code `4`, except the separately recognized destroy warning.
-13. **Password prompt** — uses the same `send_secret()` path as a private-key passphrase.
+9. **Missing stale-resume source snapshot** — marks Syncoid stale-receive recovery active, logs that Syncoid will be allowed to repair its own receive state, and keeps the same process running. Syncerate does not alter the Syncoid command.
+10. **Syncoid receive-state reset warning** — recognizes the specific `resetting partially receive state because the snapshot source no longer exists` warning as nonfatal and reports that Syncoid is resetting the stale stream.
+11. **Fresh replacement send** — when recovery is active, `INFO: Sending incremental` or `INFO: Sending full` marks recovery complete and restores ordinary Broken Pipe handling.
+12. **Resume feature unavailable** — logs the exact nonfatal message and waits for Syncoid's real exit status.
+13. **Broken Pipe** — during stale receive recovery it is logged and ignored as an expected symptom of the failed resume pipeline; otherwise, when `RetryBrokenPipe` is enabled, it terminates the current attempt and returns `broken_pipe_detected=True`, and when disabled it waits for the real child exit status.
+14. **Generic warning** — remains fatal with code `4`, except the separately recognized destroy warning and stale-receive reset warning.
+15. **Password prompt** — uses the same `send_secret()` path as a private-key passphrase.
 
 Each pattern is limited to five matches. Exceeding the limit sets `repeated_pattern` so the caller can fail safely with code `9`.
 
@@ -612,9 +613,9 @@ For each pair it:
 2. when private-agent mode is active, verifies/reloads the one agent identity and prepends the SSH hardening options;
 3. logs extra arguments and argv details;
 4. starts `ssh_command()` with the isolated agent environment and no nested-Syncoid credential sending in agent mode;
-5. performs at most one stale-resume retry;
-6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every retry;
-7. records and skips only that pair after its configured Broken Pipe retry allowance is exhausted;
+5. leaves stale interrupted-receive recovery inside the same Syncoid process instead of constructing a second resume-bypass command;
+6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every ordinary Broken Pipe retry;
+7. records and skips only that pair after its configured ordinary Broken Pipe retry allowance is exhausted;
 8. closes the child;
 9. converts signal termination to `128 + signal`;
 10. preserves the real Syncoid exit code for other failures;

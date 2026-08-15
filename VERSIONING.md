@@ -16,6 +16,20 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.18
+
+Previous version: `0.4.17`.
+
+- Removed Syncerate's automatic stale-resume retry that modified the Syncoid command with `--no-resume`.
+- When Syncoid reports that the source snapshot used by an interrupted resumable receive no longer exists, Syncerate now keeps the same Syncoid process alive so Syncoid can run its own receive-state recovery.
+- Added dedicated recognition of Syncoid's `resetting partially receive state because the snapshot source no longer exists` warning and report it to terminal/log as a nonfatal recovery action instead of treating it as a generic fatal warning.
+- Added explicit recovery-state tracking so `Broken pipe` from the failed resume pipeline is logged as an expected secondary symptom and does not trigger `RetryBrokenPipe` while Syncoid is resetting the stale receive state.
+- Added recognition of the replacement `INFO: Sending incremental` / `INFO: Sending full` stage; once it appears, Syncerate logs that stale receive recovery completed and restores normal Broken Pipe handling for the new transfer.
+- Removed the obsolete `retry_without_resume` field and one-time resume-retry control flow from `SyncoidAttemptResult` and `run_replications()`.
+- Corrected the private-agent command hardening call to pass the `SSHAgentSession` exactly once; this was found by release verification and avoids a runtime argument-count failure when `UseSSHAgent = Yes`.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, and version metadata for the current recovery behavior.
+- Preserved dataset validation, SSH authentication modes, private-agent cleanup, normal Broken Pipe retry/exhaustion behavior, missing-destroy-snapshot handling, notifications, MQTT JSON security behavior, system action, and existing exit-code handling.
+
 ## 0.4.17
 
 Previous version: `0.4.16`.

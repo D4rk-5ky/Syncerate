@@ -70,7 +70,6 @@ class SyncoidAttemptResult:
     child: Any
     command: list[str]
     repeated_pattern: bool = False
-    retry_without_resume: bool = False
     ignored_missing_destroy_snapshot: bool = False
     broken_pipe_detected: bool = False
 
