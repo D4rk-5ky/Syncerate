@@ -1,8 +1,8 @@
 # Syncerate private configuration
 *.cfg
 *.conf
-sourcelist*
-destlist*
+config/ourcelist*
+config/destlist*
 
 # Keep example configurations
 !*.example.cfg
