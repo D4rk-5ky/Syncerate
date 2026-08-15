@@ -136,12 +136,16 @@ def log_startup_configuration(
             if option in ["use_homeassistant", "homeassistant_available"]:
                 continue
 
-            if not app_config.use_mqtt and option in [
-                "broker_address",
-                "broker_port",
-                "mqtt_topic",
-                "mqtt_message",
-            ]:
+            if (
+                not (app_config.use_mqtt or app_config.mqtt_json_status)
+                and option in ["broker_address", "broker_port"]
+            ):
+                continue
+
+            if not app_config.use_mqtt and option in ["mqtt_topic", "mqtt_message"]:
+                continue
+
+            if not app_config.mqtt_json_status and option == "mqtt_json_topic":
                 continue
 
             value = app_config.raw_config.get(section, option)

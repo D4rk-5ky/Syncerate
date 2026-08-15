@@ -16,6 +16,26 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.20
+
+Previous version: `0.4.19`.
+
+- Separated structured JSON MQTT status from the original retained MQTT topic by adding dedicated `mqtt_json_topic`.
+- JSON status is now an independent channel controlled by `MQTT_JSON_Status`; it may run alongside the original MQTT/Home Assistant outputs or by itself while `Use_MQTT = No`.
+- Every JSON success/failure publish hard-codes `retain=False`; there is no JSON retain configuration option.
+- Preserved the original `Use_MQTT` behavior unchanged: successful runs publish the configured `mqtt_message` retained to `mqtt_topic`.
+- Preserved the original `Use_HomeAssistant` behavior unchanged: when enabled with legacy MQTT, successful runs additionally publish retained payload `online` to `HomeAssistant_Available`.
+- Fatal failure reporting publishes only to the independent JSON channel; the historical success-only MQTT and Home Assistant availability signals are not emitted as failure reports.
+- Added validation preventing an enabled JSON topic from matching the retained legacy `mqtt_topic` or retained `HomeAssistant_Available` topic.
+- Updated the supplied Home Assistant JSON automation to listen on dedicated `/json-status` topics so it cannot consume the retained legacy channels by mistake.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, and version metadata for the independent MQTT channel behavior.
+- Preserved replication, stale-resume recovery, Broken Pipe handling, SSH authentication, email, system action, dataset validation, and existing exit-code behavior.
+
+## 0.4.19
+
+- Updated `.gitignore` to ignore private `*.cfg` / `*.conf` files, configured source/destination list patterns, runtime logs/output, Python/build caches, temporary files, and local editor metadata while preserving the shipped example configuration.
+- No Syncerate runtime behavior changed in this release.
+
 ## 0.4.18
 
 Previous version: `0.4.17`.

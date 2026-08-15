@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.18`
+Current version: `0.4.20`
 
 ## Disclaimer and liability notice
 
@@ -214,7 +214,6 @@ BrokenPipeRetryCount = 1
 BrokenPipeRetryWaitSeconds = 10
 
 Use_MQTT = No
-MQTT_JSON_Status = No
 broker_address = mqtt.example.com
 broker_port = 1883
 mqtt_username =
@@ -224,6 +223,9 @@ mqtt_message = ON
 
 Use_HomeAssistant = No
 HomeAssistant_Available = home-assistant/syncerate/available
+
+MQTT_JSON_Status = No
+mqtt_json_topic = home-assistant/syncerate/json-status
 ```
 
 ## Configuration options
@@ -245,16 +247,17 @@ HomeAssistant_Available = home-assistant/syncerate/available
 | `RetryBrokenPipe` | No | Enables dataset-level Broken Pipe retry handling. Each dataset receives its own retry allowance. When that allowance is exhausted, only that dataset is skipped, the remaining list continues, and the completed run records a successful warning. Missing or disabled values preserve normal Syncoid failure handling. |
 | `BrokenPipeRetryCount` | No | Number of retries allowed for each individual dataset after its initial attempt. Defaults to `1` when omitted. The count resets for every dataset pair. Use `0` to skip an affected dataset immediately after its first Broken Pipe. Negative values and non-integers are rejected. |
 | `BrokenPipeRetryWaitSeconds` | No | Whole number of seconds to wait before each Broken Pipe retry. Defaults to `10` when omitted. Use `0` to retry immediately. Negative values and non-integers are rejected as configuration errors. |
-| `Use_MQTT` | No | Enables MQTT with `Yes`, `True`, `1`, or `On`. Missing, `No`, `False`, `0`, or `Off` disables it. |
-| `MQTT_JSON_Status` | No | When enabled, publishes a non-retained JSON run-status payload to `mqtt_topic` on successful replication completion and on fatal failures after configuration has loaded. When disabled, preserves the legacy retained `mqtt_message` success-only behavior. |
-| `broker_address` | When MQTT is enabled | MQTT broker hostname or IP address. |
-| `broker_port` | When MQTT is enabled | MQTT broker TCP port as an integer, commonly `1883`. |
-| `mqtt_username` | No | MQTT username. Leave empty when authentication is not used. |
-| `mqtt_password` | No | MQTT password. Leave empty when authentication is not used. |
-| `mqtt_topic` | When MQTT is enabled | Topic that receives the legacy success payload or the JSON success/failure status payload. |
-| `mqtt_message` | When MQTT is enabled and `MQTT_JSON_Status = No` | Legacy retained payload published after successful replication. Ignored in JSON status mode. |
-| `Use_HomeAssistant` | No | Enables the optional HA availability message with `Yes`, `True`, `1`, or `On`. It is checked only when MQTT is enabled. |
-| `HomeAssistant_Available` | When MQTT and HA are enabled | Topic that receives retained payload `online`. |
+| `Use_MQTT` | No | Enables the original success-only MQTT output with `Yes`, `True`, `1`, or `On`. On success, `mqtt_message` is published retained to `mqtt_topic`. This legacy behavior is independent from JSON status. |
+| `broker_address` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker hostname or IP address shared by the enabled MQTT outputs. |
+| `broker_port` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker TCP port as an integer, commonly `1883`. |
+| `mqtt_username` | No | MQTT username shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
+| `mqtt_password` | No | MQTT password shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
+| `mqtt_topic` | When `Use_MQTT = Yes` | Original success-only MQTT topic. The configured `mqtt_message` is always retained here. JSON is never published to this topic. |
+| `mqtt_message` | When `Use_MQTT = Yes` | Original retained success-only payload. Fatal run failures do not publish this legacy message. |
+| `Use_HomeAssistant` | No | Preserves the original Home Assistant availability integration. When both this and `Use_MQTT` are enabled, retained payload `online` is additionally published to `HomeAssistant_Available`. |
+| `HomeAssistant_Available` | When `Use_MQTT = Yes` and HA integration is enabled | Original Home Assistant availability topic. Payload `online` remains retained. |
+| `MQTT_JSON_Status` | No | Independently enables structured success/failure JSON status. It may run together with the old MQTT/HA outputs or by itself while `Use_MQTT = No`. JSON is always non-retained. |
+| `mqtt_json_topic` | When `MQTT_JSON_Status = Yes` | Dedicated JSON-only topic. It must differ from an enabled `mqtt_topic` and `HomeAssistant_Available`; every JSON publish hard-codes `retain = false`. |
 
 Although some integrations are disabled with `No`, the required keys should remain in the configuration so startup validation succeeds.
 
@@ -455,21 +458,19 @@ The retry count is never shared between datasets. This option does not retry aut
 
 ## MQTT notifications
 
-Disable MQTT:
+Syncerate has two independent MQTT paths:
 
-```ini
-Use_MQTT = No
-```
+- the original retained success/availability behavior controlled by `Use_MQTT` and `Use_HomeAssistant`;
+- the JSON success/failure event channel controlled by `MQTT_JSON_Status`.
 
-When disabled, `paho-mqtt` is not imported and MQTT or Home Assistant publishing is skipped.
+They share broker credentials, but the JSON channel uses its own topic and never changes the old MQTT/HA behavior.
 
-### Legacy retained success payload
+### Original retained MQTT behavior
 
-This preserves the original behavior:
+Enable the original success-only message:
 
 ```ini
 Use_MQTT = Yes
-MQTT_JSON_Status = No
 broker_address = 192.0.2.30
 broker_port = 1883
 mqtt_username = syncerate
@@ -478,25 +479,52 @@ mqtt_topic = home-assistant/syncerate/command
 mqtt_message = ON
 ```
 
-After replication completes successfully, Syncerate publishes the configured `mqtt_message` with retain enabled. Fatal run failures do not publish a legacy failure payload.
+After replication completes successfully, Syncerate publishes `mqtt_message` to `mqtt_topic` with **retain enabled**, exactly as before. Fatal failures do not publish this legacy success message.
 
-### JSON success/failure status for Home Assistant
+To add the original Home Assistant availability integration:
 
-Enable structured status messages:
+```ini
+Use_MQTT = Yes
+Use_HomeAssistant = Yes
+HomeAssistant_Available = home-assistant/syncerate/available
+```
+
+On a successful run, Syncerate additionally publishes retained payload `online` to `HomeAssistant_Available`. This old HA behavior remains tied to `Use_MQTT` and is unchanged.
+
+A matching example entity configuration is supplied in:
+
+```text
+config/HomeAssistant-Configuration-For-MQTT.yaml
+```
+
+### Independent JSON success/failure status
+
+JSON can be enabled **in addition to** the old outputs:
 
 ```ini
 Use_MQTT = Yes
 MQTT_JSON_Status = Yes
-broker_address = 192.0.2.30
-broker_port = 1883
-mqtt_username = syncerate
-mqtt_password = secret
-mqtt_topic = homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/status
+
+mqtt_topic = home-assistant/syncerate/command
+mqtt_message = ON
+mqtt_json_topic = homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/json-status
 ```
 
-`mqtt_message` is ignored in this mode. Syncerate publishes JSON with retain disabled so a stale success cannot retrigger a Home Assistant automation after a reconnect or Home Assistant restart.
+Or JSON can run by itself while the old MQTT output is disabled:
 
-Successful example:
+```ini
+Use_MQTT = No
+MQTT_JSON_Status = Yes
+broker_address = 192.0.2.30
+broker_port = 1883
+mqtt_json_topic = homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/json-status
+```
+
+The JSON topic is deliberately separate from the retained legacy topics. When both old MQTT and JSON are enabled, `mqtt_json_topic` must differ from `mqtt_topic`; when the old Home Assistant availability integration is also enabled, it must differ from `HomeAssistant_Available` as well.
+
+**Every JSON publish uses `retain = false`. There is no configuration option that can enable retain for JSON.** This prevents Syncerate from creating a retained JSON success/failure event that Home Assistant could replay on reconnect. Use a new dedicated topic such as a `/json-status` topic so it also does not inherit the meaning of an older retained legacy topic.
+
+Successful JSON example:
 
 ```json
 {
@@ -513,7 +541,7 @@ Successful example:
 }
 ```
 
-Failure example:
+Failure JSON example:
 
 ```json
 {
@@ -530,11 +558,11 @@ Failure example:
 }
 ```
 
-`title` is taken from `BackupTitle`; `name` carries the same value as a compatibility alias for existing automations. The configured `SyncoidCommand` is deliberately not included in the JSON payload.
+`title` comes from `BackupTitle`; `name` carries the same value as a compatibility alias. The configured `SyncoidCommand` is deliberately excluded from JSON so SSH endpoints, key paths, and command options are not exposed through the status event.
 
 The `stderr` field is bounded to the last 4000 characters of relevant captured child/Syncoid output. A Broken Pipe warning-success remains `status: success` and sets `warning: true` with affected source/destination pairs in `skipped_datasets`.
 
-Failure JSON is best-effort and never replaces the original Syncerate exit code. If MQTT itself is the failing component, Syncerate cannot report that failure over the same MQTT channel. Errors that occur before the configuration has been loaded also cannot be published.
+Failure JSON is best-effort and never replaces the original Syncerate exit code. If MQTT itself is the failing component, Syncerate does not recursively try to report that MQTT failure over MQTT. Errors before configuration is loaded cannot be published.
 
 For a broker without username authentication, leave both credential fields empty:
 
@@ -549,33 +577,7 @@ A matching automation with explicit **success**, **failure**, and default **unkn
 config/HomeAssistant-Automation-For-MQTT-JSON.yaml
 ```
 
-## Home Assistant availability message
-
-Home Assistant publishing requires MQTT to be enabled.
-
-Disable it:
-
-```ini
-Use_HomeAssistant = No
-```
-
-Enable it:
-
-```ini
-Use_MQTT = Yes
-Use_HomeAssistant = Yes
-HomeAssistant_Available = home-assistant/syncerate/available
-```
-
-Syncerate first publishes retained payload `online` to `HomeAssistant_Available`, then publishes the configured legacy or JSON status message.
-
-A matching example entity configuration is supplied in:
-
-```text
-config/HomeAssistant-Configuration-For-MQTT.yaml
-```
-
-The JSON-status automation example and entity configuration in `config/` are reference YAML files and are not loaded by Syncerate. The PNG files are optional Home Assistant setup references.
+The automation example listens only to the dedicated JSON topics and therefore does not consume the retained legacy MQTT or availability messages.
 
 ## Successful-run system action
 
