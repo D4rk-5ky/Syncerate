@@ -1,0 +1,127 @@
+alias: Timeshift BTRFS Sync - MQTT - All Servers
+description: >-
+  Handle timeshift-btrfs-sync success, failure, or unknown reports from all
+  configured servers independently over MQTT JSON status messages.
+triggers:
+  - trigger: mqtt
+    id: zotac
+    topic: homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/status
+  - trigger: mqtt
+    id: kubuntu
+    topic: homeassistant/timeshift-btrfs-sync/kubuntu-timeshift/status
+  - trigger: mqtt
+    id: ubuntu
+    topic: homeassistant/timeshift-btrfs-sync/ubuntu-timeshift/status
+  - trigger: mqtt
+    id: msi_z170
+    topic: homeassistant/timeshift-btrfs-sync/MSI-Z170-Gaming-M7/status
+  - trigger: mqtt
+    id: msi_z87
+    topic: homeassistant/timeshift-btrfs-sync/msi-z87-g43-gaming-timeshift/status
+conditions: []
+actions:
+  - variables:
+      mqtt_status: >-
+        {% if trigger.payload_json is defined %}
+          {{ trigger.payload_json.status | default('unknown') | string | lower }}
+        {% else %}
+          unknown
+        {% endif %}
+      report_title: >-
+        {% if trigger.payload_json is defined %}
+          {{ trigger.payload_json.title
+             | default(trigger.payload_json.name
+             | default(trigger.payload_json.job | default('Syncerate'))) }}
+        {% else %}
+          Syncerate
+        {% endif %}
+      report_exit_code: >-
+        {% if trigger.payload_json is defined %}
+          {{ trigger.payload_json.exit_code | default('unknown') }}
+        {% else %}
+          unknown
+        {% endif %}
+      report_error: >-
+        {% if trigger.payload_json is defined %}
+          {{ trigger.payload_json.error | default('No error message') }}
+        {% else %}
+          No valid JSON error message
+        {% endif %}
+      report_stderr: >-
+        {% if trigger.payload_json is defined %}
+          {{ trigger.payload_json.stderr | default('No stderr captured') }}
+        {% else %}
+          No valid JSON stderr captured
+        {% endif %}
+      report_warning: >-
+        {% if trigger.payload_json is defined %}
+          {{ trigger.payload_json.warning | default(false) | bool }}
+        {% else %}
+          false
+        {% endif %}
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ mqtt_status == 'success' }}"
+        sequence:
+          - action: notify.pushover
+            data:
+              title: ✅ Btrfs sync successful
+              message: >-
+                {{ report_title }} finished successfully.
+
+                Exit code: {{ report_exit_code }}
+                {% if report_warning | bool %}
+
+                Warning: Syncerate completed with one or more non-fatal warnings.
+                {% endif %}
+              data:
+                priority: 0
+                sound: pushover
+          - choose:
+              - conditions:
+                  - condition: trigger
+                    id:
+                      - zotac
+                sequence:
+                  - action: mqtt.publish
+                    data:
+                      evaluate_payload: false
+                      qos: "0"
+                      retain: false
+                      topic: homeassistant/zotac-ri531
+                      payload: shutdown_delay
+      - conditions:
+          - condition: template
+            value_template: "{{ mqtt_status == 'failure' }}"
+        sequence:
+          - action: notify.pushover
+            data:
+              title: ❌ Btrfs sync failed
+              message: >-
+                {{ report_title }} failed.
+
+                Exit code: {{ report_exit_code }}
+
+                Error: {{ report_error }}
+
+                Last stderr/output: {{ report_stderr }}
+              data:
+                priority: 1
+                sound: siren
+    default:
+      - action: notify.pushover
+        data:
+          title: ❔ Btrfs sync status unknown
+          message: >-
+            Received an MQTT status that was neither success nor failure.
+
+            Title: {{ report_title }}
+            Trigger: {{ trigger.id }}
+            Topic: {{ trigger.topic }}
+            Raw payload: {{ trigger.payload | default('No payload') }}
+          data:
+            priority: 0
+            sound: pushover
+mode: parallel
+max: 10
