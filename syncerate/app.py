@@ -14,7 +14,12 @@ from .logging_setup import (
     log_startup_configuration,
 )
 from .models import AppConfig, ReplicationSummary, RunContext
-from .notifications import MailTo, send_error_mail, send_mqtt_messages
+from .notifications import (
+    MailTo,
+    send_error_mail,
+    send_mqtt_failure_status,
+    send_mqtt_messages,
+)
 from .syncoid_runner import private_ssh_agent, resolve_password, run_replications
 from .system_actions import SystemAction
 
@@ -150,7 +155,13 @@ def successfull_run(
                 output_file.write(line + "\n")
 
     if app_config.use_mqtt:
-        send_mqtt_messages(app_config, logger)
+        send_mqtt_messages(
+            app_config,
+            logger,
+            success=True,
+            exit_code=EXIT_OK,
+            replication_summary=replication_summary,
+        )
 
     if app_config.mail_enabled:
         MailTo(
@@ -204,6 +215,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             logger = get_console_logger()
 
         log_syncerate_error(error, logger)
+        send_mqtt_failure_status(error, app_config, logger)
         send_error_mail(error, app_config, run_context, logger)
         return error.exit_code
 
@@ -218,6 +230,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             EXIT_SCRIPT_ERROR,
             kind="script",
         )
+        send_mqtt_failure_status(unexpected_error, app_config, logger)
         send_error_mail(
             unexpected_error,
             app_config,

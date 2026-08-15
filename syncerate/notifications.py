@@ -1,5 +1,6 @@
 """Optional email, MQTT, and Home Assistant notification handling."""
 
+import json
 import logging
 import os
 import subprocess
@@ -7,7 +8,7 @@ from typing import Any, Optional
 
 from .config import CONFIG_SECTION, option_is_enabled
 from .errors import EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
-from .models import AppConfig, DatasetPair, RunContext
+from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
 
 
 BROKEN_PIPE_SUCCESS_SUBJECT = "Syncerate Succsful - WARNING BROKEN PIPE"
@@ -328,11 +329,72 @@ def MailTo(
 
         WasMailSent(mail_exit_code, stderr_output, logger)
 
+def mqtt_error_output(error: SyncerateError, max_chars: int = 4000) -> str:
+    """Return the most useful bounded child/Syncoid output for MQTT failure JSON."""
+
+    parts = [
+        error.child_before,
+        error.child_warning,
+        error.syncoid_before,
+    ]
+    combined = "\n".join(part.strip() for part in parts if part and part.strip())
+    if len(combined) <= max_chars:
+        return combined
+    return combined[-max_chars:]
+
+
+def build_mqtt_status_payload(
+    app_config: AppConfig,
+    *,
+    success: bool,
+    exit_code: int,
+    error_message: str = "",
+    stderr_text: str = "",
+    replication_summary: Optional[ReplicationSummary] = None,
+) -> str:
+    """Build the JSON status payload consumed by Home Assistant MQTT automations."""
+
+    status = "success" if success else "failure"
+    backup_name = app_config.backup_title or "Syncerate"
+    skipped_datasets: list[dict[str, str]] = []
+    broken_pipe_warning = False
+
+    if replication_summary is not None:
+        broken_pipe_warning = replication_summary.has_broken_pipe_warning
+        skipped_datasets = [
+            {
+                "source": pair.source,
+                "destination": pair.destination,
+            }
+            for pair in replication_summary.broken_pipe_failed_datasets
+        ]
+
+    payload = {
+        "status": status,
+        "success": bool(success),
+        "title": backup_name,
+        "name": backup_name,
+        "job": "syncerate",
+        "exit_code": int(exit_code),
+        "error": error_message or "",
+        "stderr": stderr_text or "",
+        "warning": bool(broken_pipe_warning),
+        "skipped_datasets": skipped_datasets,
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
 def send_mqtt_messages(
     app_config: AppConfig,
     logger: logging.Logger,
+    *,
+    success: bool = True,
+    exit_code: int = EXIT_OK,
+    error_message: str = "",
+    stderr_text: str = "",
+    replication_summary: Optional[ReplicationSummary] = None,
 ) -> None:
-    """Publish MQTT/HA messages, importing paho only when this runs."""
+    """Publish MQTT/HA messages, with optional structured JSON run status."""
 
     try:
         from paho.mqtt import publish
@@ -391,11 +453,25 @@ def send_mqtt_messages(
             }
         )
 
+    if app_config.mqtt_json_status:
+        mqtt_payload = build_mqtt_status_payload(
+            app_config,
+            success=success,
+            exit_code=exit_code,
+            error_message=error_message,
+            stderr_text=stderr_text,
+            replication_summary=replication_summary,
+        )
+        retain = False
+    else:
+        mqtt_payload = raw_config.get(CONFIG_SECTION, "mqtt_message")
+        retain = True
+
     messages.append(
         {
             "topic": raw_config.get(CONFIG_SECTION, "mqtt_topic"),
-            "payload": raw_config.get(CONFIG_SECTION, "mqtt_message"),
-            "retain": True,
+            "payload": mqtt_payload,
+            "retain": retain,
             "qos": 0,
         }
     )
@@ -407,7 +483,13 @@ def send_mqtt_messages(
             port=broker_port,
             auth=auth,
         )
-        logger.info("MQTT message(s) published successfully")
+        if app_config.mqtt_json_status:
+            logger.info(
+                "MQTT JSON status published successfully: %s",
+                "success" if success else "failure",
+            )
+        else:
+            logger.info("MQTT message(s) published successfully")
     except Exception as exc:
         logger.exception("Failed publishing MQTT message(s)")
         raise SyncerateError(
@@ -415,6 +497,37 @@ def send_mqtt_messages(
             EXIT_MQTT_ERROR,
             kind="mqtt",
         ) from exc
+
+
+def send_mqtt_failure_status(
+    error: SyncerateError,
+    app_config: Optional[AppConfig],
+    logger: logging.Logger,
+) -> None:
+    """Best-effort failure JSON that never replaces the original application error."""
+
+    if (
+        app_config is None
+        or not app_config.use_mqtt
+        or not app_config.mqtt_json_status
+        or error.kind == "mqtt"
+    ):
+        return
+
+    try:
+        send_mqtt_messages(
+            app_config,
+            logger,
+            success=False,
+            exit_code=error.exit_code,
+            error_message=error.message,
+            stderr_text=mqtt_error_output(error),
+        )
+    except SyncerateError:
+        logger.exception(
+            "Additionally failed to publish the MQTT JSON failure status; preserving original exit code %s",
+            error.exit_code,
+        )
 
 def send_error_mail(
     error: SyncerateError,

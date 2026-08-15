@@ -52,8 +52,11 @@ from syncerate.notifications import (
     MailTo,
     WasMailSent,
     backup_header_text,
+    build_mqtt_status_payload,
+    mqtt_error_output,
     send_error_mail,
     send_mail,
+    send_mqtt_failure_status,
     send_mqtt_messages,
 )
 from syncerate.syncoid_runner import (

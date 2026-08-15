@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.15`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.17`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.15"
+VERSION = "0.4.17"
 __version__ = VERSION
 ```
 
@@ -104,7 +104,7 @@ A known application exception carrying:
 - `kind`: `list`, `known_child`, `syncoid`, `mqtt`, or `script`;
 - captured `pexpect` output when relevant.
 
-It replaces internal `sys.exit()` calls. `app.main()` catches it, logs the correct diagnostics, optionally sends error mail, and returns its exit code.
+It replaces internal `sys.exit()` calls. `app.main()` catches it, logs the correct diagnostics, optionally publishes a JSON MQTT failure status, optionally sends error mail, and returns its exit code.
 
 ## `syncerate/models.py`
 
@@ -118,6 +118,7 @@ Immutable configuration state loaded from one INI file. It replaces former runti
 - `MailOption`;
 - `SystemOption`;
 - `Use_MQTT`;
+- `MQTT_JSON_Status`;
 - `DateTime`;
 - `LogDestination`;
 - `BackupTitle`;
@@ -137,6 +138,7 @@ Fields:
 - `mail_option`: recipient or `No`;
 - `system_option`: successful-run command or `No`;
 - `use_mqtt`: normalized Boolean;
+- `mqtt_json_status`: normalized Boolean selecting structured non-retained success/failure MQTT status;
 - `datetime_format`: filename timestamp format;
 - `log_destination`: normalized directory or `None`;
 - `backup_title` / `backup_comment`: optional descriptive text;
@@ -246,7 +248,7 @@ It:
 - verifies the file can be read;
 - verifies `[Syncerate Config]` exists;
 - reads startup settings;
-- applies fallbacks to optional metadata, `Use_MQTT`, `UseSSHAgent`, `SSHAgentKeyLifetimeSeconds`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`;
+- applies fallbacks to optional metadata, `Use_MQTT`, `MQTT_JSON_Status`, `UseSSHAgent`, `SSHAgentKeyLifetimeSeconds`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`;
 - converts `LogDestination = No` into `None`;
 - normalizes an enabled log directory to end with `/`;
 - parses `SSHAgentKeyLifetimeSeconds` as a positive integer and rejects zero/negative values;
@@ -388,21 +390,44 @@ Builds the current success and failure message variants:
 
 When a completed run carries a Broken Pipe warning, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
 
-### `send_mqtt_messages(app_config, logger)`
+### `mqtt_error_output(error, max_chars=4000)`
 
-Handles both normal MQTT and optional Home Assistant availability messages.
+Collects the most useful captured child/Syncoid output for a JSON failure report. It joins available Pexpect/Syncoid error text and keeps only the last 4000 characters by default so an MQTT error payload cannot grow without bound. It never includes configuration credentials directly.
 
-Important lazy behavior:
+### `build_mqtt_status_payload(app_config, *, success, exit_code, error_message="", stderr_text="", replication_summary=None)`
+
+Builds the structured Home Assistant status JSON. The payload contains:
+
+- `status`: `success` or `failure`;
+- `success`: real JSON Boolean;
+- `title`: `BackupTitle` or `Syncerate`;
+- `name`: the same title value kept as a compatibility alias for older automations;
+- `job`: `syncerate`;
+- `exit_code`;
+- `error`;
+- `stderr`;
+- `warning`;
+- `skipped_datasets`.
+
+The configured `SyncoidCommand` is deliberately excluded from MQTT JSON so connection endpoints, key paths, and command options are not exposed to MQTT subscribers. Broken Pipe warning-success runs are still successful, while the warning flag and skipped dataset list preserve the nonfatal detail. `json.dumps()` is used instead of hand-built JSON so quotes, newlines, and non-ASCII text are escaped correctly.
+
+### `send_mqtt_messages(app_config, logger, *, success=True, exit_code=0, error_message="", stderr_text="", replication_summary=None)`
+
+Handles normal MQTT, optional Home Assistant availability, and the new JSON status mode.
+
+Important behavior:
 
 1. The function is called only when `Use_MQTT` is enabled.
-2. `paho.mqtt.publish` is imported inside this function.
-3. Broker and MQTT settings are read only after MQTT is reached.
-4. `Use_HomeAssistant` is read only inside this function.
-5. `HomeAssistant_Available` is read only when HA is enabled.
+2. `paho.mqtt.publish` is imported lazily inside this function.
+3. Broker credentials and topics are read only when MQTT publishing is reached.
+4. `Use_HomeAssistant` remains optional; its availability payload is retained and sent first when enabled.
+5. With `MQTT_JSON_Status = No`, the existing configured `mqtt_message` is published retained after successful replication.
+6. With `MQTT_JSON_Status = Yes`, `mqtt_message` is ignored and structured JSON is published non-retained. The non-retained choice prevents stale success events from retriggering Home Assistant automations after reconnects.
+7. Publish/dependency failures still raise `SyncerateError` with exit code `10`.
 
-If `paho-mqtt` is missing or publishing fails, it raises `SyncerateError` with exit code `10`.
+### `send_mqtt_failure_status(error, app_config, logger)`
 
-MQTT messages are passed to `publish.multiple()` as a list. The HA availability message, when enabled, is sent before the normal Syncerate message.
+Best-effort fatal-failure publisher used by the top-level exception boundary only when `Use_MQTT` and `MQTT_JSON_Status` are both enabled. It calls `send_mqtt_messages()` with `success=False`, the original exit code/message, and bounded captured output. If that MQTT publish also fails, the secondary failure is logged but the original application exit code is preserved. MQTT-originated errors are skipped to prevent recursion.
 
 ### `send_error_mail(error, app_config, run_context, logger)`
 
@@ -615,7 +640,7 @@ List validation already writes its detailed message in `datasets.py`, so it is n
 Runs the post-transfer order and uses `ReplicationSummary` to select normal success or warning-success logging and email:
 
 1. append successful-run text to `.out` when enabled;
-2. MQTT and optional HA notification;
+2. MQTT and optional HA notification; JSON mode publishes structured non-retained success status;
 3. success email;
 4. system action.
 
@@ -640,7 +665,7 @@ Execution order:
 11. run successful completion actions with the summary;
 12. return `0`.
 
-Known `SyncerateError` exceptions are logged, optionally mailed, and returned with their original code. Unexpected exceptions are logged with a traceback, optionally mailed as script errors, and return code `2`.
+Known `SyncerateError` exceptions are logged, best-effort published as JSON MQTT failure status when that mode is enabled, optionally mailed, and returned with their original code. Unexpected exceptions are logged with a traceback, receive the same best-effort JSON failure handling when configuration is available, are optionally mailed as script errors, and return code `2`.
 
 ## Configuration and command data flow
 

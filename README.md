@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.15`
+Current version: `0.4.17`
 
 ## Disclaimer and liability notice
 
@@ -214,6 +214,7 @@ BrokenPipeRetryCount = 1
 BrokenPipeRetryWaitSeconds = 10
 
 Use_MQTT = No
+MQTT_JSON_Status = No
 broker_address = mqtt.example.com
 broker_port = 1883
 mqtt_username =
@@ -229,7 +230,7 @@ HomeAssistant_Available = home-assistant/syncerate/available
 
 | Option | Required | Accepted value or purpose |
 | --- | --- | --- |
-| `BackupTitle` | No | Optional short name included in logs and email content. |
+| `BackupTitle` | No | Optional short name included in logs, email content, and JSON MQTT `title`/compatibility `name` fields. |
 | `BackupComment` | No | Optional description included in logs and email content. |
 | `SourceListPath` | Yes | Path to the source dataset list. Relative paths are resolved from the current working directory. |
 | `DestListPath` | Yes | Path to the destination dataset list. Relative paths are resolved from the current working directory. |
@@ -245,12 +246,13 @@ HomeAssistant_Available = home-assistant/syncerate/available
 | `BrokenPipeRetryCount` | No | Number of retries allowed for each individual dataset after its initial attempt. Defaults to `1` when omitted. The count resets for every dataset pair. Use `0` to skip an affected dataset immediately after its first Broken Pipe. Negative values and non-integers are rejected. |
 | `BrokenPipeRetryWaitSeconds` | No | Whole number of seconds to wait before each Broken Pipe retry. Defaults to `10` when omitted. Use `0` to retry immediately. Negative values and non-integers are rejected as configuration errors. |
 | `Use_MQTT` | No | Enables MQTT with `Yes`, `True`, `1`, or `On`. Missing, `No`, `False`, `0`, or `Off` disables it. |
+| `MQTT_JSON_Status` | No | When enabled, publishes a non-retained JSON run-status payload to `mqtt_topic` on successful replication completion and on fatal failures after configuration has loaded. When disabled, preserves the legacy retained `mqtt_message` success-only behavior. |
 | `broker_address` | When MQTT is enabled | MQTT broker hostname or IP address. |
 | `broker_port` | When MQTT is enabled | MQTT broker TCP port as an integer, commonly `1883`. |
 | `mqtt_username` | No | MQTT username. Leave empty when authentication is not used. |
 | `mqtt_password` | No | MQTT password. Leave empty when authentication is not used. |
-| `mqtt_topic` | When MQTT is enabled | Topic that receives the success payload. |
-| `mqtt_message` | When MQTT is enabled | Payload published after all transfers succeed. |
+| `mqtt_topic` | When MQTT is enabled | Topic that receives the legacy success payload or the JSON success/failure status payload. |
+| `mqtt_message` | When MQTT is enabled and `MQTT_JSON_Status = No` | Legacy retained payload published after successful replication. Ignored in JSON status mode. |
 | `Use_HomeAssistant` | No | Enables the optional HA availability message with `Yes`, `True`, `1`, or `On`. It is checked only when MQTT is enabled. |
 | `HomeAssistant_Available` | When MQTT and HA are enabled | Topic that receives retained payload `online`. |
 
@@ -437,7 +439,7 @@ When enabled, Syncerate watches Syncoid output case-insensitively for the text `
 
 The retry count is never shared between datasets. This option does not retry authentication failures, missing datasets, generic warnings, connection failures, or other nonzero Syncoid exits. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
 
-## MQTT success notification
+## MQTT notifications
 
 Disable MQTT:
 
@@ -445,12 +447,15 @@ Disable MQTT:
 Use_MQTT = No
 ```
 
-When disabled, `paho-mqtt` is not imported and MQTT or Home Assistant settings are not used by the publisher.
+When disabled, `paho-mqtt` is not imported and MQTT or Home Assistant publishing is skipped.
 
-Enable MQTT:
+### Legacy retained success payload
+
+This preserves the original behavior:
 
 ```ini
 Use_MQTT = Yes
+MQTT_JSON_Status = No
 broker_address = 192.0.2.30
 broker_port = 1883
 mqtt_username = syncerate
@@ -459,13 +464,75 @@ mqtt_topic = home-assistant/syncerate/command
 mqtt_message = ON
 ```
 
-After every dataset transfer succeeds, Syncerate publishes the configured retained message. If MQTT is enabled and `paho-mqtt` is unavailable or publishing fails, Syncerate returns exit code `10`.
+After replication completes successfully, Syncerate publishes the configured `mqtt_message` with retain enabled. Fatal run failures do not publish a legacy failure payload.
+
+### JSON success/failure status for Home Assistant
+
+Enable structured status messages:
+
+```ini
+Use_MQTT = Yes
+MQTT_JSON_Status = Yes
+broker_address = 192.0.2.30
+broker_port = 1883
+mqtt_username = syncerate
+mqtt_password = secret
+mqtt_topic = homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/status
+```
+
+`mqtt_message` is ignored in this mode. Syncerate publishes JSON with retain disabled so a stale success cannot retrigger a Home Assistant automation after a reconnect or Home Assistant restart.
+
+Successful example:
+
+```json
+{
+  "status": "success",
+  "success": true,
+  "title": "Main ZFS backup",
+  "name": "Main ZFS backup",
+  "job": "syncerate",
+  "exit_code": 0,
+  "error": "",
+  "stderr": "",
+  "warning": false,
+  "skipped_datasets": []
+}
+```
+
+Failure example:
+
+```json
+{
+  "status": "failure",
+  "success": false,
+  "title": "Main ZFS backup",
+  "name": "Main ZFS backup",
+  "job": "syncerate",
+  "exit_code": 7,
+  "error": "Connection refused",
+  "stderr": "last relevant Syncoid/SSH output",
+  "warning": false,
+  "skipped_datasets": []
+}
+```
+
+`title` is taken from `BackupTitle`; `name` carries the same value as a compatibility alias for existing automations. The configured `SyncoidCommand` is deliberately not included in the JSON payload.
+
+The `stderr` field is bounded to the last 4000 characters of relevant captured child/Syncoid output. A Broken Pipe warning-success remains `status: success` and sets `warning: true` with affected source/destination pairs in `skipped_datasets`.
+
+Failure JSON is best-effort and never replaces the original Syncerate exit code. If MQTT itself is the failing component, Syncerate cannot report that failure over the same MQTT channel. Errors that occur before the configuration has been loaded also cannot be published.
 
 For a broker without username authentication, leave both credential fields empty:
 
 ```ini
 mqtt_username =
 mqtt_password =
+```
+
+A matching automation with explicit **success**, **failure**, and default **unknown** branches is supplied in:
+
+```text
+config/HomeAssistant-Automation-For-MQTT-JSON.yaml
 ```
 
 ## Home Assistant availability message
@@ -486,7 +553,7 @@ Use_HomeAssistant = Yes
 HomeAssistant_Available = home-assistant/syncerate/available
 ```
 
-Syncerate first publishes retained payload `online` to `HomeAssistant_Available`, then publishes the normal MQTT success message.
+Syncerate first publishes retained payload `online` to `HomeAssistant_Available`, then publishes the configured legacy or JSON status message.
 
 A matching example entity configuration is supplied in:
 
@@ -494,7 +561,7 @@ A matching example entity configuration is supplied in:
 config/HomeAssistant-Configuration-For-MQTT.yaml
 ```
 
-The PNG files in `config/` are optional Home Assistant setup references and are not loaded by Syncerate.
+The JSON-status automation example and entity configuration in `config/` are reference YAML files and are not loaded by Syncerate. The PNG files are optional Home Assistant setup references.
 
 ## Successful-run system action
 

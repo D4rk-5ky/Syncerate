@@ -94,6 +94,9 @@ def load_app_config(config_path: str) -> AppConfig:
         destination_list_path=raw_config.get(CONFIG_SECTION, "DestListPath"),
         password_option=raw_config.get(CONFIG_SECTION, "PassWord"),
         syncoid_command=raw_config.get(CONFIG_SECTION, "SyncoidCommand"),
+        mqtt_json_status=option_is_enabled(
+            raw_config.get(CONFIG_SECTION, "MQTT_JSON_Status", fallback="No")
+        ),
         use_ssh_agent=option_is_enabled(
             raw_config.get(CONFIG_SECTION, "UseSSHAgent", fallback="No")
         ),

@@ -16,6 +16,32 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.17
+
+Previous version: `0.4.16`.
+
+- Removed the configured `SyncoidCommand` from structured MQTT JSON status payloads so executed replication command details, endpoints, key paths, and command options are not deliberately exposed to MQTT subscribers.
+- Added explicit JSON `title`, sourced from the existing `BackupTitle` configuration value with `Syncerate` as the fallback.
+- Kept JSON `name` as a compatibility alias carrying the same title value so existing consumers that already read `name` do not break.
+- Updated `config/HomeAssistant-Automation-For-MQTT-JSON.yaml` to prefer JSON `title`, fall back through `name`/`job`, and remove all executed-command text from success and failure Pushover messages.
+- Updated `README.md`, `commented_code_map.md`, and `config/example-Syncerate.cfg` for the current MQTT JSON security behavior.
+- Preserved JSON success/failure semantics, non-retained status publishing, Broken Pipe warning detail, bounded stderr/output, legacy retained MQTT mode, Home Assistant availability, SSH authentication modes, replication behavior, and exit-code handling.
+
+## 0.4.16
+
+Previous version: `0.4.15`.
+
+- Added optional `MQTT_JSON_Status`, disabled by default so the existing retained `mqtt_message` success-only behavior remains unchanged unless explicitly enabled.
+- When JSON status mode is enabled, the configured `mqtt_topic` receives non-retained JSON on successful replication completion and on fatal Syncerate failures that occur after configuration has loaded.
+- JSON payloads include `status`, Boolean `success`, `name`, `job`, `command`, `exit_code`, `error`, bounded `stderr`, `warning`, and `skipped_datasets`.
+- Broken Pipe warning-success runs remain `status: success`, set `warning: true`, and include the skipped dataset pairs.
+- JSON status messages are deliberately non-retained so an old success cannot retrigger a Home Assistant automation after Home Assistant or an MQTT subscriber reconnects. The existing Home Assistant availability payload remains retained.
+- Added best-effort MQTT failure reporting that preserves the original application exit code if publishing the failure report also fails. MQTT-originated failures do not recursively try to report themselves over MQTT.
+- Added `config/HomeAssistant-Automation-For-MQTT-JSON.yaml` with five MQTT triggers and explicit success, failure, and default unknown branches. The duplicate MSI trigger IDs from the supplied automation were replaced with unique `msi_z170` and `msi_z87` IDs.
+- Updated the Home Assistant example to use current MQTT trigger YAML with `topic` directly under each MQTT trigger and to consume `trigger.payload_json`.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, compatibility exports, and current version metadata.
+- Preserved SSH-agent, legacy Pexpect authentication, Broken Pipe retry, resume, dataset validation, email, system action, legacy MQTT, Home Assistant availability, and exit-code behavior outside the new opt-in JSON mode.
+
 ## 0.4.15
 
 Previous version: `0.4.14`.
