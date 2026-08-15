@@ -154,7 +154,7 @@ def successfull_run(
             for line in lines_of_text:
                 output_file.write(line + "\n")
 
-    if app_config.use_mqtt:
+    if app_config.use_mqtt or app_config.mqtt_json_status:
         send_mqtt_messages(
             app_config,
             logger,

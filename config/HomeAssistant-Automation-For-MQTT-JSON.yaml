@@ -1,23 +1,23 @@
 alias: Timeshift BTRFS Sync - MQTT - All Servers
 description: >-
   Handle timeshift-btrfs-sync success, failure, or unknown reports from all
-  configured servers independently over MQTT JSON status messages.
+  configured servers independently over dedicated non-retained MQTT JSON status topics.
 triggers:
   - trigger: mqtt
     id: zotac
-    topic: homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/status
+    topic: homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/json-status
   - trigger: mqtt
     id: kubuntu
-    topic: homeassistant/timeshift-btrfs-sync/kubuntu-timeshift/status
+    topic: homeassistant/timeshift-btrfs-sync/kubuntu-timeshift/json-status
   - trigger: mqtt
     id: ubuntu
-    topic: homeassistant/timeshift-btrfs-sync/ubuntu-timeshift/status
+    topic: homeassistant/timeshift-btrfs-sync/ubuntu-timeshift/json-status
   - trigger: mqtt
     id: msi_z170
-    topic: homeassistant/timeshift-btrfs-sync/MSI-Z170-Gaming-M7/status
+    topic: homeassistant/timeshift-btrfs-sync/MSI-Z170-Gaming-M7/json-status
   - trigger: mqtt
     id: msi_z87
-    topic: homeassistant/timeshift-btrfs-sync/msi-z87-g43-gaming-timeshift/status
+    topic: homeassistant/timeshift-btrfs-sync/msi-z87-g43-gaming-timeshift/json-status
 conditions: []
 actions:
   - variables:

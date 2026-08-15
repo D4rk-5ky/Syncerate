@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.18`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.20`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.18"
+VERSION = "0.4.20"
 __version__ = VERSION
 ```
 
@@ -119,6 +119,7 @@ Immutable configuration state loaded from one INI file. It replaces former runti
 - `SystemOption`;
 - `Use_MQTT`;
 - `MQTT_JSON_Status`;
+- `mqtt_json_topic` (dedicated JSON-only topic read from the raw config);
 - `DateTime`;
 - `LogDestination`;
 - `BackupTitle`;
@@ -138,7 +139,7 @@ Fields:
 - `mail_option`: recipient or `No`;
 - `system_option`: successful-run command or `No`;
 - `use_mqtt`: normalized Boolean;
-- `mqtt_json_status`: normalized Boolean selecting structured non-retained success/failure MQTT status;
+- `mqtt_json_status`: normalized Boolean independently enabling structured non-retained success/failure MQTT status;
 - `datetime_format`: filename timestamp format;
 - `log_destination`: normalized directory or `None`;
 - `backup_title` / `backup_comment`: optional descriptive text;
@@ -248,6 +249,8 @@ It:
 - verifies `[Syncerate Config]` exists;
 - reads startup settings;
 - applies fallbacks to optional metadata, `Use_MQTT`, `MQTT_JSON_Status`, `UseSSHAgent`, `SSHAgentKeyLifetimeSeconds`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`;
+- keeps legacy `Use_MQTT` and `Use_HomeAssistant` semantics unchanged while allowing JSON status independently;
+- requires `mqtt_json_topic` only when JSON status is enabled and rejects a JSON topic that matches an enabled retained legacy MQTT or Home Assistant availability topic;
 - converts `LogDestination = No` into `None`;
 - normalizes an enabled log directory to end with `/`;
 - parses `SSHAgentKeyLifetimeSeconds` as a positive integer and rejects zero/negative values;
@@ -412,21 +415,22 @@ The configured `SyncoidCommand` is deliberately excluded from MQTT JSON so conne
 
 ### `send_mqtt_messages(app_config, logger, *, success=True, exit_code=0, error_message="", stderr_text="", replication_summary=None)`
 
-Handles normal MQTT, optional Home Assistant availability, and the new JSON status mode.
+Publishes the original retained success signals and the independent JSON event channel.
 
 Important behavior:
 
-1. The function is called only when `Use_MQTT` is enabled.
-2. `paho.mqtt.publish` is imported lazily inside this function.
-3. Broker credentials and topics are read only when MQTT publishing is reached.
-4. `Use_HomeAssistant` remains optional; its availability payload is retained and sent first when enabled.
-5. With `MQTT_JSON_Status = No`, the existing configured `mqtt_message` is published retained after successful replication.
-6. With `MQTT_JSON_Status = Yes`, `mqtt_message` is ignored and structured JSON is published non-retained. The non-retained choice prevents stale success events from retriggering Home Assistant automations after reconnects.
-7. Publish/dependency failures still raise `SyncerateError` with exit code `10`.
+1. The function can be reached when either `Use_MQTT` or `MQTT_JSON_Status` is enabled.
+2. `paho.mqtt.publish` is imported lazily only when an MQTT publish is actually attempted.
+3. On a successful run with `Use_MQTT = Yes`, the configured `mqtt_message` is published to `mqtt_topic` with `retain=True`, preserving the historical Syncerate behavior.
+4. On that same legacy path, `Use_HomeAssistant = Yes` additionally publishes retained payload `online` to `HomeAssistant_Available`, also preserving historical behavior.
+5. `MQTT_JSON_Status = Yes` independently publishes structured success/failure JSON to `mqtt_json_topic` with `retain=False` hard-coded. JSON never replaces or shares the old retained topic.
+6. JSON can therefore run alongside the old MQTT/HA outputs, or by itself while `Use_MQTT = No`.
+7. Fatal failure calls produce only JSON status; the old success-only MQTT and HA availability signals are not emitted for a failed run.
+8. Publish/dependency failures still raise `SyncerateError` with exit code `10`.
 
 ### `send_mqtt_failure_status(error, app_config, logger)`
 
-Best-effort fatal-failure publisher used by the top-level exception boundary only when `Use_MQTT` and `MQTT_JSON_Status` are both enabled. It calls `send_mqtt_messages()` with `success=False`, the original exit code/message, and bounded captured output. If that MQTT publish also fails, the secondary failure is logged but the original application exit code is preserved. MQTT-originated errors are skipped to prevent recursion.
+Best-effort fatal-failure publisher used by the top-level exception boundary whenever `MQTT_JSON_Status` is enabled, even if legacy `Use_MQTT` is disabled. It calls `send_mqtt_messages()` with `success=False`, so only the dedicated non-retained JSON failure event is published. If that MQTT publish also fails, the secondary failure is logged but the original application exit code is preserved. MQTT-originated errors are skipped to prevent recursion.
 
 ### `send_error_mail(error, app_config, run_context, logger)`
 
@@ -641,7 +645,7 @@ List validation already writes its detailed message in `datasets.py`, so it is n
 Runs the post-transfer order and uses `ReplicationSummary` to select normal success or warning-success logging and email:
 
 1. append successful-run text to `.out` when enabled;
-2. MQTT and optional HA notification; JSON mode publishes structured non-retained success status;
+2. Original retained MQTT/optional HA success signals when `Use_MQTT` is enabled, plus independent non-retained JSON success status when `MQTT_JSON_Status` is enabled;
 3. success email;
 4. system action.
 
