@@ -80,7 +80,7 @@ def send_secret(
     output_handle: Any,
     logging_enabled: bool,
 ) -> None:
-    """Wait for no-echo credential input, send the secret, and restore logging."""
+    """Send a secret to a directly controlled interactive child such as ssh-add."""
 
     if logging_enabled:
         child.logfile = None
@@ -383,28 +383,6 @@ def ensure_private_agent_identity(
         "Private ssh-agent identity lifetime expired; reloading the configured key before the next dataset."
     )
     add_identity_to_private_agent(session, password, logger)
-
-
-def harden_syncoid_command_for_agent(
-    syncoid_command: list[str],
-    session: SSHAgentSession,
-) -> list[str]:
-    """Force Syncoid SSH to use only the isolated agent key without forwarding."""
-
-    if not syncoid_command:
-        return []
-
-    hardening_options = [
-        "--sshoption=ForwardAgent=no",
-        "--sshoption=StrictHostKeyChecking=yes",
-        "--sshoption=IdentitiesOnly=yes",
-        f"--sshoption=IdentityAgent={session.socket_path}",
-        "--sshoption=AddKeysToAgent=no",
-        "--sshoption=BatchMode=yes",
-        "--sshoption=PreferredAuthentications=publickey",
-    ]
-
-    return [syncoid_command[0], *hardening_options, *syncoid_command[1:]]
 
 
 def stop_private_ssh_agent(
@@ -740,6 +718,9 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSPHRASE:
+            if run_context.logging_enabled:
+                child.logfile = None
+
             if password is None:
                 die(
                     child,
@@ -748,12 +729,10 @@ def ssh_command(
                     logger=logger,
                 )
 
-            send_secret(
-                child,
-                password,
-                output_handle,
-                run_context.logging_enabled,
-            )
+            child.sendline(password)
+
+            if run_context.logging_enabled:
+                child.logfile = output_handle
 
         elif index == PATTERN_EOF:
             close_child_logfile(child, logger)
@@ -905,6 +884,9 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSWORD:
+            if run_context.logging_enabled:
+                child.logfile = None
+
             if password is None:
                 die(
                     child,
@@ -913,12 +895,10 @@ def ssh_command(
                     logger=logger,
                 )
 
-            send_secret(
-                child,
-                password,
-                output_handle,
-                run_context.logging_enabled,
-            )
+            child.sendline(password)
+
+            if run_context.logging_enabled:
+                child.logfile = output_handle
 
     close_child_logfile(child, logger)
     return SyncoidAttemptResult(
@@ -959,9 +939,8 @@ def run_replications(
 
         if ssh_agent_session is not None:
             ensure_private_agent_identity(ssh_agent_session, password, logger)
-            syncoid_execute = harden_syncoid_command_for_agent(
-                syncoid_execute,
-                ssh_agent_session,
+            logger.info(
+                "Private ssh-agent identity is loaded; Syncoid will inherit SSH_AUTH_SOCK and keep the configured Syncoid command unchanged."
             )
 
         logger.info(
@@ -978,7 +957,7 @@ def run_replications(
         while True:
             result = ssh_command(
                 current_command,
-                None if ssh_agent_session is not None else password,
+                password,
                 run_context,
                 logger,
                 retry_broken_pipe=app_config.retry_broken_pipe,

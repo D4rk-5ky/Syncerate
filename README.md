@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.20`
+Current version: `0.4.21`
 
 ## Disclaimer and liability notice
 
@@ -326,24 +326,27 @@ The `SyncoidCommand` must contain the identity explicitly, for example:
 SyncoidCommand = syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --sshkey /root/.ssh/syncerate --no-privilege-elevation
 ```
 
-When enabled, Syncerate does not try to type the key passphrase through the nested `Syncoid -> ssh` terminal path. Instead it:
+Private-agent mode now preserves the original Syncerate process model: **Pexpect starts Syncoid, and Syncoid remains responsible for starting and controlling SSH, mbuffer, pv, ZFS send/receive, and its own SSH control connections.** Syncerate does not replace Syncoid's SSH process and does not rewrite the configured Syncoid command with hidden SSH options.
+
+When enabled, Syncerate:
 
 1. creates a random per-run temporary directory with mode `0700`;
 2. starts a new foreground `ssh-agent` bound to a socket inside that directory;
 3. ignores any pre-existing `SSH_AUTH_SOCK` / `SSH_AGENT_PID`;
 4. removes inherited `SSH_ASKPASS` use for the private-agent path;
-5. runs `ssh-add` under Pexpect directly and sends the passphrase only to that direct prompt;
-6. loads only the configured `--sshkey` identity with the configured bounded lifetime;
-7. gives Syncoid only this private agent;
-8. forces Syncoid SSH options `ForwardAgent=no`, `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes`, `AddKeysToAgent=no`, `BatchMode=yes`, `PreferredAuthentications=publickey`, and the exact private `IdentityAgent` socket;
-9. checks that the agent still contains an identity before each dataset and reloads it if the configured lifetime expired;
-10. removes all agent identities, terminates the agent, and removes its temporary socket directory when the run exits normally or raises an application error.
+5. runs `ssh-add` under Pexpect directly and sends the configured key passphrase to that direct prompt;
+6. loads the identity selected by the existing `--sshkey` option with the configured bounded lifetime;
+7. exposes the isolated agent to Syncoid only through the child environment (`SSH_AUTH_SOCK` / `SSH_AGENT_PID`);
+8. starts the **original configured Syncoid argv under Pexpect unchanged**; Syncoid then creates SSH/mbuffer/ZFS processes exactly as it normally does;
+9. keeps the original Pexpect-through-Syncoid password/passphrase prompt handling available if Syncoid's nested SSH still asks interactively;
+10. checks that the agent still contains an identity before each dataset and reloads it if the configured lifetime expired;
+11. removes agent identities, terminates the agent, and removes its temporary socket directory when the run exits normally or raises an application error.
 
 The one-hour default limits the usefulness of an orphaned agent if the Python process is terminated in a way that prevents cleanup. A transfer already authenticated through Syncoid's SSH control connection can continue if the identity lifetime expires; Syncerate reloads the key before the next dataset.
 
-Because private-agent mode forces `BatchMode=yes`, public-key-only authentication, and `StrictHostKeyChecking=yes`, it intentionally does **not** fall back to an SSH account password or automatically trust a new/changed host key. The remote host key must already be present in the executing user's `known_hosts`; verify it once with normal `ssh` before using private-agent mode.
+Unlike the earlier private-agent implementation, Syncerate no longer prepends `ForwardAgent`, `StrictHostKeyChecking`, `IdentitiesOnly`, `IdentityAgent`, `AddKeysToAgent`, `BatchMode`, or `PreferredAuthentications` settings to the Syncoid command. SSH behavior therefore comes from the configured `SyncoidCommand`, Syncoid itself, and the executing user's normal SSH configuration. Existing `.cfg` files do not need any changes for this release.
 
-Agent forwarding is explicitly disabled. This is important because a forwarded agent can otherwise allow a compromised remote host to request authentication operations from identities held by the local agent. The private key and passphrase are not intentionally written to Syncerate logs.
+The private agent is still isolated and contains only the configured Syncerate identity. If your own SSH configuration enables agent forwarding, that policy is no longer overridden by Syncerate; disable forwarding in your SSH/Syncoid configuration if you do not want the agent exposed to a remote host.
 
 ### Legacy authentication mode
 
@@ -353,7 +356,7 @@ With:
 UseSSHAgent = No
 ```
 
-Syncerate preserves the existing Pexpect-through-Syncoid behavior. If Syncoid/SSH produces an account-password or private-key-passphrase prompt, Syncerate waits up to 3 seconds for no-echo mode and sends `PassWord`. If `PassWord = No`, an observed credential prompt is treated as an authentication error.
+Syncerate uses the original Pexpect-through-Syncoid model. Pexpect starts Syncoid and watches the output produced by Syncoid and its nested SSH process. If an SSH account-password or private-key-passphrase prompt appears, Syncerate temporarily disables the `.out` logfile, sends `PassWord` directly to the Syncoid Pexpect child with `child.sendline()`, then restores logging. It does not wait for a separate no-echo transition before sending. If `PassWord = No`, an observed credential prompt remains a fatal authentication error.
 
 ## Logging
 

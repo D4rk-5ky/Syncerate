@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.20`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.21`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.20"
+VERSION = "0.4.21"
 __version__ = VERSION
 ```
 
@@ -472,9 +472,9 @@ Converts optional `pexpect` values into safe strings. `None` becomes an empty st
 
 ### `send_secret(child, password, output_handle, logging_enabled)`
 
-Handles both SSH account-password prompts and encrypted private-key passphrase prompts through one credential-send path. It temporarily disables the Pexpect logfile, waits up to 3 seconds with `child.waitnoecho(timeout=3)` for the pseudo-terminal to enter no-echo mode, sends the secret with `child.sendline()`, and restores the original output logfile in a `finally` block.
+Used for a **directly controlled interactive child**, currently `ssh-add` in private-agent mode. It temporarily disables any Pexpect logfile, waits up to 3 seconds for no-echo input, sends the secret with `child.sendline()`, and restores logging in `finally`.
 
-The wait reduces the risk of sending a credential before newer OpenSSH versions have completed their TTY transition. If no-echo is not observed within 3 seconds, Pexpect returns `False` and Syncerate still sends the credential, preserving the previous behavior as a fallback. The `finally` block restores logging even if waiting or sending raises an exception.
+The main Syncoid runner deliberately does **not** use this helper in 0.4.21. Its password/passphrase branches are restored to the original Pexpect-through-Syncoid behavior and call `child.sendline(password)` directly after temporarily disabling the `.out` logfile.
 
 ### `extract_ssh_key_path(command_template)`
 
@@ -508,21 +508,6 @@ Checks that the private agent process is alive and runs `ssh-add -l` against onl
 
 Runs before each dataset when agent mode is enabled. If the isolated agent became empty because the configured lifetime expired, it reloads the same identity using direct Pexpect/`ssh-add`. An already-authenticated Syncoid SSH control connection does not need the key to remain loaded, so refresh is only needed before starting the next dataset.
 
-### `harden_syncoid_command_for_agent(syncoid_command, session)`
-
-Prepends Syncoid `--sshoption` values so they become the first command-line values OpenSSH receives:
-
-```text
-ForwardAgent=no
-StrictHostKeyChecking=yes
-IdentitiesOnly=yes
-IdentityAgent=<private socket>
-AddKeysToAgent=no
-BatchMode=yes
-PreferredAuthentications=publickey
-```
-
-These options make private-agent mode deterministic: Syncoid must use only the selected key from Syncerate's isolated agent, cannot forward the agent to the remote host, cannot add more keys, cannot fall back to interactive account-password/passphrase prompts, and cannot automatically accept a new or changed host key. The intended remote host key must already be trusted in the executing user's `known_hosts`.
 
 ### `stop_private_ssh_agent(session, logger)`
 
@@ -583,7 +568,7 @@ Starts one process with:
 pexpect.spawn(command[0], command[1:], timeout=None, encoding="utf-8", env=process_env)
 ```
 
-Using an argv list avoids shell re-parsing. `process_env` is normally `None`; private-agent mode passes only the isolated agent environment to Syncoid and its nested SSH children.
+Using an argv list avoids shell re-parsing. `process_env` is normally `None`; private-agent mode passes the isolated agent environment to the **same Syncoid command**, so Syncoid and the SSH processes it creates inherit `SSH_AUTH_SOCK`. Pexpect still owns Syncoid, not SSH or mbuffer directly.
 
 It monitors these conditions:
 
@@ -592,7 +577,7 @@ It monitors these conditions:
 3. **Permission denied** — exits through code `5`.
 4. **Connection timeout** — code `6`.
 5. **Connection refused** — code `7`.
-6. **Passphrase prompt** — uses `send_secret()` to wait up to 3 seconds for no-echo mode, send the configured credential without logging it, and restore logging.
+6. **Passphrase prompt** — restores the original runner behavior: temporarily disables `.out` logging, sends `PassWord` directly to the Pexpect-controlled Syncoid PTY with `child.sendline()`, then restores logging.
 7. **EOF** — returns the real child and current result flags.
 8. **Skipped dataset warning** — code `8`.
 9. **Missing stale-resume source snapshot** — marks Syncoid stale-receive recovery active, logs that Syncoid will be allowed to repair its own receive state, and keeps the same process running. Syncerate does not alter the Syncoid command.
@@ -601,7 +586,7 @@ It monitors these conditions:
 12. **Resume feature unavailable** — logs the exact nonfatal message and waits for Syncoid's real exit status.
 13. **Broken Pipe** — during stale receive recovery it is logged and ignored as an expected symptom of the failed resume pipeline; otherwise, when `RetryBrokenPipe` is enabled, it terminates the current attempt and returns `broken_pipe_detected=True`, and when disabled it waits for the real child exit status.
 14. **Generic warning** — remains fatal with code `4`, except the separately recognized destroy warning and stale-receive reset warning.
-15. **Password prompt** — uses the same `send_secret()` path as a private-key passphrase.
+15. **Password prompt** — uses the same original direct `child.sendline()` path through the Pexpect-controlled Syncoid PTY.
 
 Each pattern is limited to five matches. Exceeding the limit sets `repeated_pattern` so the caller can fail safely with code `9`.
 
@@ -613,10 +598,10 @@ Runs all validated pairs sequentially.
 
 For each pair it:
 
-1. builds the command;
-2. when private-agent mode is active, verifies/reloads the one agent identity and prepends the SSH hardening options;
+1. builds the command exactly from `SyncoidCommand`, the dataset pair, and per-destination arguments;
+2. when private-agent mode is active, verifies/reloads the one agent identity but **does not modify the Syncoid argv**;
 3. logs extra arguments and argv details;
-4. starts `ssh_command()` with the isolated agent environment and no nested-Syncoid credential sending in agent mode;
+4. starts `ssh_command()` with Pexpect controlling Syncoid in both agent and non-agent modes; agent mode only adds the isolated `SSH_AUTH_SOCK` environment and still passes `PassWord` to the original nested-prompt handler;
 5. leaves stale interrupted-receive recovery inside the same Syncoid process instead of constructing a second resume-bypass command;
 6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every ordinary Broken Pipe retry;
 7. records and skips only that pair after its configured ordinary Broken Pipe retry allowance is exhausted;
