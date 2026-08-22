@@ -67,7 +67,6 @@ from syncerate.syncoid_runner import (
     effective_user_name,
     ensure_private_agent_identity,
     extract_ssh_key_path,
-    harden_syncoid_command_for_agent,
     log_command_debug,
     private_agent_has_identity,
     private_ssh_agent,

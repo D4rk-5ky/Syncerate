@@ -16,6 +16,22 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.21
+
+Previous version: `0.4.20`.
+
+- Restored the original Pexpect/Syncoid execution ownership: Pexpect starts and monitors Syncoid, while Syncoid remains responsible for creating and controlling SSH, mbuffer, pv, ZFS send/receive, and its own SSH control connections.
+- Private `ssh-agent` / `ssh-add` support is preserved. Syncerate still starts one isolated per-run agent, loads the existing `SyncoidCommand --sshkey` with direct Pexpect control of `ssh-add`, refreshes the key after its configured lifetime when needed, and cleans up the agent at the end of the run.
+- Removed Syncerate's private-agent Syncoid command hardening layer. Agent mode no longer prepends `ForwardAgent=no`, `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes`, `IdentityAgent=...`, `AddKeysToAgent=no`, `BatchMode=yes`, or `PreferredAuthentications=publickey` to the configured command.
+- Agent mode now exposes the isolated agent only through the child environment (`SSH_AUTH_SOCK` / `SSH_AGENT_PID`) and executes the same Syncoid argv that would be used without the agent.
+- Restored original nested credential handling for the Syncoid Pexpect child: account-password and key-passphrase prompts temporarily disable `.out` logging, use direct `child.sendline(password)`, and restore logging without the newer `waitnoecho()` step.
+- Retained `send_secret()` and its no-echo handling for the **direct Pexpect -> ssh-add** interaction only.
+- `PassWord` is again passed to the Pexpect-through-Syncoid monitor even when the private agent is enabled, preserving the original fallback prompt behavior if Syncoid's nested SSH asks interactively.
+- Preserved 0.4.18 stale receive-state recovery, including allowing Syncoid to reset its own invalid resumable receive stream and the associated Broken Pipe recovery-state handling.
+- Preserved configurable ordinary Broken Pipe retries, JSON MQTT success/failure reporting, legacy retained MQTT, legacy Home Assistant availability publishing, email, system actions, dataset validation, and current exit-code handling.
+- No configuration option was added, removed, renamed, or given a new required value. Existing 0.4.20 `.cfg` files are valid unchanged.
+- Updated `README.md`, `commented_code_map.md`, example comments, and version metadata for the restored execution model.
+
 ## 0.4.20
 
 Previous version: `0.4.19`.
