@@ -15,6 +15,7 @@ from typing import Any, Optional, Sequence
 
 import pexpect
 
+from .config import validate_syncoid_command_template
 from .errors import (
     EXIT_CONNECTION_REFUSED,
     EXIT_CONNECTION_TIMEOUT,
@@ -79,14 +80,21 @@ def send_secret(
     password: str,
     output_handle: Any,
     logging_enabled: bool,
+    *,
+    wait_for_noecho: bool = True,
 ) -> None:
-    """Send a secret to a directly controlled interactive child such as ssh-add."""
+    """Send a secret while suppressing it from an attached Pexpect logfile."""
 
     if logging_enabled:
         child.logfile = None
 
     try:
-        child.waitnoecho(timeout=3)
+        if wait_for_noecho and not child.waitnoecho(timeout=3):
+            raise SyncerateError(
+                "Credential prompt did not disable terminal echo; refusing to send the secret.",
+                EXIT_PASSWORD_DENIED,
+                kind="script",
+            )
         child.sendline(password)
     finally:
         if logging_enabled:
@@ -557,6 +565,7 @@ def build_syncoid_command(
     if extra_args is None:
         extra_args = []
 
+    validate_syncoid_command_template(command_template)
     command_parts = shlex.split(command_template)
     command_parts = [
         part.replace("SourceDataSet", source_dataset).replace(
@@ -646,7 +655,7 @@ def ssh_command(
         "Permission denied",
         "Connection timed out",
         "Connection refused",
-        "passphrase",
+        r"(?im)(?:^|[\r\n])[^\r\n]*\benter passphrase for [^\r\n]*:\s*",
         pexpect.EOF,
         "WARN Skipping dataset",
         r"(?i)used in the initial send no longer exists",
@@ -654,18 +663,28 @@ def ssh_command(
         r"(?i)INFO: Sending (?:incremental|full)",
         r"WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.",
         r"(?i)broken pipe",
-        "WARN|WARNING",
-        "password",
+        r"(?im)(?:^|[\r\n])(?:WARN|WARNING)(?:\b|:)",
+        r"(?im)(?:^|[\r\n])[^\r\n]*\bpassword:\s*$",
     ]
 
     max_pattern_executions = 5
-    pattern_count = {index: 0 for index in range(len(patterns))}
+    repeat_guarded_patterns = {
+        PATTERN_HOSTKEY,
+        PATTERN_PASSPHRASE,
+        PATTERN_PASSWORD,
+    }
+    pattern_count = {index: 0 for index in repeat_guarded_patterns}
 
     while True:
         index = child.expect(patterns)
-        pattern_count[index] += 1
 
-        if pattern_count[index] > max_pattern_executions:
+        if index in repeat_guarded_patterns:
+            pattern_count[index] += 1
+
+        if (
+            index in repeat_guarded_patterns
+            and pattern_count[index] > max_pattern_executions
+        ):
             logger.error("")
             logger.error(
                 "Pattern '%s' has been executed more than %s times.",
@@ -717,9 +736,6 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSPHRASE:
-            if run_context.logging_enabled:
-                child.logfile = None
-
             if password is None:
                 die(
                     child,
@@ -728,10 +744,13 @@ def ssh_command(
                     logger=logger,
                 )
 
-            child.sendline(password)
-
-            if run_context.logging_enabled:
-                child.logfile = output_handle
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+                wait_for_noecho=False,
+            )
 
         elif index == PATTERN_EOF:
             close_child_logfile(child, logger)
@@ -883,9 +902,6 @@ def ssh_command(
             )
 
         elif index == PATTERN_PASSWORD:
-            if run_context.logging_enabled:
-                child.logfile = None
-
             if password is None:
                 die(
                     child,
@@ -894,10 +910,13 @@ def ssh_command(
                     logger=logger,
                 )
 
-            child.sendline(password)
-
-            if run_context.logging_enabled:
-                child.logfile = output_handle
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+                wait_for_noecho=False,
+            )
 
     close_child_logfile(child, logger)
     return SyncoidAttemptResult(
@@ -1040,27 +1059,26 @@ def run_replications(
                     logger=logger,
                 )
 
-            if (
-                child.exitstatus != EXIT_OK
-                and result.ignored_missing_destroy_snapshot
-            ):
-                logger.warning("")
-                logger.warning(
-                    "Syncoid exited with non-zero status %s, but ignored_missing_destroy_snapshot is True.",
-                    child.exitstatus,
+            if child.exitstatus is None:
+                raise SyncerateError(
+                    "Syncoid ended without an exit status or terminating signal.",
+                    EXIT_SCRIPT_ERROR,
+                    kind="script",
                 )
-                logger.warning(
-                    "Ignoring this because the known no-destroy-snapshot message was seen."
-                )
-                logger.warning("")
 
-            if (
-                child.exitstatus != EXIT_OK
-                and not result.ignored_missing_destroy_snapshot
-            ):
+            if child.exitstatus != EXIT_OK:
                 exit_code = int(child.exitstatus)
 
                 logger.error("")
+                if result.ignored_missing_destroy_snapshot:
+                    logger.error(
+                        "The known missing destroy-snapshot condition was observed, "
+                        "but Syncoid still exited non-zero."
+                    )
+                    logger.error(
+                        "Preserving Syncoid's real exit status instead of masking a "
+                        "possible later replication failure."
+                    )
                 logger.error("This is the Syncoid exit status: %s", exit_code)
 
                 die(

@@ -1,6 +1,8 @@
 """Top-level application orchestration and final error boundary."""
 
+import configparser
 import logging
+import time
 from typing import Optional, Sequence
 
 from .cli import parse_arguments
@@ -12,6 +14,7 @@ from .logging_setup import (
     get_console_logger,
     get_logger,
     log_startup_configuration,
+    log_final_run_summary,
 )
 from .models import AppConfig, ReplicationSummary, RunContext
 from .notifications import (
@@ -71,17 +74,21 @@ def log_syncerate_error(
 
     else:
         logger.error("This was a script error")
+        if error.message:
+            logger.error("%s", error.message)
         logger.error("Exit code: %s", error.exit_code)
 
     logger.error("")
     logger.error("----------")
     logger.error("")
 
+
 def successfull_run(
     app_config: AppConfig,
     run_context: RunContext,
     logger: logging.Logger,
     replication_summary: Optional[ReplicationSummary] = None,
+    runtime_seconds: Optional[float] = None,
 ) -> None:
     """Run success-stage notifications and the optional system action."""
 
@@ -111,7 +118,9 @@ def successfull_run(
         "Now going over MAIL, MQTT and System Option, if option is set in the .cfg file"
     )
     logger.info("")
-    logger.info("Errors for these can still be raised, at this point of the script")
+    logger.info(
+        "MQTT failures can still be fatal here; mail and system-action failures are logged as best-effort post-run actions"
+    )
     logger.info("")
 
     if run_context.logging_enabled:
@@ -144,7 +153,7 @@ def successfull_run(
                 [
                     "Now going over MAIL, MQTT and System Option, if option is set in the .cfg file",
                     "",
-                    "Errors for these can still be raised, at this point of the script",
+                    "MQTT failures can still be fatal here; mail and system-action failures are logged as best-effort post-run actions",
                     "",
                     "----------",
                     "",
@@ -163,18 +172,29 @@ def successfull_run(
             replication_summary=replication_summary,
         )
 
+    if runtime_seconds is not None:
+        log_final_run_summary(app_config, runtime_seconds, logger)
+
     if app_config.mail_enabled:
-        MailTo(
-            app_config,
-            run_context,
-            logger,
-            Exit_Code=EXIT_OK,
-            BrokenPipeWarning=replication_summary.has_broken_pipe_warning,
-            BrokenPipeDatasets=replication_summary.broken_pipe_failed_datasets,
-        )
+        try:
+            MailTo(
+                app_config,
+                run_context,
+                logger,
+                Exit_Code=EXIT_OK,
+                BrokenPipeWarning=replication_summary.has_broken_pipe_warning,
+                BrokenPipeDatasets=replication_summary.broken_pipe_failed_datasets,
+                RuntimeSeconds=runtime_seconds,
+            )
+        except Exception:
+            logger.exception(
+                "Failed sending the success email; continuing because mail delivery "
+                "is a best-effort notification and replication already completed."
+            )
 
     if app_config.system_action_enabled:
         SystemAction(app_config, logger)
+
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Perform all startup and runtime work, returning the final exit code."""
@@ -182,10 +202,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     app_config: Optional[AppConfig] = None
     run_context: Optional[RunContext] = None
     logger: Optional[logging.Logger] = None
+    started_at = time.monotonic()
 
     try:
         args = parse_arguments(argv)
-        app_config = load_app_config(args.conf)
+        try:
+            app_config = load_app_config(args.conf)
+        except (OSError, configparser.Error, ValueError) as exc:
+            raise SyncerateError(
+                f"Configuration error: {exc}",
+                EXIT_SCRIPT_ERROR,
+                kind="script",
+            ) from exc
+
         run_context = create_run_context(app_config)
         logger = get_logger(run_context)
 
@@ -202,11 +231,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 logger,
                 ssh_agent_session=ssh_agent_session,
             )
+        runtime_seconds = time.monotonic() - started_at
         successfull_run(
             app_config,
             run_context,
             logger,
             replication_summary,
+            runtime_seconds=runtime_seconds,
         )
         return EXIT_OK
 
@@ -215,8 +246,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             logger = get_console_logger()
 
         log_syncerate_error(error, logger)
+        runtime_seconds = time.monotonic() - started_at
+        log_final_run_summary(app_config, runtime_seconds, logger)
         send_mqtt_failure_status(error, app_config, logger)
-        send_error_mail(error, app_config, run_context, logger)
+        send_error_mail(
+            error,
+            app_config,
+            run_context,
+            logger,
+            runtime_seconds=runtime_seconds,
+        )
         return error.exit_code
 
     except Exception:
@@ -230,11 +269,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             EXIT_SCRIPT_ERROR,
             kind="script",
         )
+        runtime_seconds = time.monotonic() - started_at
+        log_final_run_summary(app_config, runtime_seconds, logger)
         send_mqtt_failure_status(unexpected_error, app_config, logger)
         send_error_mail(
             unexpected_error,
             app_config,
             run_context,
             logger,
+            runtime_seconds=runtime_seconds,
         )
         return EXIT_SCRIPT_ERROR

@@ -1,7 +1,5 @@
 """Exit codes and the application exception used across Syncerate."""
 
-from typing import Optional
-
 EXIT_OK = 0
 EXIT_LIST_ERROR = 1
 EXIT_SCRIPT_ERROR = 2

@@ -36,6 +36,7 @@ def missmatchinglists(
         kind="list",
     )
 
+
 def read_dataset_list(path: str) -> list[str]:
     """Read active dataset-list lines, ignoring blanks and comments."""
 
@@ -46,13 +47,17 @@ def read_dataset_list(path: str) -> list[str]:
             if line.strip() and not line.strip().startswith("#")
         ]
 
+
 def parse_destination_line(line: str) -> tuple[str, list[str]]:
     """Parse one destination and its optional per-destination arguments."""
 
     if ": " not in line:
         return line, []
 
-    destination_dataset, extra_args_text = line.rsplit(": ", 1)
+    # The documented syntax is "destination: extra arguments". Split only at
+    # the first delimiter so quoted argument values may themselves contain
+    # colon-space text without corrupting the destination field.
+    destination_dataset, extra_args_text = line.split(": ", 1)
     destination_dataset = destination_dataset.strip()
     extra_args_text = extra_args_text.strip()
 
@@ -70,6 +75,7 @@ def parse_destination_line(line: str) -> tuple[str, list[str]]:
 
     return destination_dataset, extra_args
 
+
 def parse_destination_list(
     destination_lines: list[str],
 ) -> tuple[list[str], list[list[str]]]:
@@ -85,6 +91,7 @@ def parse_destination_list(
 
     return destination_datasets, destination_extra_arguments
 
+
 def load_dataset_pairs(
     app_config: AppConfig,
     logger: logging.Logger,
@@ -98,6 +105,18 @@ def load_dataset_pairs(
     logger.info("")
 
     destination_lines_raw = read_dataset_list(app_config.destination_list_path)
+
+    if not source_lines or not destination_lines_raw:
+        logger.error("")
+        logger.error("----------")
+        logger.error("")
+        logger.error("Source and destination lists must each contain at least one active dataset")
+        logger.error("Source items: %s; destination items: %s", len(source_lines), len(destination_lines_raw))
+        raise SyncerateError(
+            "Source and destination lists must each contain at least one active dataset",
+            EXIT_LIST_ERROR,
+            kind="list",
+        )
 
     try:
         destination_lines, destination_extra_arguments = parse_destination_list(
@@ -131,6 +150,14 @@ def load_dataset_pairs(
 
     lists_check_out = True
     for source, destination in zip(source_lines, destination_lines):
+        if source.endswith("/") or destination.endswith("/"):
+            logger.error("Dataset names must not end with '/':")
+            logger.error("Source :   %s", source)
+            logger.error("Dest   :   %s", destination)
+            logger.error("")
+            lists_check_out = False
+            continue
+
         if source.rpartition("/")[-1] == destination.rpartition("/")[-1]:
             logger.info("The end of this Source and Destination Datasets matches:")
             logger.info("Source :   %s", source)

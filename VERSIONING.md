@@ -16,6 +16,67 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.26
+
+Previous version: `0.4.25`.
+
+- Added the requested readability spacing after the summary heading and between metadata fields: the final summary now writes one blank line after `Final run summary`, and when both values are configured one blank line between `BackupTitle` and `BackupComment`.
+- Applied matching heading spacing to the startup `Backup information` block and the requested metadata spacing to the shared final-run summary, so terminal output, `.log` files, and runtime-aware email bodies use the same human-readable layout.
+- Preserved the existing blank line between `BackupComment` and `Total runtime`.
+- Title-only and comment-only configurations do not receive an unnecessary extra blank line.
+- Updated regression tests to verify the exact heading/blank-line/title/blank-line/comment/blank-line/runtime structure in logging and email formatting.
+- Updated `README.md`, `commented_code_map.md`, and version metadata for current 0.4.26 behavior. No configuration option was added, removed, or renamed.
+
+## 0.4.25
+
+Previous version: `0.4.24`.
+
+- Fixed the 0.4.24 timer/email ordering bug: the runtime summary is now written to terminal and the `.log` before a success/error email is constructed, so the `.log` content available to the mail command already contains `Total runtime`.
+- Added one shared plain-text final-summary formatter used by both logger output and runtime-aware email headers. The email therefore uses the same `Backup title`, multiline `Backup comment`, blank line, and `Total runtime` layout as terminal/file logging.
+- Added the requested blank line between the final backup comment and `Total runtime`.
+- Defined the email-safe timer cut-off explicitly: the monotonic timer starts before argument parsing and the reported value is captured once the core replication run has reached success/failure, before email delivery and the optional `SystemAction`. This is necessary because an email cannot contain the exact amount of time spent sending itself or running a later shutdown/reboot action.
+- Preserved the public `backup_header_text()` compatibility helper exported by `Syncerate.py`; manual legacy `MailTo()` calls without a runtime value keep their previous title/comment header behavior.
+- Passed the captured runtime through success and error mail paths so normal success, Broken Pipe warning-success, Syncoid errors, script errors, and MQTT errors can all include the runtime when invoked through `main()`.
+- Added regression tests verifying the blank-line layout, runtime-aware email header, and an end-to-end success path where the copied `.log` text already contains `Total runtime` before `send_mail()` is called.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, and version metadata for current 0.4.25 behavior. No configuration option was added, removed, or renamed.
+
+## 0.4.24
+
+Previous version: `0.4.23`.
+
+- Added a monotonic whole-run timer. A normal Syncerate invocation now records elapsed wall-clock runtime from immediately before argument parsing through final replication/error handling, notifications, and the optional system action, and prints the result as `HH:MM:SS.mmm` in a final summary. `--help` and `--version` keep their normal argparse behavior and do not emit the summary.
+- The final runtime summary repeats the configured `BackupTitle` and `BackupComment` first, so `Total runtime` is shown directly after the descriptive backup metadata in terminal output and the normal `.log` file.
+- Added clean multiline `BackupComment` support documentation using standard INI continuation syntax: continuation lines are indented beneath `BackupComment = ...`. The existing `RawConfigParser` already preserves these lines as embedded newlines, so no custom escaping or quoted multiline syntax is required.
+- Added shared multiline-safe log rendering so every physical line of a multiline comment/configuration value passes through the logger and retains the timestamp/level prefix instead of injecting unprefixed lines into log output.
+- Reused the same backup-metadata logger for both startup and final summary output rather than duplicating title/comment formatting.
+- Added regression tests for multiline comment loading/rendering, duration formatting, final summary ordering, and top-level timer emission.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, and version metadata for current 0.4.24 behavior. No new configuration key is required; existing one-line `BackupComment` values remain valid unchanged.
+
+## 0.4.23
+
+Previous version: `0.4.22`.
+
+- Performed a full end-to-end code review covering configuration, dataset pairing, Syncoid/Pexpect execution, SSH-agent handling, Broken Pipe recovery, notifications, system actions, documentation, and packaging assumptions.
+- Fixed a high-severity false-success path: observing the known “snapshot to destroy no longer exists” condition no longer suppresses an unrelated later non-zero Syncoid exit status. The condition remains non-fatal only when Syncoid itself ultimately exits successfully.
+- Fixed the repetition guard so normal repeatable Syncoid progress such as multiple `INFO: Sending incremental/full` messages cannot trigger exit code `9`. The guard is now limited to repeated interactive host-key/password/passphrase prompts where repeatedly sending automatic responses can indicate a loop.
+- Tightened password/passphrase and generic-warning Pexpect expressions so benign output containing words such as `password` or `WARNINGS` is not mistaken for a credential prompt or fatal warning. Typical OpenSSH prompts such as `user@host's password:` remain recognized.
+- Reused the shared `send_secret()` helper for nested Syncoid credential prompts while preserving the established direct-send/no-extra-`waitnoecho` behavior there. Logging is always restored through `finally`, including failure paths.
+- Strengthened direct `ssh-add` secret handling: if the expected terminal no-echo state does not activate, Syncerate refuses to send the secret instead of risking input while terminal echo is still enabled.
+- Added startup validation for required non-empty text values, including `PassWord`, and strict Boolean parsing for `UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `Use_HomeAssistant`, and `MQTT_JSON_Status`. Supported values are Yes/No, True/False, 1/0, and On/Off; typo values now fail before replication instead of silently becoming false.
+- Added startup validation for `SyncoidCommand`: valid `shlex` syntax plus exactly one `SourceDataSet` and one `DestDataSet` placeholder are required before any dataset is run.
+- Added startup validation for enabled MQTT channels: non-empty broker address, TCP port 1–65535, and all topics/options required by the enabled legacy/HA/JSON path are checked before replication begins.
+- Reused the already validated `Use_HomeAssistant` Boolean through `AppConfig` instead of reparsing the raw option later with the permissive compatibility helper.
+- Fixed an empty-list false-success path: source and destination list files must each contain at least one active dataset. Dataset names ending in `/` are rejected so malformed pairs cannot accidentally match on an empty final component.
+- Changed per-destination argument parsing to split only the first exact `: ` separator. This preserves remote `host:dataset` syntax and allows quoted extra-argument values to contain their own `: ` text.
+- Made successful-run email delivery genuinely best-effort as documented. Missing mail executables and other mail exceptions are logged and no longer turn an otherwise completed replication into exit code `2`; the configured system action still gets its normal chance to run.
+- Refactored `SystemAction()` to one execution path and now log exceptions/non-zero shell return codes explicitly while preserving the established non-fatal post-success behavior and two-minute mail delay.
+- Improved expected configuration-error reporting so malformed configuration produces a clear script/configuration error rather than falling into the generic unhandled-exception message.
+- Restricted startup configuration logging to `[Syncerate Config]` and suppresses common secret-like option names, avoiding accidental logging of credentials in unrelated INI sections.
+- Removed the unused jQuery 1.12.4 reference from the bundled web layout; no project code depended on jQuery. Also removed unused imports found during the review.
+- Added a dependency-free `unittest` regression suite covering configuration validation, dataset parsing/pairing, real Pexpect subprocess simulations, Broken Pipe behavior, warning/prompt matching, notifications, system actions, top-level orchestration, and configuration-log redaction.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, and version metadata for current 0.4.23 behavior. No configuration option was added or removed.
+- Deliberately preserved compatibility-sensitive intended behavior including sequential replication, automatic first-host-key confirmation, generic warning-line fatality, stale-resume ownership by Syncoid, Broken Pipe exhaustion as warning-success, legacy retained MQTT, non-retained JSON MQTT status, and non-fatal post-success system-action failures.
+
 ## 0.4.22
 
 Previous version: `0.4.21`.
