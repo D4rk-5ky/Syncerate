@@ -23,6 +23,7 @@ class AppConfig:
     password_option: str
     syncoid_command: str
     mqtt_json_status: bool = False
+    use_home_assistant: bool = False
     use_ssh_agent: bool = False
     ssh_agent_key_lifetime_seconds: int = 3600
     retry_broken_pipe: bool = False

@@ -1,20 +1,82 @@
-"""Configuration-file loading and Boolean option normalization."""
+"""Configuration-file loading, validation, and Boolean option normalization."""
 
 import configparser
+import shlex
 from typing import Any
 
 from .models import AppConfig
 
 CONFIG_SECTION = "Syncerate Config"
 
+_ENABLED_VALUES = {"YES", "TRUE", "1", "ON"}
+_DISABLED_VALUES = {"NO", "FALSE", "0", "OFF"}
+
 
 def option_is_enabled(value: Any) -> bool:
     """Return True for supported enabled values used in the config file."""
 
-    return str(value).strip().upper() in {"YES", "TRUE", "1", "ON"}
+    return str(value).strip().upper() in _ENABLED_VALUES
+
+
+def parse_boolean_option(
+    raw_config: configparser.RawConfigParser,
+    option_name: str,
+    *,
+    fallback: str = "No",
+) -> bool:
+    """Read one documented Boolean option and reject ambiguous/typo values."""
+
+    value = raw_config.get(CONFIG_SECTION, option_name, fallback=fallback)
+    normalized = value.strip().upper()
+
+    if normalized in _ENABLED_VALUES:
+        return True
+    if normalized in _DISABLED_VALUES:
+        return False
+
+    raise ValueError(
+        f"{option_name} must be one of: Yes, No, True, False, 1, 0, On, Off"
+    )
+
+
+def validate_syncoid_command_template(command_template: str) -> None:
+    """Validate command syntax and require exactly one source/destination placeholder."""
+
+    if not command_template.strip():
+        raise ValueError("SyncoidCommand must not be empty")
+
+    try:
+        command_parts = shlex.split(command_template)
+    except ValueError as exc:
+        raise ValueError(f"Could not parse SyncoidCommand: {exc}") from exc
+
+    if not command_parts:
+        raise ValueError("SyncoidCommand must contain an executable command")
+
+    source_count = sum(part.count("SourceDataSet") for part in command_parts)
+    destination_count = sum(part.count("DestDataSet") for part in command_parts)
+
+    if source_count != 1 or destination_count != 1:
+        raise ValueError(
+            "SyncoidCommand must contain exactly one SourceDataSet placeholder "
+            "and exactly one DestDataSet placeholder"
+        )
+
+
+def _required_text(
+    raw_config: configparser.RawConfigParser,
+    option_name: str,
+) -> str:
+    """Return one required non-empty configuration value."""
+
+    value = raw_config.get(CONFIG_SECTION, option_name).strip()
+    if not value:
+        raise ValueError(f"{option_name} must not be empty")
+    return value
+
 
 def load_app_config(config_path: str) -> AppConfig:
-    """Read the INI file and return all startup settings as AppConfig."""
+    """Read the INI file, validate startup settings, and return AppConfig."""
 
     raw_config = configparser.RawConfigParser()
     loaded_files = raw_config.read(config_path)
@@ -25,10 +87,16 @@ def load_app_config(config_path: str) -> AppConfig:
     if not raw_config.has_section(CONFIG_SECTION):
         raise configparser.NoSectionError(CONFIG_SECTION)
 
-    log_destination_text = raw_config.get(
-        CONFIG_SECTION,
-        "LogDestination",
-    ).strip()
+    mail_option = _required_text(raw_config, "Mail")
+    system_option = _required_text(raw_config, "SystemAction")
+    datetime_format = _required_text(raw_config, "DateTime")
+    source_list_path = _required_text(raw_config, "SourceListPath")
+    destination_list_path = _required_text(raw_config, "DestListPath")
+    password_option = _required_text(raw_config, "PassWord")
+    syncoid_command = _required_text(raw_config, "SyncoidCommand")
+    validate_syncoid_command_template(syncoid_command)
+
+    log_destination_text = _required_text(raw_config, "LogDestination")
 
     if log_destination_text.upper() == "NO":
         log_destination = None
@@ -70,37 +138,70 @@ def load_app_config(config_path: str) -> AppConfig:
             "BrokenPipeRetryWaitSeconds must be zero or a positive whole number"
         )
 
-    use_mqtt = option_is_enabled(
-        raw_config.get(CONFIG_SECTION, "Use_MQTT", fallback="No")
-    )
-    mqtt_json_status = option_is_enabled(
-        raw_config.get(CONFIG_SECTION, "MQTT_JSON_Status", fallback="No")
-    )
+    use_mqtt = parse_boolean_option(raw_config, "Use_MQTT")
+    mqtt_json_status = parse_boolean_option(raw_config, "MQTT_JSON_Status")
+    use_home_assistant = parse_boolean_option(raw_config, "Use_HomeAssistant")
+    use_ssh_agent = parse_boolean_option(raw_config, "UseSSHAgent")
+    retry_broken_pipe = parse_boolean_option(raw_config, "RetryBrokenPipe")
 
     # The legacy MQTT/HA outputs and the JSON status output are independent.
-    # Legacy behavior remains unchanged when Use_MQTT is enabled: the old
-    # success-only mqtt_message is retained, and Use_HomeAssistant optionally
-    # adds the retained availability message. JSON uses its own topic and is
-    # always non-retained.
+    # Validate every enabled channel before replication begins so a typo or a
+    # missing broker/topic cannot fail only after all datasets have been touched.
     legacy_mqtt_topic = ""
-    use_home_assistant = False
     home_assistant_available = ""
+
+    if use_mqtt or mqtt_json_status:
+        broker_address = raw_config.get(
+            CONFIG_SECTION,
+            "broker_address",
+            fallback="",
+        ).strip()
+        if not broker_address:
+            raise ValueError(
+                "broker_address must be configured when MQTT publishing is enabled"
+            )
+
+        try:
+            broker_port = raw_config.getint(CONFIG_SECTION, "broker_port")
+        except (configparser.NoOptionError, ValueError) as exc:
+            raise ValueError(
+                "broker_port must be a whole number when MQTT publishing is enabled"
+            ) from exc
+
+        if not 1 <= broker_port <= 65535:
+            raise ValueError("broker_port must be between 1 and 65535")
 
     if use_mqtt:
         legacy_mqtt_topic = raw_config.get(
-            CONFIG_SECTION, "mqtt_topic", fallback=""
+            CONFIG_SECTION,
+            "mqtt_topic",
+            fallback="",
         ).strip()
-        use_home_assistant = option_is_enabled(
-            raw_config.get(CONFIG_SECTION, "Use_HomeAssistant", fallback="No")
-        )
+        if not legacy_mqtt_topic:
+            raise ValueError("mqtt_topic must be configured when Use_MQTT is enabled")
+
+        # Require the option to exist even though an empty MQTT payload remains
+        # valid and is therefore deliberately not rejected.
+        if not raw_config.has_option(CONFIG_SECTION, "mqtt_message"):
+            raise ValueError("mqtt_message must be configured when Use_MQTT is enabled")
+
         if use_home_assistant:
             home_assistant_available = raw_config.get(
-                CONFIG_SECTION, "HomeAssistant_Available", fallback=""
+                CONFIG_SECTION,
+                "HomeAssistant_Available",
+                fallback="",
             ).strip()
+            if not home_assistant_available:
+                raise ValueError(
+                    "HomeAssistant_Available must be configured when "
+                    "Use_MQTT and Use_HomeAssistant are enabled"
+                )
 
     if mqtt_json_status:
         mqtt_json_topic = raw_config.get(
-            CONFIG_SECTION, "mqtt_json_topic", fallback=""
+            CONFIG_SECTION,
+            "mqtt_json_topic",
+            fallback="",
         ).strip()
         if not mqtt_json_topic:
             raise ValueError(
@@ -122,10 +223,10 @@ def load_app_config(config_path: str) -> AppConfig:
     return AppConfig(
         config_path=config_path,
         raw_config=raw_config,
-        mail_option=raw_config.get(CONFIG_SECTION, "Mail"),
-        system_option=raw_config.get(CONFIG_SECTION, "SystemAction"),
+        mail_option=mail_option,
+        system_option=system_option,
         use_mqtt=use_mqtt,
-        datetime_format=raw_config.get(CONFIG_SECTION, "DateTime"),
+        datetime_format=datetime_format,
         log_destination=log_destination,
         backup_title=raw_config.get(
             CONFIG_SECTION,
@@ -137,18 +238,15 @@ def load_app_config(config_path: str) -> AppConfig:
             "BackupComment",
             fallback="",
         ).strip(),
-        source_list_path=raw_config.get(CONFIG_SECTION, "SourceListPath"),
-        destination_list_path=raw_config.get(CONFIG_SECTION, "DestListPath"),
-        password_option=raw_config.get(CONFIG_SECTION, "PassWord"),
-        syncoid_command=raw_config.get(CONFIG_SECTION, "SyncoidCommand"),
+        source_list_path=source_list_path,
+        destination_list_path=destination_list_path,
+        password_option=password_option,
+        syncoid_command=syncoid_command,
         mqtt_json_status=mqtt_json_status,
-        use_ssh_agent=option_is_enabled(
-            raw_config.get(CONFIG_SECTION, "UseSSHAgent", fallback="No")
-        ),
+        use_home_assistant=use_home_assistant,
+        use_ssh_agent=use_ssh_agent,
         ssh_agent_key_lifetime_seconds=ssh_agent_key_lifetime_seconds,
-        retry_broken_pipe=option_is_enabled(
-            raw_config.get(CONFIG_SECTION, "RetryBrokenPipe", fallback="No")
-        ),
+        retry_broken_pipe=retry_broken_pipe,
         broken_pipe_retry_count=broken_pipe_retry_count,
         broken_pipe_retry_wait_seconds=broken_pipe_retry_wait_seconds,
     )

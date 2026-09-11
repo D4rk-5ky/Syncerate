@@ -6,8 +6,9 @@ import os
 import subprocess
 from typing import Any, Optional
 
-from .config import CONFIG_SECTION, option_is_enabled
+from .config import CONFIG_SECTION
 from .errors import EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
+from .logging_setup import format_final_run_summary
 from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
 
 
@@ -15,7 +16,7 @@ BROKEN_PIPE_SUCCESS_SUBJECT = "Syncerate Succsful - WARNING BROKEN PIPE"
 
 
 def backup_header_text(app_config: AppConfig) -> str:
-    """Return optional backup title/comment text used in email bodies."""
+    """Return the legacy optional backup title/comment email prefix."""
 
     lines: list[str] = []
 
@@ -34,6 +35,19 @@ def backup_header_text(app_config: AppConfig) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def run_summary_header_text(
+    app_config: AppConfig,
+    runtime_seconds: Optional[float],
+) -> str:
+    """Return the shared run summary header used at the top of email bodies."""
+
+    if runtime_seconds is None:
+        return backup_header_text(app_config)
+
+    return format_final_run_summary(app_config, runtime_seconds) + "\n\n----------\n\n"
+
 
 def send_mail(
     subject: str,
@@ -89,6 +103,7 @@ def MailTo(
     MQTT_Fail: Optional[int] = None,
     BrokenPipeWarning: bool = False,
     BrokenPipeDatasets: Optional[list[DatasetPair]] = None,
+    RuntimeSeconds: Optional[float] = None,
 ) -> None:
     """Build and send success, warning-success, and error mail variants.
 
@@ -172,7 +187,7 @@ def MailTo(
                 log_contents = opened_log.read()
 
             body = (
-                backup_header_text(app_config)
+                run_summary_header_text(app_config, RuntimeSeconds)
                 + warning_body
                 + "----------\n\n.log file\n\n----------\n\n"
                 + log_contents
@@ -190,7 +205,7 @@ def MailTo(
                 if BrokenPipeWarning
                 else "Successful Syncerate.py run - No errors found (Logs Disabled)"
             )
-            body = backup_header_text(app_config) + warning_body
+            body = run_summary_header_text(app_config, RuntimeSeconds) + warning_body
             if not BrokenPipeWarning:
                 body += subject
 
@@ -213,7 +228,7 @@ def MailTo(
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = backup_header_text(app_config)
+            body = run_summary_header_text(app_config, RuntimeSeconds)
             with open(error_file, "r", encoding="utf-8") as opened_error:
                 error_contents = opened_error.read()
             body += (
@@ -239,7 +254,7 @@ def MailTo(
             )
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                backup_header_text(app_config) + subject_and_body,
+                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
                 recipient,
             )
 
@@ -256,7 +271,7 @@ def MailTo(
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = backup_header_text(app_config)
+            body = run_summary_header_text(app_config, RuntimeSeconds)
             with open(error_file, "r", encoding="utf-8") as opened_error:
                 error_contents = opened_error.read()
             body += (
@@ -280,7 +295,7 @@ def MailTo(
             subject_and_body = "Error sending MQTT message - (Logs Disabled)"
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                backup_header_text(app_config) + subject_and_body,
+                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
                 recipient,
             )
 
@@ -297,7 +312,7 @@ def MailTo(
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = backup_header_text(app_config)
+            body = run_summary_header_text(app_config, RuntimeSeconds)
             with open(error_file, "r", encoding="utf-8") as opened_error:
                 error_contents = opened_error.read()
             body += (
@@ -323,7 +338,7 @@ def MailTo(
             )
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                backup_header_text(app_config) + subject_and_body,
+                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
                 recipient,
             )
 
@@ -438,13 +453,7 @@ def send_mqtt_messages(
     # signals: the normal mqtt_message is retained, and enabling the old Home
     # Assistant integration additionally publishes retained availability=online.
     if success and app_config.use_mqtt:
-        use_home_assistant = option_is_enabled(
-            raw_config.get(
-                CONFIG_SECTION,
-                "Use_HomeAssistant",
-                fallback="No",
-            )
-        )
+        use_home_assistant = app_config.use_home_assistant
 
         if use_home_assistant:
             messages.append(
@@ -557,6 +566,7 @@ def send_error_mail(
     app_config: Optional[AppConfig],
     run_context: Optional[RunContext],
     logger: logging.Logger,
+    runtime_seconds: Optional[float] = None,
 ) -> None:
     """Send the matching error mail without allowing mail failure to mask exit code."""
 
@@ -570,6 +580,7 @@ def send_error_mail(
                 run_context,
                 logger,
                 MQTT_Fail=error.exit_code,
+                RuntimeSeconds=runtime_seconds,
             )
         elif error.kind == "syncoid":
             MailTo(
@@ -577,6 +588,7 @@ def send_error_mail(
                 run_context,
                 logger,
                 SynCoidFail=error.exit_code,
+                RuntimeSeconds=runtime_seconds,
             )
         else:
             MailTo(
@@ -584,6 +596,7 @@ def send_error_mail(
                 run_context,
                 logger,
                 Exit_Code=error.exit_code,
+                RuntimeSeconds=runtime_seconds,
             )
     except Exception:
         logger.exception("Additionally failed to send the error mail")

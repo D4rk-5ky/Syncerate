@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.22`
+Current version: `0.4.26`
 
 ## Disclaimer and liability notice
 
@@ -104,6 +104,14 @@ Or with the short option:
 ./Syncerate.py -c ./config/Syncerate.cfg
 ```
 
+Run the packaged regression suite after installation or modification with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The suite uses Python's standard `unittest` framework and the same `pexpect` dependency required by Syncerate. It uses fake child processes and does not run real ZFS replication.
+
 ## Source dataset list
 
 Put one source dataset on each active line:
@@ -114,7 +122,7 @@ Storage/Media
 Storage/DataSet With Spaces
 ```
 
-Blank lines and lines beginning with `#` are ignored.
+Blank lines and lines beginning with `#` are ignored. Each source and destination file must contain at least one active dataset. Dataset names must not end with `/`; a trailing slash is rejected so two malformed names cannot accidentally match on an empty final component.
 
 Write dataset names containing spaces normally. Do not add shell escape characters:
 
@@ -172,13 +180,13 @@ The separator must be exactly:
 : 
 ```
 
-Remote destinations remain supported because Syncerate splits on the final colon-space sequence:
+Remote destinations remain supported because the SSH `host:dataset` colon has no following space, while Syncerate splits only on the **first** exact colon-space separator:
 
 ```text
 backupuser@192.0.2.20:BackUp/Media: --recvoptions="o compression=zstd"
 ```
 
-The text after the separator is parsed as command arguments and appended to the Syncoid command for that dataset pair only.
+The text after the separator is parsed with `shlex` as command arguments and appended to the Syncoid command for that dataset pair only. Because only the first `: ` separator is consumed, quoted argument values may themselves contain `: ` text without changing the destination dataset.
 
 ## Configuration file
 
@@ -195,6 +203,7 @@ A complete example:
 
 BackupTitle = Main ZFS backup
 BackupComment = Replicate selected datasets to the backup pool
+    This is a second line in the same backup comment.
 
 SourceListPath = /absolute/path/to/source-list
 DestListPath = /absolute/path/to/destination-list
@@ -233,11 +242,11 @@ mqtt_json_topic = homeassistant/syncerate/status
 | Option | Required | Accepted value or purpose |
 | --- | --- | --- |
 | `BackupTitle` | No | Optional short name included in logs, email content, and JSON MQTT `title`/compatibility `name` fields. |
-| `BackupComment` | No | Optional description included in logs and email content. |
+| `BackupComment` | No | Optional description included in logs and email content. It may span multiple lines by indenting every continuation line in the INI file. |
 | `SourceListPath` | Yes | Path to the source dataset list. Relative paths are resolved from the current working directory. |
 | `DestListPath` | Yes | Path to the destination dataset list. Relative paths are resolved from the current working directory. |
-| `SyncoidCommand` | Yes | Syncoid command template containing the exact placeholders `SourceDataSet` and `DestDataSet`. |
-| `PassWord` | Yes | `No`, `Ask`, or a literal SSH password/key passphrase. With private-agent mode, `Ask` is recommended for encrypted keys so the passphrase is not stored in the configuration. |
+| `SyncoidCommand` | Yes | Non-empty Syncoid command template containing exactly one `SourceDataSet` placeholder and exactly one `DestDataSet` placeholder. The command must also be valid `shlex` syntax. |
+| `PassWord` | Yes | Non-empty value: `No`, `Ask`, or a literal SSH password/key passphrase. With private-agent mode, `Ask` is recommended for encrypted keys so the passphrase is not stored in the configuration. |
 | `UseSSHAgent` | No | Enables an isolated per-run OpenSSH agent with `Yes`, `True`, `1`, or `On`. Requires `--sshkey` in `SyncoidCommand`. Disabled values preserve the legacy Pexpect-through-Syncoid authentication path. |
 | `SSHAgentKeyLifetimeSeconds` | No | Positive whole-number lifetime for the identity loaded into the private agent. Defaults to `3600`. If it expires during a long run, Syncerate reloads it before the next dataset. |
 | `Mail` | Yes | Recipient address, or `No` to disable email. |
@@ -249,7 +258,7 @@ mqtt_json_topic = homeassistant/syncerate/status
 | `BrokenPipeRetryWaitSeconds` | No | Whole number of seconds to wait before each Broken Pipe retry. Defaults to `10` when omitted. Use `0` to retry immediately. Negative values and non-integers are rejected as configuration errors. |
 | `Use_MQTT` | No | Enables the original success-only MQTT output with `Yes`, `True`, `1`, or `On`. On success, `mqtt_message` is published retained to `mqtt_topic`. This legacy behavior is independent from JSON status. |
 | `broker_address` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker hostname or IP address shared by the enabled MQTT outputs. |
-| `broker_port` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker TCP port as an integer, commonly `1883`. |
+| `broker_port` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker TCP port as an integer from `1` through `65535`, commonly `1883`. |
 | `mqtt_username` | No | MQTT username shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
 | `mqtt_password` | No | MQTT password shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
 | `mqtt_topic` | When `Use_MQTT = Yes` | Original success-only MQTT topic. The configured `mqtt_message` is always retained here. JSON is never published to this topic. |
@@ -259,11 +268,13 @@ mqtt_json_topic = homeassistant/syncerate/status
 | `MQTT_JSON_Status` | No | Independently enables structured success/failure JSON status. It may run together with the old MQTT/HA outputs or by itself while `Use_MQTT = No`. JSON is always non-retained. |
 | `mqtt_json_topic` | When `MQTT_JSON_Status = Yes` | Dedicated JSON-only topic. It must differ from an enabled `mqtt_topic` and `HomeAssistant_Available`; every JSON publish hard-codes `retain = false`. |
 
-Although some integrations are disabled with `No`, the required keys should remain in the configuration so startup validation succeeds.
+Boolean options (`UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `Use_HomeAssistant`, and `MQTT_JSON_Status`) accept `Yes`/`No`, `True`/`False`, `1`/`0`, or `On`/`Off` case-insensitively. Other spellings are rejected at startup instead of being silently treated as disabled.
+
+When MQTT is enabled, the broker address, valid port, and the topics required by the enabled channel are validated before replication starts. Although some integrations are disabled with `No`, the required keys should remain in the configuration so startup validation succeeds. Required text options may not be empty; use the documented `No` value to disable mail, logging, or the system action.
 
 ## Syncoid command templates
 
-The template must contain these case-sensitive placeholders:
+The template must contain exactly one occurrence of each of these case-sensitive placeholders:
 
 ```text
 SourceDataSet
@@ -308,7 +319,7 @@ PassWord = Ask
 PassWord = your-secret
 ```
 
-`Ask` prompts once with `getpass()` when Syncerate starts and is recommended for an encrypted SSH key because the passphrase is not stored in the configuration. Password and MQTT credential values are omitted from normal configuration logging.
+`Ask` prompts once with `getpass()` when Syncerate starts and is recommended for an encrypted SSH key because the passphrase is not stored in the configuration. Password, MQTT credentials, and other secret-like option names are omitted from normal configuration logging. Only the `[Syncerate Config]` section is logged; unrelated INI sections are not echoed.
 
 ### Recommended encrypted-key mode: private ssh-agent
 
@@ -356,7 +367,20 @@ With:
 UseSSHAgent = No
 ```
 
-Syncerate uses the original Pexpect-through-Syncoid model. Pexpect starts Syncoid and watches the output produced by Syncoid and its nested SSH process. If an SSH account-password or private-key-passphrase prompt appears, Syncerate temporarily disables the `.out` logfile, sends `PassWord` directly to the Syncoid Pexpect child with `child.sendline()`, then restores logging. It does not wait for a separate no-echo transition before sending. If `PassWord = No`, an observed credential prompt remains a fatal authentication error.
+Syncerate uses the original Pexpect-through-Syncoid model. Pexpect starts Syncoid and watches the output produced by Syncoid and its nested SSH process. If an SSH account-password or private-key-passphrase prompt appears, Syncerate temporarily disables the `.out` logfile, sends `PassWord` directly to the Syncoid Pexpect child, then restores logging. The nested Syncoid prompt path deliberately does not wait for a separate no-echo transition before sending, preserving the established behavior. If `PassWord = No`, an observed credential prompt remains a fatal authentication error. Prompt matching is shaped like a real password/passphrase prompt, so ordinary output containing words such as `password` is not treated as a request for a secret.
+
+## Multiline backup comments
+
+`BackupComment` uses normal INI continuation lines. Put the first line after `BackupComment =` and indent every following line with spaces or a tab:
+
+```ini
+BackupTitle = Main ZFS backup
+BackupComment = Replicate selected datasets to the backup pool
+    This line explains why the backup is running.
+    This line can contain another useful note.
+```
+
+Do not wrap the whole multiline value in quotes. Quotes would become part of the value, and an unindented second physical line is not a continuation. Syncerate preserves the embedded newlines for email content and logs each comment line separately so terminal and `.log` output keep their normal timestamp/level prefix.
 
 ## Logging
 
@@ -390,6 +414,23 @@ The timestamp is generated from `DateTime`, for example:
 DateTime = %Y-%m-%d_%H_%M_%S
 ```
 
+For every normal invocation, Syncerate starts a monotonic runtime timer before configuration/runtime work. The reported `Total runtime` is captured when the replication run has reached its success/failure result, immediately before post-run email and `SystemAction` handling. This fixed cut-off is intentional: it allows the **same runtime value** to be written to terminal, `.log`, and the email that is about to be sent. Time spent sending that same email, waiting the optional two minutes before a system action, or executing the system action cannot be included in an email that has already been constructed.
+
+The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the timer. The same plain-text summary is also placed at the top of success and error email bodies. `--help` and `--version` do not produce a runtime summary.
+
+Example:
+
+```text
+Final run summary
+
+Backup title    :   Main ZFS backup
+
+Backup comment  :   Replicate selected datasets to the backup pool
+                    Second comment line
+
+Total runtime   :   01:23:45.678
+```
+
 ## Email notifications
 
 Disable email:
@@ -404,7 +445,7 @@ Enable email:
 Mail = user@example.com
 ```
 
-A working local `mail` command is required. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Log files are attached when file logging is enabled and the relevant files are available.
+A working local `mail` command is required for delivery. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, and `Total runtime`. When file logging is enabled, the `.log` summary is written before the message is built, so both the copied `.log` text in the body and the attached `.log` already contain the timer. Log files are attached when file logging is enabled and the relevant files are available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not convert an already completed replication into a failed Syncerate run.
 
 When `RetryBrokenPipe` is enabled and a dataset is skipped after exhausting its configured retry count, the run still returns success when no other failure occurs. The success email subject is exactly:
 
@@ -426,7 +467,7 @@ During this recovery Syncerate logs the stages explicitly:
 4. a `Broken pipe` produced by the failed resume pipeline is treated as part of that recovery and does not trigger the normal Broken Pipe retry policy;
 5. when Syncoid reports a new `INFO: Sending incremental` or `INFO: Sending full`, Syncerate logs that recovery completed and restores normal Broken Pipe handling for the replacement transfer.
 
-This keeps ownership of the receive token and reset operation inside Syncoid instead of duplicating ZFS receive-state manipulation in Syncerate. If Syncoid cannot recover and exits nonzero, Syncerate preserves the real Syncoid failure handling.
+This keeps ownership of the receive token and reset operation inside Syncoid instead of duplicating ZFS receive-state manipulation in Syncerate. If Syncoid cannot recover and exits nonzero, Syncerate preserves the real Syncoid failure handling. Likewise, the recognized “snapshot to destroy no longer exists” condition is non-fatal only when Syncoid ultimately exits successfully; it no longer masks an unrelated later non-zero Syncoid exit status.
 
 ## Optional Broken Pipe retry
 
@@ -598,7 +639,7 @@ SystemAction = reboot
 SystemAction = /path/to/trusted-script.sh
 ```
 
-The command is executed through a shell only after all dataset transfers succeed, MQTT publishing succeeds when enabled, and email sending has been attempted when enabled. Configure only trusted commands.
+The command is executed through a shell only after all dataset transfers succeed, MQTT publishing succeeds when enabled, and email sending has been attempted when enabled. Configure only trusted commands. A system-action exception or non-zero shell return code is logged explicitly, but it remains a best-effort post-run action and does not change an otherwise successful Syncerate exit code.
 
 When email and a system action are both enabled, Syncerate waits two minutes before executing the action so the local mail command has time to finish before a shutdown or reboot.
 
@@ -654,13 +695,15 @@ Syncerate monitors Syncoid and SSH output for:
 - skipped datasets;
 - an interrupted receive whose original resume snapshot no longer exists, allowing Syncoid to reset the stale receive state and start a valid replacement send;
 - unavailable ZFS resume support where Syncoid continues without it;
-- repeated matched prompts or messages;
+- an interactive host-key, password, or passphrase prompt repeating too many times;
 - optional per-dataset retries, up to `BrokenPipeRetryCount`, after the configured `BrokenPipeRetryWaitSeconds`, when `Broken pipe` appears;
 - retry exhaustion that skips only the affected dataset, resets the counter, and continues the list;
 - generic warnings;
 - the recognized missing destroy-snapshot condition.
 
-Generic warnings remain fatal except for the specifically recognized Syncoid stale-receive reset warning and the exact unavailable-resume message. During stale receive recovery, Syncerate waits for Syncoid to reset the receive state and suppresses only the Broken Pipe associated with that failed resume pipeline. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Ordinary Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
+When SSH presents the standard first-connection host-key confirmation prompt, Syncerate automatically answers `yes`, preserving existing behavior. This is convenient but weaker than pre-verifying host keys. For important systems, populate `known_hosts` ahead of time or enforce your preferred `StrictHostKeyChecking` policy through normal SSH configuration/Syncoid options so an unexpected host key is rejected instead of accepted interactively.
+
+Generic warning **lines** remain fatal except for the specifically recognized Syncoid stale-receive reset warning and the exact unavailable-resume message. Warning matching is anchored to warning-line shapes so benign words such as `WARNINGS` do not become fatal accidentally. Normal repeated `INFO: Sending ...` progress is not subject to the interactive-prompt repetition guard. During stale receive recovery, Syncerate waits for Syncoid to reset the receive state and suppresses only the Broken Pipe associated with that failed resume pipeline. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Ordinary Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
 
 ## Exit codes
 
