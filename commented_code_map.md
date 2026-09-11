@@ -1,11 +1,14 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.26`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.27`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
 ```text
 Syncerate.py
+Syncerate.spec
+build_pyinstaller.sh
+requirements-build.txt
 syncerate/
 ├── __init__.py
 ├── app.py
@@ -25,6 +28,7 @@ tests/
 ├── test_config.py
 ├── test_datasets.py
 ├── test_notifications.py
+├── test_packaging.py
 ├── test_syncoid_runner.py
 └── test_system_actions.py
 ```
@@ -80,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.26"
+VERSION = "0.4.27"
 __version__ = VERSION
 ```
 
@@ -722,6 +726,31 @@ Successful completion
 ```
 
 This explicit flow is why modules do not need shared mutable runtime globals.
+## Standalone PyInstaller packaging
+
+### `Syncerate.spec`
+
+- Defines the checked-in PyInstaller build recipe instead of relying on generated command-line state.
+- `collect_submodules("pexpect")`: explicitly includes the Pexpect package family used by Syncoid/SSH interaction.
+- `collect_submodules("paho.mqtt")`: explicitly includes all MQTT submodules even though Paho is imported dynamically inside notification code only when MQTT is enabled. This prevents a standalone build from working without MQTT but failing later when MQTT is turned on.
+- `Analysis(...)`: starts dependency analysis at the compatibility entry point `Syncerate.py` and adds the explicit third-party hidden imports.
+- `PYZ(...)`: creates the compressed Python module archive used by the executable.
+- `EXE(...)`: creates one console executable named `Syncerate`; one-file mode is achieved by passing analyzed binaries/data directly into `EXE` without a `COLLECT` stage. UPX is deliberately disabled for predictable builds.
+
+### `build_pyinstaller.sh`
+
+- Uses `set -euo pipefail` so missing variables and failed build/check commands stop the build instead of leaving a misleading partial release.
+- Resolves the project root from the script location and builds from that directory so the command works regardless of the caller's current working directory.
+- Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
+- Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
+- Verifies that `dist/Syncerate` exists and is executable.
+- Runs the new executable with `--version` and checks for exactly `Syncerate.py 0.4.27`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script.
+
+### `requirements-build.txt`
+
+- Pins `PyInstaller`, `pyinstaller-hooks-contrib`, `pexpect`, and `paho-mqtt` for the documented standalone build environment. Transitive dependencies are resolved by pip.
+- These packages are build inputs; a user running `dist/Syncerate` does not install them separately.
+
 ## Regression test suite
 
 The packaged `tests/` directory uses only Python `unittest` plus Syncerate's existing runtime dependency `pexpect`; it does not require pytest. Real tiny child processes are used where Pexpect behavior matters.
@@ -749,6 +778,10 @@ Covers blank/comment filtering, quoted `: ` inside extra arguments, malformed qu
 
 Covers the runtime-aware email summary header, JSON warning-success/skipped-pair payloads, failure payload contents, and bounded MQTT stderr extraction.
 
+### `tests/test_packaging.py` — `PackagingTests`
+
+Static tests verify the checked-in spec is one-file, explicitly collects Pexpect/Paho MQTT, pins build inputs, and keeps the build wrapper's clean-build and frozen-CLI verification safeguards.
+
 ### `tests/test_system_actions.py`
 
 - `ListHandler.__init__()` / `emit()`: tiny capture handler used to inspect action logs.
@@ -766,6 +799,8 @@ Covers the runtime-aware email summary header, JSON warning-success/skipped-pair
 
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
+- `Syncerate.spec`, `build_pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
+- `dist/Syncerate`: release artifact when a PyInstaller build has been produced; it is platform-specific and is intentionally not imported by source-mode tests.
 - `config/example-Syncerate.cfg`: complete option example kept synchronized with the loader.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
 - Home Assistant YAML examples: legacy availability and JSON-status consumption examples.
@@ -866,6 +901,13 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_broken_pipe_disabled_preserves_real_nonzero_exit()`: regression check that broken pipe disabled preserves real nonzero exit.
 - `test_broken_pipe_retry_count_is_per_dataset_and_exhaustion_is_warning_success()`: regression check that broken pipe retry count is per dataset and exhaustion is warning success.
 - `test_repeated_host_key_prompt_fails_code_9()`: regression check that repeated host key prompt fails code 9.
+
+### `tests/test_packaging.py`
+
+- `PackagingTests`: groups static regression checks for the standalone build recipe.
+- `test_spec_builds_onefile_syncerate_and_collects_runtime_packages()`: verifies the spec builds a one-file `Syncerate` executable and explicitly collects Pexpect plus dynamically imported Paho MQTT modules.
+- `test_build_requirements_pin_packager_and_runtime_dependencies()`: verifies the documented build inputs stay pinned.
+- `test_build_script_cleans_generated_output_and_verifies_executable()`: verifies the build wrapper keeps strict shell failure handling, cleans generated output, invokes the spec, and validates the frozen CLI/version.
 
 ### `tests/test_system_actions.py`
 

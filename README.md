@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.26`
+Current version: `0.4.27`
 
 ## Disclaimer and liability notice
 
@@ -67,6 +67,35 @@ Install local mail support only when needed:
 ```bash
 sudo apt install postfix mailutils
 ```
+
+## Standalone PyInstaller executable
+
+Release builds can include a single-file executable at `dist/Syncerate`. The executable is built with PyInstaller in one-file/console mode and contains the Python interpreter plus the Python packages Syncerate needs, including `pexpect` and `paho-mqtt`. A machine running that executable therefore does **not** need Python, `pexpect`, or `paho-mqtt` installed separately.
+
+The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
+
+PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
+
+Run the packaged executable exactly like the Python entry point:
+
+```bash
+./dist/Syncerate --version
+./dist/Syncerate --help
+./dist/Syncerate --conf /path/to/Syncerate.cfg
+```
+
+### Rebuilding the executable
+
+`requirements-build.txt`, `Syncerate.spec`, and `build_pyinstaller.sh` define the reproducible build path. Create a clean virtual environment, install the pinned build/runtime dependencies, then run the build script:
+
+```bash
+python3 -m venv .venv-build
+. .venv-build/bin/activate
+python -m pip install -r requirements-build.txt
+./build_pyinstaller.sh
+```
+
+`build_pyinstaller.sh` removes previous `build/` and `dist/` output, runs the checked-in PyInstaller spec, verifies that `dist/Syncerate` exists and is executable, and checks its `--version` and `--help` commands. The spec explicitly collects both `pexpect` and the dynamically imported `paho.mqtt` package so MQTT support is present even though `paho-mqtt` is imported only when MQTT is enabled.
 
 ## Prepare the application
 

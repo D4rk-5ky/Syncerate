@@ -16,6 +16,18 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.27
+
+Previous version: `0.4.26`.
+
+- Added a reproducible PyInstaller one-file build for the standalone `dist/Syncerate` executable. The build keeps configuration and dataset-list files external while bundling the Python interpreter and Python dependencies.
+- Added `Syncerate.spec` and explicitly collects `pexpect` plus all `paho.mqtt` submodules. Explicit MQTT collection is required because Syncerate intentionally imports Paho dynamically only when MQTT publishing is enabled.
+- Added `build_pyinstaller.sh`, which cleans previous build output, validates the build/runtime modules, invokes the checked-in spec, and verifies the produced executable with `--version` and `--help`.
+- Added `requirements-build.txt` with pinned PyInstaller, PyInstaller hook, `pexpect`, and `paho-mqtt` versions used by the standalone build path.
+- Added packaging regression tests that verify the spec, pinned requirements, build-script safety checks, one-file executable name, and explicit inclusion of both required third-party module families.
+- Updated `README.md` and `commented_code_map.md` with standalone executable usage, external system-command requirements, platform-specific build limitations, and rebuild commands.
+- No replication, SSH, retry, notification, timer, configuration, or safety behavior was changed. No configuration option was added, removed, or renamed.
+
 ## 0.4.26
 
 Previous version: `0.4.25`.
