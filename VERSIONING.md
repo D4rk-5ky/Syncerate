@@ -16,6 +16,16 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.22
+
+Previous version: `0.4.21`.
+
+- Removed the stale private-agent startup log line claiming that agent forwarding would be forced off. Version 0.4.21 already stopped rewriting Syncoid/SSH options, so this change corrects logging only and does not alter SSH, Syncoid, or authentication behavior.
+- Standardized the structured MQTT JSON example topic to `homeassistant/syncerate/status` in `README.md`, `config/example-Syncerate.cfg`, and the supplied Home Assistant automation.
+- Replaced the TimeShift-BTRFS-Sync-specific Home Assistant JSON automation triggers, names, and Zotac shutdown action with a generic Syncerate automation that listens only on `homeassistant/syncerate/status` and retains the success/failure/unknown Pushover branches.
+- Updated `README.md`, `commented_code_map.md`, `config/example-Syncerate.cfg`, and version metadata for current 0.4.22 behavior.
+- Preserved replication safety, dataset validation, SSH-agent isolation, Syncoid command ownership, credential handling, Broken Pipe recovery/retries, legacy MQTT/Home Assistant availability behavior, JSON non-retained publishing, email, system actions, and existing exit-code handling.
+
 ## 0.4.21
 
 Previous version: `0.4.20`.

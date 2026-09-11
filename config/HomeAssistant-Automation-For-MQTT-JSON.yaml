@@ -1,23 +1,11 @@
-alias: Timeshift BTRFS Sync - MQTT - All Servers
+alias: Syncerate - MQTT JSON Status
 description: >-
-  Handle timeshift-btrfs-sync success, failure, or unknown reports from all
-  configured servers independently over dedicated non-retained MQTT JSON status topics.
+  Handle Syncerate success, failure, or unknown reports from the dedicated
+  non-retained MQTT JSON status topic.
 triggers:
   - trigger: mqtt
-    id: zotac
-    topic: homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/json-status
-  - trigger: mqtt
-    id: kubuntu
-    topic: homeassistant/timeshift-btrfs-sync/kubuntu-timeshift/json-status
-  - trigger: mqtt
-    id: ubuntu
-    topic: homeassistant/timeshift-btrfs-sync/ubuntu-timeshift/json-status
-  - trigger: mqtt
-    id: msi_z170
-    topic: homeassistant/timeshift-btrfs-sync/MSI-Z170-Gaming-M7/json-status
-  - trigger: mqtt
-    id: msi_z87
-    topic: homeassistant/timeshift-btrfs-sync/msi-z87-g43-gaming-timeshift/json-status
+    id: syncerate
+    topic: homeassistant/syncerate/status
 conditions: []
 actions:
   - variables:
@@ -66,7 +54,7 @@ actions:
         sequence:
           - action: notify.pushover
             data:
-              title: ✅ Btrfs sync successful
+              title: ✅ Syncerate successful
               message: >-
                 {{ report_title }} finished successfully.
 
@@ -78,26 +66,13 @@ actions:
               data:
                 priority: 0
                 sound: pushover
-          - choose:
-              - conditions:
-                  - condition: trigger
-                    id:
-                      - zotac
-                sequence:
-                  - action: mqtt.publish
-                    data:
-                      evaluate_payload: false
-                      qos: "0"
-                      retain: false
-                      topic: homeassistant/zotac-ri531
-                      payload: shutdown_delay
       - conditions:
           - condition: template
             value_template: "{{ mqtt_status == 'failure' }}"
         sequence:
           - action: notify.pushover
             data:
-              title: ❌ Btrfs sync failed
+              title: ❌ Syncerate failed
               message: >-
                 {{ report_title }} failed.
 
@@ -112,12 +87,11 @@ actions:
     default:
       - action: notify.pushover
         data:
-          title: ❔ Btrfs sync status unknown
+          title: ❔ Syncerate status unknown
           message: >-
             Received an MQTT status that was neither success nor failure.
 
             Title: {{ report_title }}
-            Trigger: {{ trigger.id }}
             Topic: {{ trigger.topic }}
             Raw payload: {{ trigger.payload | default('No payload') }}
           data:

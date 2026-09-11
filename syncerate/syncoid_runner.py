@@ -218,7 +218,6 @@ def start_private_ssh_agent(
             "Agent identity lifetime: %s seconds",
             app_config.ssh_agent_key_lifetime_seconds,
         )
-        logger.info("Agent forwarding will be forced off for Syncoid SSH commands")
         logger.info("")
 
         return SSHAgentSession(
