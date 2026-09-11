@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.21`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.22`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -71,7 +71,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.21"
+VERSION = "0.4.22"
 __version__ = VERSION
 ```
 
@@ -474,7 +474,7 @@ Converts optional `pexpect` values into safe strings. `None` becomes an empty st
 
 Used for a **directly controlled interactive child**, currently `ssh-add` in private-agent mode. It temporarily disables any Pexpect logfile, waits up to 3 seconds for no-echo input, sends the secret with `child.sendline()`, and restores logging in `finally`.
 
-The main Syncoid runner deliberately does **not** use this helper in 0.4.21. Its password/passphrase branches are restored to the original Pexpect-through-Syncoid behavior and call `child.sendline(password)` directly after temporarily disabling the `.out` logfile.
+The main Syncoid runner deliberately does **not** use this helper in 0.4.22. Its password/passphrase branches are restored to the original Pexpect-through-Syncoid behavior and call `child.sendline(password)` directly after temporarily disabling the `.out` logfile.
 
 ### `extract_ssh_key_path(command_template)`
 

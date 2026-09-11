@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.21`
+Current version: `0.4.22`
 
 ## Disclaimer and liability notice
 
@@ -225,7 +225,7 @@ Use_HomeAssistant = No
 HomeAssistant_Available = home-assistant/syncerate/available
 
 MQTT_JSON_Status = No
-mqtt_json_topic = home-assistant/syncerate/json-status
+mqtt_json_topic = homeassistant/syncerate/status
 ```
 
 ## Configuration options
@@ -510,7 +510,7 @@ MQTT_JSON_Status = Yes
 
 mqtt_topic = home-assistant/syncerate/command
 mqtt_message = ON
-mqtt_json_topic = homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/json-status
+mqtt_json_topic = homeassistant/syncerate/status
 ```
 
 Or JSON can run by itself while the old MQTT output is disabled:
@@ -520,12 +520,12 @@ Use_MQTT = No
 MQTT_JSON_Status = Yes
 broker_address = 192.0.2.30
 broker_port = 1883
-mqtt_json_topic = homeassistant/timeshift-btrfs-sync/zotac-ri531-timeshift/json-status
+mqtt_json_topic = homeassistant/syncerate/status
 ```
 
 The JSON topic is deliberately separate from the retained legacy topics. When both old MQTT and JSON are enabled, `mqtt_json_topic` must differ from `mqtt_topic`; when the old Home Assistant availability integration is also enabled, it must differ from `HomeAssistant_Available` as well.
 
-**Every JSON publish uses `retain = false`. There is no configuration option that can enable retain for JSON.** This prevents Syncerate from creating a retained JSON success/failure event that Home Assistant could replay on reconnect. Use a new dedicated topic such as a `/json-status` topic so it also does not inherit the meaning of an older retained legacy topic.
+**Every JSON publish uses `retain = false`. There is no configuration option that can enable retain for JSON.** This prevents Syncerate from creating a retained JSON success/failure event that Home Assistant could replay on reconnect. Use a new dedicated topic such as `homeassistant/syncerate/status` so it also does not inherit the meaning of an older retained legacy topic.
 
 Successful JSON example:
 
