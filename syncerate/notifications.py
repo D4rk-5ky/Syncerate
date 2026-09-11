@@ -40,13 +40,21 @@ def backup_header_text(app_config: AppConfig) -> str:
 def run_summary_header_text(
     app_config: AppConfig,
     runtime_seconds: Optional[float],
+    replication_summary: Optional[ReplicationSummary] = None,
 ) -> str:
     """Return the shared run summary header used at the top of email bodies."""
 
     if runtime_seconds is None:
         return backup_header_text(app_config)
 
-    return format_final_run_summary(app_config, runtime_seconds) + "\n\n----------\n\n"
+    return (
+        format_final_run_summary(
+            app_config,
+            runtime_seconds,
+            replication_summary,
+        )
+        + "\n\n----------\n\n"
+    )
 
 
 def send_mail(
@@ -104,6 +112,7 @@ def MailTo(
     BrokenPipeWarning: bool = False,
     BrokenPipeDatasets: Optional[list[DatasetPair]] = None,
     RuntimeSeconds: Optional[float] = None,
+    ReplicationSummaryData: Optional[ReplicationSummary] = None,
 ) -> None:
     """Build and send success, warning-success, and error mail variants.
 
@@ -187,7 +196,11 @@ def MailTo(
                 log_contents = opened_log.read()
 
             body = (
-                run_summary_header_text(app_config, RuntimeSeconds)
+                run_summary_header_text(
+                    app_config,
+                    RuntimeSeconds,
+                    ReplicationSummaryData,
+                )
                 + warning_body
                 + "----------\n\n.log file\n\n----------\n\n"
                 + log_contents
@@ -205,7 +218,14 @@ def MailTo(
                 if BrokenPipeWarning
                 else "Successful Syncerate.py run - No errors found (Logs Disabled)"
             )
-            body = run_summary_header_text(app_config, RuntimeSeconds) + warning_body
+            body = (
+                run_summary_header_text(
+                    app_config,
+                    RuntimeSeconds,
+                    ReplicationSummaryData,
+                )
+                + warning_body
+            )
             if not BrokenPipeWarning:
                 body += subject
 

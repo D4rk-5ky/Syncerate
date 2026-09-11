@@ -31,7 +31,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("rm -rf -- build dist", script)
         self.assertIn('PYTHON_BIN="${PYTHON_BIN:-python3}"', script)
         self.assertIn('"$PYTHON_BIN" -m PyInstaller --clean --noconfirm Syncerate.spec', script)
-        self.assertIn('EXPECTED_VERSION="0.4.27"', script)
+        self.assertIn('EXPECTED_VERSION="0.4.29"', script)
         self.assertIn('"$EXECUTABLE" --help', script)
 
 

@@ -11,8 +11,10 @@ from syncerate.errors import (
 )
 from syncerate.models import DatasetPair
 from syncerate.syncoid_runner import (
+    TransferByteCounter,
     build_syncoid_command,
     extract_ssh_key_path,
+    pv_amount_to_bytes,
     private_ssh_agent,
     run_replications,
     send_secret,
@@ -21,6 +23,35 @@ from tests.helpers import make_config, make_logger, no_logging_context, write_ex
 
 
 class SyncoidRunnerTests(unittest.TestCase):
+    def test_pv_amount_to_bytes_handles_binary_decimal_and_comma_decimal(self):
+        self.assertEqual(pv_amount_to_bytes("64.0", "KiB"), 64 * 1024)
+        self.assertEqual(pv_amount_to_bytes("1,5", "GiB"), round(1.5 * 1024**3))
+        self.assertEqual(pv_amount_to_bytes("2.5", "GB"), 2_500_000_000)
+
+    def test_transfer_counter_sums_maximum_progress_per_syncoid_stream(self):
+        counter = TransferByteCounter()
+        counter.feed(
+            "INFO: Sending oldest full snapshot pool/a@snap (~ 1 MB) to new target filesystem:\r\n"
+            "64.0KiB 0:00:00 [1.0MiB/s] [==> ] 6%\r"
+            "1.00MiB 0:00:01 [1.0MiB/s] [====] 100%\r\n"
+            "INFO: Updating new target filesystem with incremental pool/a@old ... new (~ 2 MB):\r\n"
+            "512KiB 0:00:00 [2.0MiB/s] [=> ] 25%\r"
+            "1,50MiB 0:00:01 [2.0MiB/s] [====] 100%\r\n"
+        )
+        transferred_bytes, complete = counter.finish()
+        self.assertTrue(complete)
+        self.assertEqual(transferred_bytes, round(2.5 * 1024**2))
+
+    def test_transfer_counter_marks_started_stream_without_pv_bytes_incomplete(self):
+        counter = TransferByteCounter()
+        counter.feed(
+            "INFO: Sending incremental pool/a@s1 ... s2 (~ 1 MB):\r\n"
+            "transfer output without pv byte counter\r\n"
+        )
+        transferred_bytes, complete = counter.finish()
+        self.assertEqual(transferred_bytes, 0)
+        self.assertFalse(complete)
+
     def test_build_command_preserves_dataset_spaces_and_extra_args(self):
         command = build_syncoid_command(
             "syncoid remote:SourceDataSet DestDataSet --compress none",
@@ -115,6 +146,17 @@ class SyncoidRunnerTests(unittest.TestCase):
         body = "for _ in range(8): print('INFO: Sending incremental', flush=True)\n"
         summary = self.run_fake(body)
         self.assertFalse(summary.has_broken_pipe_warning)
+
+    def test_run_replications_collects_actual_pv_bytes_across_streams(self):
+        summary = self.run_fake(
+            "print('INFO: Sending oldest full snapshot pool/data@s1 (~ 1 MB) to new target filesystem:', flush=True)\n"
+            "print('512KiB 0:00:00 [1.0MiB/s] [=> ] 50%', flush=True)\n"
+            "print('1.00MiB 0:00:01 [1.0MiB/s] [====] 100%', flush=True)\n"
+            "print('INFO: Updating new target filesystem with incremental pool/data@s1 ... s2 (~ 2 MB):', flush=True)\n"
+            "print('1,50MiB 0:00:01 [2.0MiB/s] [====] 100%', flush=True)\n"
+        )
+        self.assertTrue(summary.transfer_measurement_complete)
+        self.assertEqual(summary.transferred_bytes, round(2.5 * 1024**2))
 
     def test_exact_resume_unavailable_warning_remains_nonfatal(self):
         summary = self.run_fake(

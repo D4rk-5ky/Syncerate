@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.27`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.29`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -84,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.27"
+VERSION = "0.4.29"
 __version__ = VERSION
 ```
 
@@ -202,7 +202,7 @@ Mutable per-run state for the isolated OpenSSH agent. It stores only process/soc
 
 ### `ReplicationSummary`
 
-Carries nonfatal conditions that apply to the completed dataset list. Its `broken_pipe_failed_datasets` list contains every `DatasetPair` skipped after exhausting its independently configured Broken Pipe retries. `has_broken_pipe_warning` provides the final notification stage with a simple Boolean check.
+Carries aggregate state for the completed dataset list. Its `broken_pipe_failed_datasets` list contains every `DatasetPair` skipped after exhausting its independently configured Broken Pipe retries, while `has_broken_pipe_warning` gives the final notification stage a simple Boolean check. `transferred_bytes` accumulates the actual Syncoid/`pv` bytes observed across all attempts, including bytes that were retransmitted after a Broken Pipe. `transfer_measurement_complete` remains true only when every started Syncoid send stream supplied a usable byte counter; the final summary uses that flag to choose between the formatted total and `Unavailable`.
 
 ### `SyncoidAttemptResult`
 
@@ -212,9 +212,11 @@ Returned by one monitored Syncoid attempt. It contains:
 - the exact command used for the attempt;
 - repeated-pattern status;
 - whether the known missing-destroy-snapshot condition was observed;
-- whether this attempt stopped after detecting an ordinary Broken Pipe.
+- whether this attempt stopped after detecting an ordinary Broken Pipe;
+- the actual `pv` bytes observed during this attempt;
+- whether transfer measurement was complete for every started stream in this attempt.
 
-It replaces former mutable control globals.
+It replaces former mutable control globals and carries transfer-accounting state without requiring a second Syncoid/ZFS query.
 
 ## `syncerate/cli.py`
 
@@ -316,13 +318,17 @@ Shared title/comment renderer used by startup logging. It reuses `log_multiline_
 
 Converts the non-negative monotonic elapsed duration to `HH:MM:SS.mmm`. Millisecond precision is retained for short runs and hours are not limited to two digits.
 
-### `format_final_run_summary(app_config, elapsed_seconds)`
+### `format_transfer_size(transferred_bytes)`
 
-Builds the canonical plain-text final summary shared by logging and email. It renders `Final run summary`, one blank line, then the optional metadata. When both metadata fields exist it renders `BackupTitle`, one blank line, the multiline `BackupComment` with aligned continuation lines, another blank line, and `Total runtime` formatted by `format_runtime_duration()`. Title-only/comment-only configurations still get only the normal separator before runtime. Keeping this as plain text prevents the terminal, `.log`, and email layouts from drifting apart.
+Formats the non-negative measured byte total using 1024-based thresholds and automatically selects `KB`, `MB`, `GB`, or `TB`, always with two decimal places. Values below 1 KiB are intentionally rendered as a fractional `KB` so the final summary stays inside the requested unit set instead of adding a separate bytes unit.
 
-### `log_final_run_summary(app_config, elapsed_seconds, logger)`
+### `format_final_run_summary(app_config, elapsed_seconds, replication_summary=None)`
 
-Writes `format_final_run_summary()` one physical line at a time through the normal logger, wrapped in the existing separator block. On success this happens before mail is constructed, so the file handler has already written/flushed the runtime into `.log`; failure paths do the same before failure notifications.
+Builds the canonical plain-text final summary shared by logging and email. It renders `Final run summary`, one blank line, then the optional metadata. When both metadata fields exist it renders `BackupTitle`, one blank line, the multiline `BackupComment` with aligned continuation lines, and another blank line. When a completed `ReplicationSummary` is supplied it then renders `Data transferred` using `format_transfer_size()` if measurement was complete, otherwise `Data transferred :   Unavailable`; one blank line follows the transfer row before `Total runtime`. Failure/legacy callers that do not have a complete replication summary retain the runtime-only form. Keeping this as plain text prevents terminal, `.log`, and email layouts from drifting apart.
+
+### `log_final_run_summary(app_config, elapsed_seconds, logger, replication_summary=None)`
+
+Writes `format_final_run_summary()` one physical line at a time through the normal logger, wrapped in the existing separator block. On success this happens before mail is constructed, so the file handler has already written/flushed both the transfer total and runtime into `.log`; failure paths use the same function without claiming a complete transfer total.
 
 ### `log_startup_configuration(app_config, run_context, logger)`
 
@@ -395,9 +401,9 @@ Stores the exact requested warning-success email subject: `Syncerate Succsful - 
 
 Builds the legacy optional backup-title/comment email prefix. It remains public and exported through `Syncerate.py` for compatibility with existing imports/manual `MailTo()` usage. Runtime-aware normal application mail uses the helper below.
 
-### `run_summary_header_text(app_config, runtime_seconds)`
+### `run_summary_header_text(app_config, runtime_seconds, replication_summary=None)`
 
-Builds the email header from the shared `format_final_run_summary()` formatter whenever a runtime is supplied, followed by the normal separator. This gives email the exact title/blank-line/comment/blank-line/runtime layout used in terminal and `.log`. If a legacy/manual caller supplies no runtime, it falls back to `backup_header_text()` rather than dropping the old metadata.
+Builds the email header from the shared `format_final_run_summary()` formatter whenever a runtime is supplied, followed by the normal separator. Success/warning-success callers pass their completed `ReplicationSummary`, so email gets the same title/blank-line/comment/blank-line/transfer-total/runtime layout already written to terminal and `.log`. Failure callers omit the replication summary because an interrupted run cannot claim a complete total. If a legacy/manual caller supplies no runtime, it falls back to `backup_header_text()` rather than dropping the old metadata.
 
 ### `send_mail(subject, body, recipient, attachment_files=None)`
 
@@ -413,7 +419,7 @@ The email body is passed on standard input. The function returns the command exi
 
 Logs whether the local mail program accepted the message. It keeps the existing public function name for compatibility.
 
-### `MailTo(app_config, run_context, logger, ...)`
+### `MailTo(app_config, run_context, logger, ..., ReplicationSummaryData=None)`
 
 Builds the current success and failure message variants:
 
@@ -423,7 +429,7 @@ Builds the current success and failure message variants:
 - Syncoid error;
 - MQTT error.
 
-When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. The body begins with `run_summary_header_text()`, so normal success, warning-success, and error messages all receive the same backup metadata and timer. When a completed run carries a Broken Pipe warning, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
+When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. Successful/warning-success calls also pass `ReplicationSummaryData`, so `run_summary_header_text()` includes the same measured transfer total already logged before mail construction. Error variants omit that summary and therefore include metadata/runtime without presenting a possibly incomplete transfer total. When a completed run carries a Broken Pipe warning, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
 
 ### `mqtt_error_output(error, max_chars=4000)`
 
@@ -593,6 +599,27 @@ Returns the username belonging to the effective UID. It falls back to `UID <numb
 
 This confirms that local commands run as the user executing Syncerate. Remote commands remain under the SSH user written in the endpoint.
 
+### `pv_amount_to_bytes(amount_text, unit_text)`
+
+Converts one parsed `pv` progress amount to integer bytes. It accepts both period and comma decimal separators, binary `B/KiB/MiB/GiB/TiB/PiB/EiB` units, and decimal `KB/MB/GB/TB/PB/EB` units. This is intentionally limited to recognized progress fields rather than Syncoid's rounded estimate text.
+
+### `TransferByteCounter`
+
+Stateful stream-aware parser used by one monitored Syncoid attempt. It watches Syncoid transfer-start lines and normal `pv -b` progress output, keeps only the maximum byte value seen for the current send stream, commits that value when the next stream starts, and sums streams without double-counting carriage-return progress refreshes.
+
+- `TransferByteCounter.__init__(measurement_possible=True)`: initializes total/current-stream state and records whether progress measurement is expected at all (for example, `--quiet` disables it).
+- `TransferByteCounter._finish_current_transfer()`: commits the current stream maximum; if a stream started but never exposed a byte counter it marks the measurement incomplete.
+- `TransferByteCounter._start_transfer()`: closes the previous stream and opens a fresh one.
+- `TransferByteCounter._process_line(line)`: recognizes Syncoid transfer starts and parseable `pv` progress lines, updating only the maximum for the active stream.
+- `TransferByteCounter.feed(text)`: consumes arbitrary Pexpect output chunks and splits both carriage-return and newline progress updates safely.
+- `TransferByteCounter.finish()`: commits the last stream and returns `(total_bytes, measurement_complete)`.
+
+The counter measures bytes actually sent through Syncoid's stream pipeline. Repeated progress updates are not double-counted, while a Broken Pipe retry is a new attempt and therefore its actually retransmitted bytes are intentionally included in the run total.
+
+### `build_attempt_result(child, command, same_pattern_over_limit, shared_missing_destroy_snapshot, broken_pipe_detected, transfer_counter)`
+
+Finalizes the attempt's `TransferByteCounter` and constructs one `SyncoidAttemptResult` with both the existing process/error flags and the measured byte fields. Centralizing this return path ensures EOF, Broken Pipe, and repetition-stop exits cannot forget to finalize accounting.
+
 ### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False, process_env=None)`
 
 Starts one process with:
@@ -601,7 +628,7 @@ Starts one process with:
 pexpect.spawn(command[0], command[1:], timeout=None, encoding="utf-8", env=process_env)
 ```
 
-Using an argv list avoids shell re-parsing. `process_env` is normally `None`; private-agent mode passes the isolated agent environment to the **same Syncoid command**, so Syncoid and the SSH processes it creates inherit `SSH_AUTH_SOCK`. Pexpect still owns Syncoid, not SSH or mbuffer directly.
+Using an argv list avoids shell re-parsing. `process_env` is normally `None`; private-agent mode passes the isolated agent environment to the **same Syncoid command**, so Syncoid and the SSH processes it creates inherit `SSH_AUTH_SOCK`. Pexpect still owns Syncoid, not SSH or mbuffer directly. All observed child output is also fed to `TransferByteCounter`; `--quiet` marks byte measurement unavailable up front, and a started transfer with no parseable `pv` counter makes that attempt's measurement incomplete rather than guessing a size.
 
 It monitors these conditions:
 
@@ -643,9 +670,10 @@ For each pair it:
 8. closes the child;
 9. converts signal termination to `128 + signal`;
 10. preserves the real Syncoid exit code for other failures;
-11. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any nonzero exit remains authoritative and is preserved even when that earlier condition was observed.
+11. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any nonzero exit remains authoritative and is preserved even when that earlier condition was observed;
+12. adds each attempt's actual measured bytes to the run-level `ReplicationSummary` and ANDs its completeness flag into the run-level measurement status.
 
-The function returns `ReplicationSummary`. `broken_pipe_retries_used` is initialized inside the dataset loop, so every dataset pair receives the full configured retry count independently. No transfer is started in parallel, preserving sequential behavior.
+The function returns `ReplicationSummary`. `broken_pipe_retries_used` is initialized inside the dataset loop, so every dataset pair receives the full configured retry count independently. Bytes transferred by failed Broken Pipe attempts remain part of the total because those bytes really crossed the send pipeline before the retry; the replacement attempt contributes its own bytes separately. No transfer is started in parallel, preserving sequential behavior.
 
 ## `syncerate/app.py`
 
@@ -666,11 +694,11 @@ Runs the post-transfer order and uses `ReplicationSummary` to select normal succ
 
 1. append successful-run text to `.out` when enabled;
 2. original retained MQTT/optional HA success signals when `Use_MQTT` is enabled, plus independent non-retained JSON success status when `MQTT_JSON_Status` is enabled;
-3. write the already captured runtime summary to terminal/`.log`;
-4. best-effort success email using that same runtime value;
+3. write the completed transfer total plus already captured runtime summary to terminal/`.log`;
+4. best-effort success email using that same `ReplicationSummary` and runtime value;
 5. best-effort system action.
 
-Writing the summary before step 4 guarantees the email's `.log` copy/attachment already contains `Total runtime`. `runtime_seconds=None` remains supported for compatibility with direct internal/manual calls. MQTT failure remains fatal with code `10`. Success-mail exceptions are logged instead of masking completed replication, and the system action still runs afterward. System-action failure is likewise logged without changing the completed replication result.
+Writing the summary before step 4 guarantees the email's `.log` copy/attachment already contains both `Data transferred` and `Total runtime`. `runtime_seconds=None` remains supported for compatibility with direct internal/manual calls. MQTT failure remains fatal with code `10`. Success-mail exceptions are logged instead of masking completed replication, and the system action still runs afterward. System-action failure is likewise logged without changing the completed replication result.
 
 ### `main(argv=None)`
 
@@ -744,7 +772,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
 - Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
 - Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version` and checks for exactly `Syncerate.py 0.4.27`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script.
+- Runs the new executable with `--version` and checks for exactly `Syncerate.py 0.4.29`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script.
 
 ### `requirements-build.txt`
 
@@ -791,7 +819,7 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 ### `tests/test_app_and_logging.py` — `AppAndLoggingTests`
 
 - `write_config()`: creates a temporary end-to-end config plus dataset lists.
-- test methods verify success-mail exceptions remain best-effort while the system action continues, startup log redaction excludes unrelated sections/secrets, multiline comments remain separate prefixed log records, runtime formatting/final-summary ordering are stable, a real `main()` success emits the timer block, a fake Syncoid success reaches exit `0`, empty lists return code `1`, and invalid Boolean configuration returns code `2` before the child can run.
+- test methods verify success-mail exceptions remain best-effort while the system action continues, startup log redaction excludes unrelated sections/secrets, multiline comments remain separate prefixed log records, runtime/transfer-size formatting and final-summary ordering are stable, unavailable transfer measurement is represented honestly, a real `main()` success emits the summary block, a fake Syncoid success reaches exit `0`, empty lists return code `1`, and invalid Boolean configuration returns code `2` before the child can run.
 
 `tests/__init__.py` only marks the test package and intentionally contains no runtime logic.
 
@@ -822,14 +850,16 @@ Every test/helper function is listed here explicitly so the code map remains exh
 
 - `AppAndLoggingTests`: groups the tests and their shared setup for this module.
 - `test_runtime_duration_formats_hours_minutes_seconds_and_milliseconds()`: verifies the monotonic duration formatter, including hour rollover and negative-value clamping.
-- `test_final_summary_logs_title_multiline_comment_then_runtime()`: verifies heading/title/comment/runtime ordering, multiline rendering, the blank line after `Final run summary`, the required blank line between title and comment, and the existing blank line before the timer.
+- `test_transfer_size_chooses_kb_mb_gb_or_tb_automatically()`: verifies 1024-based automatic unit selection and fractional-KB output.
+- `test_final_summary_marks_transfer_size_unavailable_when_pv_measurement_is_incomplete()`: verifies incomplete `pv` measurement is shown as `Unavailable` rather than guessed.
+- `test_final_summary_logs_title_multiline_comment_then_runtime()`: verifies heading/title/comment/transfer-total/runtime ordering, multiline rendering, the blank line after `Final run summary`, the required blank line between title and comment, and the blank line before run statistics, plus the blank line between `Data transferred` and `Total runtime`.
 - `test_startup_multiline_comment_prefixes_every_physical_log_line()`: verifies multiline configuration/comment values cannot create unprefixed physical log lines and that startup metadata includes a blank line after `Backup information` plus the requested blank line between title and comment.
 - `test_success_mail_exception_is_best_effort_and_system_action_still_runs()`: regression check that success mail exception is best effort and system action still runs.
-- `test_success_mail_and_attached_log_include_runtime_before_mail_is_sent()`: end-to-end regression for the 0.4.24 ordering bug; verifies the email header and copied `.log` content already contain `Total runtime` when `send_mail()` is called.
+- `test_success_mail_and_attached_log_include_runtime_before_mail_is_sent()`: end-to-end regression for the 0.4.24 ordering bug; verifies the email header and copied `.log` content already contain `Data transferred` and `Total runtime` when `send_mail()` is called.
 - `test_logging_omits_unrelated_sections_and_secret_like_options()`: regression check that logging omits unrelated sections and secret like options.
 - `write_config()`: builds temporary source/destination files plus a runnable end-to-end config.
 - `test_main_success_path_with_fake_syncoid()`: regression check that main success path with fake syncoid.
-- `test_main_emits_final_runtime_summary()`: end-to-end check that a real successful `main()` run prints backup metadata and `Total runtime`.
+- `test_main_emits_final_runtime_summary()`: end-to-end check that a real successful `main()` run prints backup metadata, `Data transferred`, and `Total runtime`.
 - `test_main_rejects_empty_active_lists_with_code_1()`: regression check that main rejects empty active lists with code 1.
 - `test_main_rejects_invalid_boolean_before_replication_with_code_2()`: regression check that main rejects invalid boolean before replication with code 2.
 
@@ -870,7 +900,8 @@ Every test/helper function is listed here explicitly so the code map remains exh
 ### `tests/test_notifications.py`
 
 - `NotificationTests`: groups the tests and their shared setup for this module.
-- `test_run_summary_email_header_matches_terminal_layout()`: verifies email uses the shared heading/blank-line/title/blank-line/comment/blank-line/runtime layout.
+- `test_run_summary_email_header_matches_terminal_layout()`: verifies email uses the shared heading/blank-line/title/blank-line/comment/blank-line/runtime layout for legacy/runtime-only calls.
+- `test_run_summary_email_header_includes_transferred_size()`: verifies successful mail receives the same formatted transfer total followed by runtime as terminal/`.log`.
 - `test_json_success_payload_includes_warning_and_skipped_pairs()`: regression check that json success payload includes warning and skipped pairs.
 - `test_json_failure_payload_contains_error_and_stderr()`: regression check that json failure payload contains error and stderr.
 - `test_mqtt_error_output_is_bounded_from_the_end()`: regression check that mqtt error output is bounded from the end.
@@ -878,6 +909,9 @@ Every test/helper function is listed here explicitly so the code map remains exh
 ### `tests/test_syncoid_runner.py`
 
 - `SyncoidRunnerTests`: groups the tests and their shared setup for this module.
+- `test_pv_amount_to_bytes_handles_binary_decimal_and_comma_decimal()`: verifies transfer progress parsing accepts binary/decimal unit spellings and both period/comma decimals.
+- `test_transfer_counter_sums_maximum_progress_per_syncoid_stream()`: verifies repeated progress refreshes are not double-counted and multiple send streams are summed.
+- `test_transfer_counter_marks_started_stream_without_pv_bytes_incomplete()`: verifies a started stream with no usable `pv` counter marks measurement incomplete.
 - `test_build_command_preserves_dataset_spaces_and_extra_args()`: regression check that build command preserves dataset spaces and extra args.
 - `test_build_command_rejects_missing_placeholders()`: regression check that build command rejects missing placeholders.
 - `test_send_secret_refuses_when_expected_noecho_never_activates()`: regression check that send secret refuses when expected noecho never activates.
@@ -892,6 +926,7 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_missing_destroy_message_is_nonfatal_when_syncoid_exits_zero()`: regression check that missing destroy message is nonfatal when syncoid exits zero.
 - `test_generic_warning_remains_fatal()`: regression check that generic warning remains fatal.
 - `test_repeated_normal_sending_progress_is_not_mistaken_for_a_loop()`: regression check that repeated normal sending progress is not mistaken for a loop.
+- `test_run_replications_collects_actual_pv_bytes_across_streams()`: verifies the run-level summary accumulates actual byte counters from multiple Syncoid streams.
 - `test_exact_resume_unavailable_warning_remains_nonfatal()`: regression check that exact resume unavailable warning remains nonfatal.
 - `test_benign_password_word_in_output_does_not_trigger_secret_prompt()`: regression check that benign password word in output does not trigger secret prompt.
 - `test_benign_warnings_word_is_not_treated_as_warn_line()`: regression check that benign warnings word is not treated as warn line.

@@ -7,7 +7,7 @@ import sys
 from typing import Optional
 
 from .config import CONFIG_SECTION
-from .models import AppConfig, RunContext
+from .models import AppConfig, ReplicationSummary, RunContext
 
 
 def create_run_context(app_config: AppConfig) -> RunContext:
@@ -136,9 +136,28 @@ def format_runtime_duration(elapsed_seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
+def format_transfer_size(transferred_bytes: int) -> str:
+    """Format bytes as KB, MB, GB, or TB using Syncoid-style 1024 scaling."""
+
+    byte_count = max(0, transferred_bytes)
+    units = (
+        (1024**4, "TB"),
+        (1024**3, "GB"),
+        (1024**2, "MB"),
+        (1024, "KB"),
+    )
+
+    for divisor, unit in units:
+        if byte_count >= divisor:
+            return f"{byte_count / divisor:.2f} {unit}"
+
+    return f"{byte_count / 1024:.2f} KB"
+
+
 def format_final_run_summary(
     app_config: Optional[AppConfig],
     elapsed_seconds: float,
+    replication_summary: Optional[ReplicationSummary] = None,
 ) -> str:
     """Return the final summary as plain text for logs and email bodies."""
 
@@ -168,9 +187,18 @@ def format_final_run_summary(
         )
         metadata_written = True
 
-    # Keep one visible blank line between the optional backup metadata and the
-    # runtime, matching the terminal/log layout requested for email as well.
+    # Keep one visible blank line between optional backup metadata and the run
+    # statistics, matching the terminal/log/email layout requested by the user.
     if metadata_written:
+        lines.append("")
+
+    if replication_summary is not None:
+        transfer_text = (
+            format_transfer_size(replication_summary.transferred_bytes)
+            if replication_summary.transfer_measurement_complete
+            else "Unavailable"
+        )
+        lines.append(f"Data transferred :   {transfer_text}")
         lines.append("")
 
     lines.append(f"Total runtime   :   {format_runtime_duration(elapsed_seconds)}")
@@ -181,6 +209,7 @@ def log_final_run_summary(
     app_config: Optional[AppConfig],
     elapsed_seconds: float,
     logger: logging.Logger,
+    replication_summary: Optional[ReplicationSummary] = None,
 ) -> None:
     """Log the shared final summary to terminal and the optional .log file."""
 
@@ -188,7 +217,11 @@ def log_final_run_summary(
     logger.info("----------")
     logger.info("")
 
-    for line in format_final_run_summary(app_config, elapsed_seconds).splitlines():
+    for line in format_final_run_summary(
+        app_config,
+        elapsed_seconds,
+        replication_summary,
+    ).splitlines():
         logger.info("%s", line)
 
     logger.info("")

@@ -25,6 +25,16 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("Backup comment  :   First line", header)
         self.assertIn("Second line\n\nTotal runtime   :   00:01:02.345", header)
 
+    def test_run_summary_email_header_includes_transferred_size(self):
+        cfg = make_config(backup_title="Nightly backup")
+        summary = ReplicationSummary(transferred_bytes=2 * 1024**3)
+        header = run_summary_header_text(cfg, 62.345, summary)
+        self.assertIn("Data transferred :   2.00 GB", header)
+        self.assertIn(
+            "Data transferred :   2.00 GB\n\nTotal runtime   :   00:01:02.345",
+            header,
+        )
+
     def test_json_success_payload_includes_warning_and_skipped_pairs(self):
         pair = DatasetPair("pool/a", "backup/a", ())
         summary = ReplicationSummary([pair])
