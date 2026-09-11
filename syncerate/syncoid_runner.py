@@ -3,6 +3,7 @@
 import logging
 import os
 import pwd
+import re
 import shlex
 import shutil
 import stat
@@ -36,6 +37,163 @@ from .models import (
     SSHAgentSession,
     SyncoidAttemptResult,
 )
+
+
+_TRANSFER_START_RE = re.compile(
+    r"(?i)(?:INFO:\s*)?(?:"
+    r"Sending oldest full snapshot|"
+    r"Sending incremental|"
+    r"Sending full|"
+    r"Updating new target filesystem with incremental|"
+    r"Resuming interrupted zfs send/receive|"
+    r"--no-stream selected; sending newest full snapshot"
+    r")"
+)
+
+_PV_PROGRESS_RE = re.compile(
+    r"^\s*(?P<amount>\d+(?:[.,]\d+)?)\s*"
+    r"(?P<unit>[KMGTPE]?i?B)\s+"
+    r"\d+:\d{2}:\d{2}\s+\[",
+    re.IGNORECASE,
+)
+
+
+def pv_amount_to_bytes(amount_text: str, unit_text: str) -> int:
+    """Convert one pv human-readable byte counter value to whole bytes."""
+
+    amount = float(amount_text.replace(",", "."))
+    unit = unit_text.upper()
+
+    binary_units = {
+        "B": 1,
+        "KIB": 1024,
+        "MIB": 1024**2,
+        "GIB": 1024**3,
+        "TIB": 1024**4,
+        "PIB": 1024**5,
+        "EIB": 1024**6,
+    }
+    decimal_units = {
+        "KB": 1000,
+        "MB": 1000**2,
+        "GB": 1000**3,
+        "TB": 1000**4,
+        "PB": 1000**5,
+        "EB": 1000**6,
+    }
+
+    if unit in binary_units:
+        multiplier = binary_units[unit]
+    elif unit in decimal_units:
+        multiplier = decimal_units[unit]
+    else:
+        raise ValueError(f"Unsupported pv byte unit: {unit_text}")
+
+    return max(0, round(amount * multiplier))
+
+
+class TransferByteCounter:
+    """Accumulate actual pv byte counters without double-counting progress refreshes."""
+
+    def __init__(self, measurement_possible: bool = True) -> None:
+        self.total_bytes = 0
+        self.measurement_complete = measurement_possible
+        self._current_transfer_active = False
+        self._current_transfer_bytes = 0
+        self._current_transfer_measured = False
+        self._buffer = ""
+
+    def _finish_current_transfer(self) -> None:
+        """Commit the maximum observed pv value for the current Syncoid stream."""
+
+        if not self._current_transfer_active:
+            return
+
+        if self._current_transfer_measured:
+            self.total_bytes += self._current_transfer_bytes
+        else:
+            self.measurement_complete = False
+
+        self._current_transfer_active = False
+        self._current_transfer_bytes = 0
+        self._current_transfer_measured = False
+
+    def _start_transfer(self) -> None:
+        """Finish the previous stream and begin tracking a new Syncoid stream."""
+
+        self._finish_current_transfer()
+        self._current_transfer_active = True
+
+    def _process_line(self, line: str) -> None:
+        """Consume one physical Syncoid/pv output line in stream order."""
+
+        if _TRANSFER_START_RE.search(line):
+            self._start_transfer()
+
+        progress_match = _PV_PROGRESS_RE.match(line)
+        if progress_match is None:
+            return
+
+        if not self._current_transfer_active:
+            # Be tolerant of Syncoid versions or custom output that omit a
+            # recognized transfer heading while still using pv's byte counter.
+            self._current_transfer_active = True
+
+        transferred_bytes = pv_amount_to_bytes(
+            progress_match.group("amount"),
+            progress_match.group("unit"),
+        )
+        self._current_transfer_measured = True
+        self._current_transfer_bytes = max(
+            self._current_transfer_bytes,
+            transferred_bytes,
+        )
+
+    def feed(self, text: str) -> None:
+        """Consume streamed output, treating both CR and LF as pv line boundaries."""
+
+        if not text:
+            return
+
+        combined = self._buffer + text
+        parts = re.split(r"[\r\n]+", combined)
+        self._buffer = parts.pop()
+
+        for line in parts:
+            self._process_line(line)
+
+    def finish(self) -> tuple[int, bool]:
+        """Flush the final partial line and return bytes plus completeness state."""
+
+        if self._buffer:
+            self._process_line(self._buffer)
+            self._buffer = ""
+
+        self._finish_current_transfer()
+        return self.total_bytes, self.measurement_complete
+
+
+def build_attempt_result(
+    child: Any,
+    modified_command: list[str],
+    transfer_counter: TransferByteCounter,
+    *,
+    repeated_pattern: bool,
+    ignored_missing_destroy_snapshot: bool,
+    broken_pipe_detected: bool = False,
+) -> SyncoidAttemptResult:
+    """Finalize transfer accounting and build one Syncoid attempt result."""
+
+    transferred_bytes, measurement_complete = transfer_counter.finish()
+    return SyncoidAttemptResult(
+        child=child,
+        command=modified_command,
+        repeated_pattern=repeated_pattern,
+        ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+        broken_pipe_detected=broken_pipe_detected,
+        transferred_bytes=transferred_bytes,
+        transfer_measurement_complete=measurement_complete,
+    )
 
 
 def resolve_password(
@@ -601,6 +759,9 @@ def ssh_command(
     stale_resume_reset_announced = False
     broken_pipe_detected = False
     modified_command = list(syncoid_command)
+    transfer_counter = TransferByteCounter(
+        measurement_possible="--quiet" not in modified_command
+    )
 
     logger.info("")
     logger.info(
@@ -678,6 +839,10 @@ def ssh_command(
     while True:
         index = child.expect(patterns)
 
+        transfer_counter.feed(safe_text(child.before))
+        if isinstance(child.after, str):
+            transfer_counter.feed(child.after)
+
         if index in repeat_guarded_patterns:
             pattern_count[index] += 1
 
@@ -754,9 +919,10 @@ def ssh_command(
 
         elif index == PATTERN_EOF:
             close_child_logfile(child, logger)
-            return SyncoidAttemptResult(
-                child=child,
-                command=modified_command,
+            return build_attempt_result(
+                child,
+                modified_command,
+                transfer_counter,
                 repeated_pattern=repeated_pattern,
                 ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
             )
@@ -870,9 +1036,10 @@ def ssh_command(
                 )
 
             close_child_logfile(child, logger)
-            return SyncoidAttemptResult(
-                child=child,
-                command=modified_command,
+            return build_attempt_result(
+                child,
+                modified_command,
+                transfer_counter,
                 repeated_pattern=repeated_pattern,
                 ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
                 broken_pipe_detected=broken_pipe_detected,
@@ -919,9 +1086,10 @@ def ssh_command(
             )
 
     close_child_logfile(child, logger)
-    return SyncoidAttemptResult(
-        child=child,
-        command=modified_command,
+    return build_attempt_result(
+        child,
+        modified_command,
+        transfer_counter,
         repeated_pattern=repeated_pattern,
         ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
     )
@@ -986,6 +1154,11 @@ def run_replications(
                 ),
             )
             child = result.child
+            summary.transferred_bytes += result.transferred_bytes
+            summary.transfer_measurement_complete = (
+                summary.transfer_measurement_complete
+                and result.transfer_measurement_complete
+            )
 
             if result.broken_pipe_detected:
                 child.close()

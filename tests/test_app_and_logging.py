@@ -10,9 +10,11 @@ from unittest import mock
 from syncerate.app import main, successfull_run
 from syncerate.logging_setup import (
     format_runtime_duration,
+    format_transfer_size,
     log_final_run_summary,
     log_startup_configuration,
 )
+from syncerate.models import ReplicationSummary
 from tests.helpers import make_config, make_logger, no_logging_context, write_executable
 
 
@@ -20,6 +22,28 @@ class AppAndLoggingTests(unittest.TestCase):
     def test_runtime_duration_formats_hours_minutes_seconds_and_milliseconds(self):
         self.assertEqual(format_runtime_duration(3661.2344), "01:01:01.234")
         self.assertEqual(format_runtime_duration(-5), "00:00:00.000")
+
+    def test_transfer_size_chooses_kb_mb_gb_or_tb_automatically(self):
+        self.assertEqual(format_transfer_size(512), "0.50 KB")
+        self.assertEqual(format_transfer_size(2 * 1024), "2.00 KB")
+        self.assertEqual(format_transfer_size(3 * 1024**2), "3.00 MB")
+        self.assertEqual(format_transfer_size(4 * 1024**3), "4.00 GB")
+        self.assertEqual(format_transfer_size(5 * 1024**4), "5.00 TB")
+
+    def test_final_summary_marks_transfer_size_unavailable_when_pv_measurement_is_incomplete(self):
+        cfg = make_config()
+        summary = ReplicationSummary(
+            transferred_bytes=1024**3,
+            transfer_measurement_complete=False,
+        )
+        stream = io.StringIO()
+        logger = logging.getLogger(f"unavailable-transfer-size-{id(self)}")
+        logger.handlers = [logging.StreamHandler(stream)]
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+
+        log_final_run_summary(cfg, 10, logger, summary)
+        self.assertIn("Data transferred :   Unavailable", stream.getvalue())
 
     def test_final_summary_logs_title_multiline_comment_then_runtime(self):
         cfg = make_config(
@@ -32,13 +56,17 @@ class AppAndLoggingTests(unittest.TestCase):
         logger.setLevel(logging.INFO)
         logger.propagate = False
 
-        log_final_run_summary(cfg, 62.345, logger)
+        replication_summary = ReplicationSummary(
+            transferred_bytes=round(1.5 * 1024**3),
+        )
+        log_final_run_summary(cfg, 62.345, logger, replication_summary)
         lines = stream.getvalue().splitlines()
 
         summary_index = next(i for i, line in enumerate(lines) if "Final run summary" in line)
         title_index = next(i for i, line in enumerate(lines) if "Backup title" in line)
         comment_index = next(i for i, line in enumerate(lines) if "Backup comment" in line)
         second_line_index = next(i for i, line in enumerate(lines) if "Second line" in line)
+        transferred_index = next(i for i, line in enumerate(lines) if "Data transferred" in line)
         runtime_index = next(i for i, line in enumerate(lines) if "Total runtime" in line)
 
         self.assertEqual(lines[summary_index + 1], "")
@@ -47,8 +75,11 @@ class AppAndLoggingTests(unittest.TestCase):
         self.assertEqual(lines[title_index + 1], "")
         self.assertEqual(comment_index, title_index + 2)
         self.assertLess(comment_index, second_line_index)
-        self.assertLess(second_line_index, runtime_index)
-        self.assertEqual(lines[runtime_index - 1], "")
+        self.assertLess(second_line_index, transferred_index)
+        self.assertEqual(lines[transferred_index - 1], "")
+        self.assertIn("1.50 GB", lines[transferred_index])
+        self.assertEqual(lines[transferred_index + 1], "")
+        self.assertEqual(runtime_index, transferred_index + 2)
         self.assertIn("00:01:02.345", lines[runtime_index])
 
     def test_startup_multiline_comment_prefixes_every_physical_log_line(self):
@@ -243,6 +274,7 @@ class AppAndLoggingTests(unittest.TestCase):
             self.assertIn("Backup title    :   Timer test", output)
             self.assertIn("Backup comment  :   First line", output)
             self.assertIn("Second line", output)
+            self.assertIn("Data transferred :   0.00 KB", output)
             self.assertIn("Total runtime   :", output)
 
     @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
@@ -291,8 +323,9 @@ class AppAndLoggingTests(unittest.TestCase):
 
             self.assertIn("Final run summary\n\nBackup title    :   Mail timer test\n\nBackup comment  :   First line", body)
             self.assertIn("Backup comment  :   First line", body)
-            self.assertIn("Second line\n\nTotal runtime   :", body)
+            self.assertIn("Second line\n\nData transferred :   0.00 KB\n\nTotal runtime   :", body)
             copied_log = body.split(".log file", 1)[1]
+            self.assertIn("Data transferred :   0.00 KB", copied_log)
             self.assertIn("Total runtime   :", copied_log)
             self.assertEqual(recipient, "user@example.test")
             self.assertIn("Successful Syncerate.py run", subject)
@@ -302,6 +335,7 @@ class AppAndLoggingTests(unittest.TestCase):
             )
             log_contents_at_send = log_attachment.read_text(encoding="utf-8")
             self.assertIn("Backup comment  :   First line", log_contents_at_send)
+            self.assertIn("Data transferred :   0.00 KB", log_contents_at_send)
             self.assertIn("Total runtime   :", log_contents_at_send)
 
     def test_main_rejects_empty_active_lists_with_code_1(self):

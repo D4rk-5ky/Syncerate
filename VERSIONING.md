@@ -16,6 +16,30 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.29
+
+Previous version: `0.4.28`.
+
+- Added the requested space after the `Data transferred` label, so completed summaries now render it as `Data transferred :   <size>`.
+- Added one blank line after `Data transferred` and before `Total runtime` in the shared final-run summary used by terminal output, `.log` files, and success/warning-success email bodies.
+- Preserved all replication, transfer-accounting, SSH, retry, notification, timer, and safety behavior; this release changes summary formatting only.
+- Updated README/current-version documentation, `commented_code_map.md`, regression expectations, example-config version metadata, and the PyInstaller build-version check for `0.4.29`. No configuration option was added, removed, or renamed.
+
+## 0.4.28
+
+Previous version: `0.4.27`.
+
+- Added total transferred-data accounting to successful final-run summaries. Syncerate reads the actual byte counter emitted by Syncoid's normal `pv` progress output rather than summing Syncoid's rounded pre-transfer estimates.
+- Added stream-aware accounting for recursive and other multi-send Syncoid invocations. Progress refreshes for one stream are not double-counted: Syncerate keeps the maximum observed `pv` byte counter for that stream and commits it when the next send begins or the Syncoid attempt ends.
+- Added run-level accumulation across dataset pairs and ordinary Broken Pipe retry attempts, so `Data transferred` represents all measured stream bytes that passed through `pv` during the completed Syncerate run, including retransmitted bytes from retry attempts.
+- Added locale-tolerant parsing for both decimal point and decimal comma `pv` values and support for IEC (`KiB`, `MiB`, `GiB`, `TiB`, etc.) plus SI byte units.
+- Added automatic final formatting as `KB`, `MB`, `GB`, or `TB` using 1024-based scaling, matching Syncoid's human-readable convention. Values below 1 KB are represented as a fractional KB rather than introducing a separate byte-only display mode.
+- Added an honest measurement fallback. When a transfer is known to have started but no normal `pv` byte counter can be parsed, or when Syncoid is explicitly run with `--quiet`, the success summary prints `Data transferred:   Unavailable` instead of guessing from rounded estimates.
+- Reused the existing shared final-summary formatter so terminal output, `.log` files, and success email bodies receive the same transferred-size value immediately before the existing runtime line.
+- Extended `SyncoidAttemptResult` and `ReplicationSummary` with explicit transfer-byte/completeness state; no mutable module-global accounting state was introduced.
+- Added regression coverage for multiple streams, repeated progress refreshes, decimal-comma values, SI/IEC unit conversion, unavailable measurement handling, automatic KB/MB/GB/TB formatting, email summary inclusion, and end-to-end run accumulation.
+- Updated `README.md`, `commented_code_map.md`, the example configuration comments, and version metadata. The PyInstaller build wrapper/regression test now also expects `0.4.28`, so a correctly rebuilt standalone executable is not rejected by a stale 0.4.27 check. No configuration option was added, removed, or renamed.
+
 ## 0.4.27
 
 Previous version: `0.4.26`.

@@ -73,6 +73,8 @@ class SyncoidAttemptResult:
     repeated_pattern: bool = False
     ignored_missing_destroy_snapshot: bool = False
     broken_pipe_detected: bool = False
+    transferred_bytes: int = 0
+    transfer_measurement_complete: bool = True
 
 
 @dataclass
@@ -93,6 +95,8 @@ class ReplicationSummary:
     """Non-fatal conditions collected while processing the dataset list."""
 
     broken_pipe_failed_datasets: list[DatasetPair] = field(default_factory=list)
+    transferred_bytes: int = 0
+    transfer_measurement_complete: bool = True
 
     @property
     def has_broken_pipe_warning(self) -> bool:

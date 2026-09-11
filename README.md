@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.27`
+Current version: `0.4.29`
 
 ## Disclaimer and liability notice
 
@@ -445,7 +445,11 @@ DateTime = %Y-%m-%d_%H_%M_%S
 
 For every normal invocation, Syncerate starts a monotonic runtime timer before configuration/runtime work. The reported `Total runtime` is captured when the replication run has reached its success/failure result, immediately before post-run email and `SystemAction` handling. This fixed cut-off is intentional: it allows the **same runtime value** to be written to terminal, `.log`, and the email that is about to be sent. Time spent sending that same email, waiting the optional two minutes before a system action, or executing the system action cannot be included in an email that has already been constructed.
 
-The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the timer. The same plain-text summary is also placed at the top of success and error email bodies. `--help` and `--version` do not produce a runtime summary.
+For successful and warning-success runs, Syncerate also reports `Data transferred`. It reads the byte counter emitted by Syncoid's normal `pv` progress stream, keeps the highest observed byte count for each individual Syncoid send stream, and sums those completed/attempted streams across all dataset pairs. This avoids counting repeated progress refreshes more than once while still including bytes that were actually retransmitted during a Broken Pipe retry. The displayed unit is chosen automatically using 1024-based thresholds: `KB`, `MB`, `GB`, or `TB`. Values smaller than 1 KB are shown as a fractional KB.
+
+Syncerate deliberately does **not** guess a transfer size from Syncoid's rounded `(~ size)` estimates. If a transfer starts but a usable `pv` byte counter cannot be observed—for example because `--quiet` suppresses progress, `pv` is unavailable, or custom `--pv-options` replace the normal byte-counter output—the final success summary reports `Data transferred :   Unavailable`.
+
+The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints the transfer total (for completed replication summaries), inserts one blank line, and prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the transfer total and timer. Success/warning-success email bodies use the same summary. Error email bodies still include the metadata and runtime, but do not claim a complete total-transfer value after an interrupted/failed run. `--help` and `--version` do not produce a runtime summary.
 
 Example:
 
@@ -456,6 +460,8 @@ Backup title    :   Main ZFS backup
 
 Backup comment  :   Replicate selected datasets to the backup pool
                     Second comment line
+
+Data transferred :   18.47 GB
 
 Total runtime   :   01:23:45.678
 ```
@@ -474,7 +480,7 @@ Enable email:
 Mail = user@example.com
 ```
 
-A working local `mail` command is required for delivery. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, and `Total runtime`. When file logging is enabled, the `.log` summary is written before the message is built, so both the copied `.log` text in the body and the attached `.log` already contain the timer. Log files are attached when file logging is enabled and the relevant files are available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not convert an already completed replication into a failed Syncerate run.
+A working local `mail` command is required for delivery. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Success and warning-success email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, `Data transferred`, another blank line, and `Total runtime`. Error email bodies include the same metadata and runtime but omit transfer totals because a failed replication may not have a complete trustworthy total. When file logging is enabled, the `.log` summary is written before a success message is built, so both the copied `.log` text in the body and the attached `.log` already contain the transfer total and timer. Log files are attached when file logging is enabled and the relevant files are available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not convert an already completed replication into a failed Syncerate run.
 
 When `RetryBrokenPipe` is enabled and a dataset is skipped after exhausting its configured retry count, the run still returns success when no other failure occurs. The success email subject is exactly:
 

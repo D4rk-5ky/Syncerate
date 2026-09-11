@@ -5,7 +5,7 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-EXPECTED_VERSION="0.4.27"
+EXPECTED_VERSION="0.4.29"
 
 "$PYTHON_BIN" - <<'PY'
 missing = []

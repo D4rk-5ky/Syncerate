@@ -173,7 +173,12 @@ def successfull_run(
         )
 
     if runtime_seconds is not None:
-        log_final_run_summary(app_config, runtime_seconds, logger)
+        log_final_run_summary(
+            app_config,
+            runtime_seconds,
+            logger,
+            replication_summary,
+        )
 
     if app_config.mail_enabled:
         try:
@@ -185,6 +190,7 @@ def successfull_run(
                 BrokenPipeWarning=replication_summary.has_broken_pipe_warning,
                 BrokenPipeDatasets=replication_summary.broken_pipe_failed_datasets,
                 RuntimeSeconds=runtime_seconds,
+                ReplicationSummaryData=replication_summary,
             )
         except Exception:
             logger.exception(
