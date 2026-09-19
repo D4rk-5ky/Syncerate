@@ -1,0 +1,311 @@
+```yaml
+alias: >-
+  Daily backup at cheapest time - Continue on error without losing progress
+
+description: >
+  Wake the backup host if needed, wait until it is online, then start the first
+  backup. Process MQTT success and failure reports. A failed step is reported,
+  but the sequence continues with the next step.
+
+triggers:
+  - trigger: time
+    at: sensor.daily_backup_cheapest_start
+    id: cheapest_start
+
+  - trigger: mqtt
+    id: storage_a_backup_status
+    options:
+      topic: homeassistant/Syncerate/Backup-Host-Storage-A/status
+
+  - trigger: mqtt
+    id: storage_b_backup_status
+    options:
+      topic: homeassistant/Syncerate/Backup-Host-Storage-B/status
+
+  - trigger: mqtt
+    id: cleanup_status
+    options:
+      topic: homeassistant/CleanUpInSyncoidSnapshots/Backup-Host/status
+
+  - trigger: mqtt
+    id: snapshot_status
+    options:
+      topic: homeassistant/SnapBeforeWatchTower/Backup-Host/status
+
+conditions: []
+
+actions:
+  - alias: Scheduled start - wake backup host and start the first backup
+    choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - cheapest_start
+
+        sequence:
+          - alias: Wake and wait only when backup host is not ready
+            if:
+              - condition: not
+                conditions:
+                  - condition: state
+                    entity_id: binary_sensor.backup_host_lan
+                    state: "on"
+
+            then:
+              - alias: Wake backup host
+                action: switch.turn_on
+                target:
+                  entity_id: switch.backup_host_power
+                data: {}
+
+              - alias: Check readiness every ten seconds for up to ten minutes
+                repeat:
+                  count: 60
+                  sequence:
+                    - alias: Wait ten seconds only while backup host is not ready
+                      if:
+                        - condition: not
+                          conditions:
+                            - condition: state
+                              entity_id: binary_sensor.backup_host_lan
+                              state: "on"
+
+                      then:
+                        - delay: "00:00:10"
+
+          - alias: Start the first backup if ready; otherwise report a timeout
+            if:
+              - condition: state
+                entity_id: binary_sensor.backup_host_lan
+                state: "on"
+
+            then:
+              - delay:
+                  hours: 0
+                  minutes: 5
+                  seconds: 0
+                  milliseconds: 0
+
+              - alias: Start first backup
+                action: mqtt.publish
+                data:
+                  topic: homeassistant/mqtt-listener/backup-host
+                  payload: start_storage_a_daily
+                  qos: 0
+                  retain: false
+
+            else:
+              - alias: Notify that backup host did not become ready
+                action: notify.pushover
+                continue_on_error: true
+                data:
+                  title: ❌ Backup could not start
+                  message: >
+                    The backup host did not become ready within approximately
+                    ten minutes. No backup command was sent.
+                  data:
+                    priority: 1
+                    sound: siren
+
+          - alias: Finish scheduled invocation; MQTT replies trigger later runs
+            stop: Scheduled startup handling finished
+
+  - condition: trigger
+    id:
+      - storage_a_backup_status
+      - storage_b_backup_status
+      - cleanup_status
+      - snapshot_status
+
+  - alias: Read MQTT report
+    variables:
+      report: |
+        {{
+          trigger.payload_json
+          if trigger.payload_json is defined
+          and trigger.payload_json is mapping
+          else {}
+        }}
+
+  - alias: Extract MQTT status information
+    variables:
+      mqtt_status: |
+        {{ report.status | default('unknown') | string | trim | lower }}
+
+      report_title: |
+        {{
+          report.title
+          | default(
+              report.name
+              | default(
+                  report.job
+                  | default('Unknown job')
+                )
+            )
+        }}
+
+  - alias: Report success, failure, or unknown MQTT status
+    choose:
+      - alias: Step reported success
+        conditions:
+          - condition: template
+            value_template: "{{ mqtt_status == 'success' }}"
+
+        sequence:
+          - alias: Send successful step notification
+            action: notify.pushover
+            continue_on_error: true
+            data:
+              title: ✅ Backup step completed
+              message: >-
+                {{ report_title }} finished successfully.
+
+                Exit code: {{ report.exit_code | default('unknown') }}
+
+                {% if report.warning | default(false) | bool(false) %}
+                Warning: The step completed with one or more non-fatal warnings.
+                {% endif %}
+              data:
+                priority: 0
+                sound: pushover
+
+      - alias: Step reported failure
+        conditions:
+          - condition: template
+            value_template: "{{ mqtt_status == 'failure' }}"
+
+        sequence:
+          - alias: Send failed step notification
+            action: notify.pushover
+            continue_on_error: true
+            data:
+              title: ❌ Backup step failed - continuing
+              message: >-
+                {{ report_title }} failed.
+
+                Exit code: {{ report.exit_code | default('unknown') }}
+
+                Error: {{ report.error | default('No error message') }}
+
+                Last stderr/output:
+                {{ report.stderr | default('No stderr captured') }}
+
+                The backup sequence will continue with the next step.
+              data:
+                priority: 1
+                sound: siren
+
+    default:
+      - alias: Send unknown status notification
+        action: notify.pushover
+        continue_on_error: true
+        data:
+          title: ❔ Backup step status unknown
+          message: |-
+            Received an MQTT status that was neither success nor failure.
+            Title: {{ report_title }}
+            Topic: {{ trigger.topic }}
+            Raw payload: {{ trigger.payload | default('No payload') }}
+            The backup sequence has NOT been advanced.
+          data:
+            priority: 0
+            sound: pushover
+
+  - alias: Only advance after a definite success or failure
+    condition: template
+    value_template: |
+      {{ mqtt_status in ['success', 'failure'] }}
+
+  - alias: Continue with the next step
+    choose:
+      - alias: "1 - Storage A backup finished: start Storage B backup"
+        conditions:
+          - condition: trigger
+            id: storage_a_backup_status
+
+        sequence:
+          - alias: Start Storage B backup
+            action: mqtt.publish
+            data:
+              topic: homeassistant/mqtt-listener/backup-host
+              payload: start_storage_b_daily
+              qos: 0
+              retain: false
+
+      - alias: "2 - Storage B backup finished: start cleanup"
+        conditions:
+          - condition: trigger
+            id: storage_b_backup_status
+
+        sequence:
+          - alias: Start snapshot cleanup
+            action: mqtt.publish
+            data:
+              topic: homeassistant/mqtt-listener/backup-host
+              payload: start_snapshot_cleanup
+              qos: 0
+              retain: false
+
+      - alias: "3 - Cleanup finished: start snapshot"
+        conditions:
+          - condition: trigger
+            id: cleanup_status
+
+        sequence:
+          - alias: Start pre-update snapshot
+            action: mqtt.publish
+            data:
+              topic: homeassistant/mqtt-listener/backup-host
+              payload: start_pre_update_snapshot
+              qos: 0
+              retain: false
+
+      - alias: "4 - Snapshot finished: run Wednesday/Friday follow-up or shut down"
+        conditions:
+          - condition: trigger
+            id: snapshot_status
+
+        sequence:
+          - choose:
+              - alias: Wednesday - start unattended upgrades
+                conditions:
+                  - condition: time
+                    weekday:
+                      - wed
+
+                sequence:
+                  - alias: Start unattended upgrades
+                    action: mqtt.publish
+                    data:
+                      topic: homeassistant/unattended-upgrades/start
+                      payload: start
+                      qos: 0
+                      retain: false
+
+              - alias: Friday - start filesystem backup queue
+                conditions:
+                  - condition: time
+                    weekday:
+                      - fri
+
+                sequence:
+                  - alias: Start Friday filesystem backup queue
+                    action: mqtt.publish
+                    data:
+                      topic: homeassistant/filesystem-backup/start
+                      payload: start_friday_queue
+                      qos: 0
+                      retain: false
+
+            default:
+              - alias: Other days - request delayed shutdown
+                action: mqtt.publish
+                data:
+                  topic: homeassistant/mqtt-listener/backup-host
+                  payload: shutdown_delay
+                  qos: 0
+                  retain: false
+
+mode: queued
+max: 10
+```
