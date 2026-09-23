@@ -7,6 +7,7 @@ this file remains side-effect free, and existing imports of public names from
 ``Syncerate.py`` continue to work.
 """
 
+import multiprocessing
 import sys
 
 from syncerate import VERSION, __version__
@@ -31,6 +32,7 @@ from syncerate.errors import (
     EXIT_REPEATED_PATTERN,
     EXIT_SCRIPT_ERROR,
     EXIT_SYSTEM_ACTION_ERROR,
+    EXIT_STORAGE_FULL,
     EXIT_WARNING,
     SyncerateError,
 )
@@ -82,4 +84,5 @@ from syncerate.system_actions import SystemAction
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     sys.exit(main())

@@ -2,7 +2,9 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.29`
+Current source version: `0.4.30`
+
+**Use `python3 Syncerate.py --conf /path/to/Syncerate.cfg` for the updated application in this archive.** The original Linux `dist/Syncerate` executable is preserved, but has not been rebuilt and does not contain the full-pool fix. To use the updated standalone application, rebuild it on the target Linux architecture using the instructions below.
 
 ## Disclaimer and liability notice
 
@@ -36,7 +38,7 @@ By using this software, you accept responsibility for reviewing, configuring, te
 
 Required:
 
-- Python 3
+- Python 3.9 or later on a POSIX system (Linux is the deployment target)
 - ZFS
 - Sanoid/Syncoid
 - Python `pexpect`
@@ -74,9 +76,9 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
+PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi or another supported POSIX target. This application uses POSIX PTYs, process groups, and ZFS commands; it is not a native Windows application. PyInstaller is not a cross-compiler.
 
-Run the packaged executable exactly like the Python entry point:
+After rebuilding the executable from the current source, run it like the Python entry point:
 
 ```bash
 ./dist/Syncerate --version
@@ -139,7 +141,7 @@ Run the packaged regression suite after installation or modification with:
 python3 -m unittest discover -s tests -v
 ```
 
-The suite uses Python's standard `unittest` framework and the same `pexpect` dependency required by Syncerate. It uses fake child processes and does not run real ZFS replication.
+The suite uses Python's standard `unittest` framework and `pexpect`. Install optional `paho-mqtt` to exercise every MQTT regression. It uses fake child processes and does not run real ZFS replication.
 
 ## Source dataset list
 
@@ -243,6 +245,7 @@ PassWord = No
 UseSSHAgent = No
 SSHAgentKeyLifetimeSeconds = 3600
 Mail = No
+NotificationTimeoutSeconds = 30
 DateTime = %Y-%m-%d_%H_%M_%S
 LogDestination = No
 SystemAction = No
@@ -279,6 +282,7 @@ mqtt_json_topic = homeassistant/syncerate/status
 | `UseSSHAgent` | No | Enables an isolated per-run OpenSSH agent with `Yes`, `True`, `1`, or `On`. Requires `--sshkey` in `SyncoidCommand`. Disabled values preserve the legacy Pexpect-through-Syncoid authentication path. |
 | `SSHAgentKeyLifetimeSeconds` | No | Positive whole-number lifetime for the identity loaded into the private agent. Defaults to `3600`. If it expires during a long run, Syncerate reloads it before the next dataset. |
 | `Mail` | Yes | Recipient address, or `No` to disable email. |
+| `NotificationTimeoutSeconds` | No | Positive whole seconds for each email delivery or MQTT publish batch; default `30`. Covers DNS, connection, and delivery waits. Cleanup may add a few seconds. Does not limit replication duration. `0`, negative values, and non-integers are rejected. |
 | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
 | `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out` files, or `No` for terminal-only logging. |
 | `SystemAction` | Yes | Trusted shell command executed after a successful run, or `No` to disable it. |
@@ -336,7 +340,19 @@ A remote endpoint uses the SSH user written before `@`. `--sshport` selects a no
 
 Use Syncoid's `--no-privilege-elevation` when the local and remote users already have the required ZFS permissions and Syncoid should not invoke `sudo`. When Syncerate itself is run as root, local ZFS commands already run as root; a non-root remote SSH user still needs appropriate delegated ZFS permissions.
 
-Any other Syncoid options can be included in `SyncoidCommand` or added to individual destination lines.
+The flags in the supplied command examples belong to Syncoid:
+
+| Flag | Purpose |
+| --- | --- |
+| `--compress none` | Disables Syncoid transport compression; dataset compression properties are separate. |
+| `--sshport PORT` | Selects the SSH port for remote access. |
+| `--sshkey FILE` or `--sshkey=FILE` | Selects the SSH identity file; private-agent mode reads this same value. |
+| `--no-privilege-elevation` | Prevents Syncoid from invoking sudo; the chosen users still need ZFS permissions. |
+| `--recvoptions="o recordsize=1M o compression=zstd-9"` | Passes receive options to ZFS; these examples set destination record size and compression. Review the effect on your target before using them. |
+| `--quiet` | Suppresses normal progress output; Syncerate cannot promise transfer-byte measurement in this mode. |
+| `--pv-options OPTIONS` | Customizes Syncoid's pv arguments; removing/changing byte-counter output can make the final transfer total unavailable. |
+
+Quote values containing spaces so they remain one argument. Syncerate's own flags are only `--conf`/`-c`, `--help`/`-h`, and `--version`; unknown flags supplied to Syncerate itself are rejected. Other Syncoid options go inside `SyncoidCommand` or a destination line, and are interpreted by the installed Syncoid version. `SystemAction` is a separate trusted shell command, not a Syncoid flag.
 
 ## Password and passphrase handling
 
@@ -490,6 +506,20 @@ Syncerate Succsful - WARNING BROKEN PIPE
 
 The email body lists the skipped source and destination dataset pairs.
 
+## Full pools and quota failures
+
+An explicit diagnostic ending in `: out of space`, `: no space left on device`, or `: disk quota exceeded` is fatal, including the reported `cannot receive incremental stream: out of space`. Matching is case-insensitive and works with partial output chunks, carriage-return progress, and no final newline. Dataset names merely containing these words are not errors.
+
+Syncerate stops the current local Syncoid process group (TERM, then KILL after a one-second grace if still present), closes its output log, and returns **exit code `12`**. Later datasets and `SystemAction` are skipped. This takes precedence over Broken Pipe retries, missing-snapshot exceptions, and stale-receive recovery. When an ordinary retryable Broken Pipe appears first, the monitor allows one second for a following storage diagnostic before stopping/retrying that attempt.
+
+The existing failure handler records the diagnostic in `.log`/`.err`, attempts error mail when `Mail` contains a recipient, and publishes non-retained failure JSON when `MQTT_JSON_Status = Yes`. `Use_MQTT = Yes` alone enables only the retained success message. Error mail includes the reason and exit code even when file logging is disabled.
+
+Each notification has its own `NotificationTimeoutSeconds` deadline (default 30 seconds), plus bounded process cleanup. A stalled MQTT attempt does not prevent the mail attempt; a failed notification does not replace exit code `12`. Notifications are best-effort: configured mail transport and a reachable MQTT broker are still needed for delivery.
+
+Free space or correct the relevant dataset quota before running the same command again. Syncerate does not delete snapshots, roll back datasets, or run `zfs receive -A` in response to storage exhaustion. Syncoid/ZFS retain ownership of resumable receive handling. Only the owned local process group is signalled; detached helpers, remote processes, and uninterruptible kernel I/O cannot be guaranteed to stop by this local cleanup.
+
+This detects the listed explicit diagnostics. It is not a general inactivity watchdog: a completely silent hang or different/localized error text is not automatically classified as a full pool, and healthy long transfers have no new time limit.
+
 ## Interrupted receive recovery
 
 Syncerate lets Syncoid own ZFS resumable-receive recovery. If Syncoid reports that the source snapshot used by an interrupted `zfs receive -s` no longer exists, Syncerate does **not** stop the Syncoid process and does not modify the command to bypass resume handling.
@@ -533,7 +563,7 @@ When enabled, Syncerate watches Syncoid output case-insensitively for the text `
 5. After the remaining list finishes, Syncerate returns exit code `0` when no other fatal error occurred.
 6. Logs and the success email identify every dataset pair skipped after exhausting its retries.
 
-The retry count is never shared between datasets. This option does not retry authentication failures, missing datasets, generic warnings, connection failures, or other nonzero Syncoid exits. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
+The retry count is never shared between datasets. Explicit storage/quota diagnostics always stop the entire run with code `12`. This option does not retry authentication failures, missing datasets, generic warnings, connection failures, or other nonzero Syncoid exits. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
 
 ## MQTT notifications
 
@@ -727,6 +757,7 @@ Syncerate monitors Syncoid and SSH output for:
 - authentication or permission failure;
 - connection timeout;
 - connection refusal;
+- explicit full-storage and quota diagnostics, which stop the run with code `12`;
 - skipped datasets;
 - an interrupted receive whose original resume snapshot no longer exists, allowing Syncoid to reset the stale receive state and start a valid replacement send;
 - unavailable ZFS resume support where Syncoid continues without it;
@@ -755,3 +786,6 @@ Generic warning **lines** remain fatal except for the specifically recognized Sy
 | `9` | The same monitored output pattern repeated too many times. |
 | `10` | MQTT dependency or publishing failure. |
 | `11` | Reserved for system-action failures; the current system-action runner logs failures without returning this code. |
+| `12` | Explicit storage-full/quota error detected; the current attempt is stopped and the remaining dataset list is not run. |
+
+Other nonzero Syncoid exit statuses are preserved; termination by signal is reported as `128 + signal`. A raw Syncoid status can numerically overlap a Syncerate code, so use the accompanying diagnostic to distinguish them.

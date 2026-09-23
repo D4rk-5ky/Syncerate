@@ -138,6 +138,12 @@ def load_app_config(config_path: str) -> AppConfig:
             "BrokenPipeRetryWaitSeconds must be zero or a positive whole number"
         )
 
+    notification_timeout_seconds = raw_config.getint(
+        CONFIG_SECTION, "NotificationTimeoutSeconds", fallback=30
+    )
+    if notification_timeout_seconds <= 0:
+        raise ValueError("NotificationTimeoutSeconds must be a positive whole number")
+
     use_mqtt = parse_boolean_option(raw_config, "Use_MQTT")
     mqtt_json_status = parse_boolean_option(raw_config, "MQTT_JSON_Status")
     use_home_assistant = parse_boolean_option(raw_config, "Use_HomeAssistant")
@@ -249,4 +255,5 @@ def load_app_config(config_path: str) -> AppConfig:
         retry_broken_pipe=retry_broken_pipe,
         broken_pipe_retry_count=broken_pipe_retry_count,
         broken_pipe_retry_wait_seconds=broken_pipe_retry_wait_seconds,
+        notification_timeout_seconds=notification_timeout_seconds,
     )

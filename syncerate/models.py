@@ -29,6 +29,7 @@ class AppConfig:
     retry_broken_pipe: bool = False
     broken_pipe_retry_count: int = 1
     broken_pipe_retry_wait_seconds: int = 10
+    notification_timeout_seconds: int = 30
 
     @property
     def mail_enabled(self) -> bool:

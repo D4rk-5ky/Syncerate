@@ -16,6 +16,24 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.30
+
+Previous version: `0.4.29`.
+
+- Added fatal storage/quota diagnostic detection for `: out of space`, `: no space left on device`, and `: disk quota exceeded`, including the reported stalled incremental receive. Detection works without EOF/newline and across output chunks; plain dataset names do not trigger it.
+- Added/exported `EXIT_STORAGE_FULL = 12`. Explicit storage failures bypass Broken Pipe retry/exhaustion success, missing-snapshot exceptions, and stale-resume recovery, stopping the run before later datasets or `SystemAction`.
+- Reused the existing `die()`/`SyncerateError`/top-level error boundary for error logging, optional error mail, and non-retained MQTT failure JSON. Buffered root-cause output takes precedence over secondary Broken Pipe messages; a retryable Broken Pipe also allows one bounded second for a following storage diagnostic.
+- Added shared `process_utils.terminate_process_group()` and `stop_syncoid_attempt()`. Failure/retry cleanup now signals only the owned local attempt group with TERM then KILL, closes logs, and reaps the leader, covering ordinary pipeline helpers even after the leader exits. Unexpected monitor exceptions also clean up. No snapshot deletion, rollback, forced receive-abort, or remote process killing is introduced.
+- Fixed generic-warning precedence by using a zero-width line-boundary assertion. The generic matcher no longer consumes the newline before a specifically recognized nonfatal stale-reset/resume warning. Other generic warnings remain fatal.
+- Added optional positive-integer `NotificationTimeoutSeconds` (default 30), stored on `AppConfig` and validated before replication. Each mail delivery and MQTT batch runs in a spawned worker with a private session, deadline, bounded cleanup, and in-memory arguments. A stalled notification cannot indefinitely block error handling; failure notifications preserve the original replication exit code.
+- Added `multiprocessing.freeze_support()` to the executable entry point for notification workers in rebuilt PyInstaller executables. Preserved lazy MQTT use, original retained success/availability topics, non-retained JSON, mail command/attachments, and mail/system-action best-effort policies.
+- Added failure code/reason/captured output to error email bodies when file logging is disabled; notification worker error/mail-stderr results are bounded to 4000 characters.
+- Clarified CLI help. Updated current-use README with every app flag, example Syncoid flags, storage failure behavior, notification deadline, exit codes, configuration example, and source/binary usage. Updated the function/command map and regression symbol descriptions.
+- Updated the authoritative version, example-config metadata, build version check, and packaging test to 0.4.30. No existing configuration key or function was removed. New function parameters have backwards-compatible defaults.
+- Added real-child regression coverage for stalled/fragmented/no-newline errors, storage failure precedence, normal recovery, descendant termination, notifications with/without logs, skipped later actions, timeout validation, stuck mail, and an unresponsive local MQTT listener. An additional end-to-end source CLI test verifies actual spawned-worker JSON delivery to a local broker stub and error-mail invocation through a fake mail executable.
+- Preserved every original project file, including the supplied Linux x86-64 executable, reference lists, images, Home Assistant examples, and site files. The binary is unchanged and does not include these source fixes; `dist/README.md` makes this explicit. Linux rebuilding and live ZFS/remote SSH/production mail-broker verification are not available on the macOS test host.
+- Added `VERIFICATION.md` and `PACKAGE_MANIFEST.json` for checks, limits, and original-to-release file/hash accounting. The final zip excludes bytecode, caches, and temporary files.
+
 ## 0.4.29
 
 Previous version: `0.4.28`.

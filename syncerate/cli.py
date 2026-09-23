@@ -10,18 +10,19 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Create and parse Syncerate command-line arguments."""
 
     parser = argparse.ArgumentParser(
-        description="Iterate though 2 lists of ZFS DataSets with Syncoid"
+        description="Replicate matching source/destination ZFS dataset lists with Syncoid"
     )
     parser.add_argument(
         "--conf",
         "-c",
         type=str,
         required=True,
-        help="The destination for the config file",
+        help="Path to the INI configuration file (required for a backup run)",
     )
     parser.add_argument(
         "--version",
         action="version",
+        help="Show the application version and exit without running a backup",
         version=f"%(prog)s {VERSION}",
     )
     return parser.parse_args(argv)

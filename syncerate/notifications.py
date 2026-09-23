@@ -2,6 +2,7 @@
 
 import json
 import logging
+import multiprocessing
 import os
 import subprocess
 from typing import Any, Optional
@@ -10,6 +11,7 @@ from .config import CONFIG_SECTION
 from .errors import EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
 from .logging_setup import format_final_run_summary
 from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
+from .process_utils import terminate_process_group
 
 
 BROKEN_PIPE_SUCCESS_SUBJECT = "Syncerate Succsful - WARNING BROKEN PIPE"
@@ -57,27 +59,95 @@ def run_summary_header_text(
     )
 
 
+def _notification_worker(kind: str, arguments: dict[str, Any], connection: Any) -> None:
+    """Deliver one notification in a killable session; report a small result."""
+
+    try:
+        os.setsid()
+        if kind == "mail":
+            process = subprocess.Popen(
+                arguments["command"], stdin=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            _, stderr_output = process.communicate(input=arguments["body"].encode())
+            result = (process.returncode, stderr_output.decode(errors="replace")[-4000:].strip())
+        elif kind == "mqtt":
+            from paho.mqtt import publish
+
+            publish.multiple(**arguments)
+            result = None
+        else:
+            raise ValueError("Unknown notification kind")
+        connection.send((True, result))
+    except Exception as exc:
+        connection.send((False, f"{type(exc).__name__}: {exc}"[:4000]))
+    finally:
+        connection.close()
+
+
+def _run_notification(kind: str, arguments: dict[str, Any], timeout_seconds: float) -> Any:
+    """Bound delivery, including DNS/connect, and clean up a stalled worker.
+
+    Spawn avoids inheriting PTYs, locks, or logging handles. A Pipe returns one
+    small result. Credentials stay in memory, outside command-line arguments.
+    """
+
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    worker = context.Process(target=_notification_worker, args=(kind, arguments, sender))
+    started = False
+    completed = False
+    try:
+        worker.start()
+        started = True
+        sender.close()
+        if not receiver.poll(timeout_seconds):
+            raise TimeoutError(f"{kind} delivery timed out after {timeout_seconds} seconds")
+        try:
+            succeeded, result = receiver.recv()
+        except EOFError as exc:
+            raise RuntimeError(f"{kind} notification worker exited without a result") from exc
+        completed = True
+        if not succeeded:
+            raise RuntimeError(result)
+        return result
+    finally:
+        sender.close()
+        receiver.close()
+        if started:
+            worker.join(timeout=0.2 if completed else 0)
+            try:
+                if worker.is_alive() and os.getpgid(worker.pid) == worker.pid:
+                    terminate_process_group(worker.pid)
+            except ProcessLookupError:
+                pass
+            except OSError:
+                logging.getLogger("syncerate").exception("Could not stop notification process group")
+            finally:
+                worker.join(timeout=1)
+                if worker.is_alive():
+                    worker.kill()
+                    worker.join(timeout=1)
+                if not worker.is_alive():
+                    worker.close()
+
+
 def send_mail(
     subject: str,
     body: str,
     recipient: str,
     attachment_files: Optional[list[str]] = None,
+    *,
+    timeout_seconds: float = 30,
 ) -> tuple[int, str]:
-    """Send one message through the local mail command."""
+    """Send through local mail with a bounded delivery and existing argv format."""
 
     mail_command = ["mail", "-s", subject, recipient]
-
     if attachment_files:
         for attachment_file in attachment_files:
             mail_command.extend(["--attach", attachment_file])
-
-    process = subprocess.Popen(
-        mail_command,
-        stdin=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    return _run_notification(
+        "mail", {"command": mail_command, "body": body}, timeout_seconds
     )
-    _, stderr_output = process.communicate(input=body.encode())
-    return process.returncode, stderr_output.decode().strip()
 
 def WasMailSent(
     mail_exit_code: int,
@@ -113,6 +183,7 @@ def MailTo(
     BrokenPipeDatasets: Optional[list[DatasetPair]] = None,
     RuntimeSeconds: Optional[float] = None,
     ReplicationSummaryData: Optional[ReplicationSummary] = None,
+    ErrorDetail: str = "",
 ) -> None:
     """Build and send success, warning-success, and error mail variants.
 
@@ -211,6 +282,7 @@ def MailTo(
                 body,
                 recipient,
                 attachment_files,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
         else:
             subject = (
@@ -233,6 +305,7 @@ def MailTo(
                 subject,
                 body,
                 recipient,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
 
         WasMailSent(mail_exit_code, stderr_output, logger)
@@ -267,6 +340,7 @@ def MailTo(
                 body,
                 recipient,
                 attachment_files,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
         else:
             subject_and_body = (
@@ -274,8 +348,10 @@ def MailTo(
             )
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
+                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body
+                + ("\n\n" + ErrorDetail if ErrorDetail else ""),
                 recipient,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
 
         WasMailSent(mail_exit_code, stderr_output, logger)
@@ -310,13 +386,16 @@ def MailTo(
                 body,
                 recipient,
                 attachment_files,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
         else:
             subject_and_body = "Error sending MQTT message - (Logs Disabled)"
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
+                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body
+                + ("\n\n" + ErrorDetail if ErrorDetail else ""),
                 recipient,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
 
         WasMailSent(mail_exit_code, stderr_output, logger)
@@ -351,6 +430,7 @@ def MailTo(
                 body,
                 recipient,
                 attachment_files,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
         else:
             subject_and_body = (
@@ -358,8 +438,10 @@ def MailTo(
             )
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
+                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body
+                + ("\n\n" + ErrorDetail if ErrorDetail else ""),
                 recipient,
+                timeout_seconds=app_config.notification_timeout_seconds,
             )
 
         WasMailSent(mail_exit_code, stderr_output, logger)
@@ -522,11 +604,15 @@ def send_mqtt_messages(
         return
 
     try:
-        publish.multiple(
-            messages,
-            hostname=broker_address,
-            port=broker_port,
-            auth=auth,
+        _run_notification(
+            "mqtt",
+            {
+                "msgs": messages,
+                "hostname": broker_address,
+                "port": broker_port,
+                "auth": auth,
+            },
+            app_config.notification_timeout_seconds,
         )
         if success and app_config.use_mqtt:
             logger.info(
@@ -601,6 +687,7 @@ def send_error_mail(
                 logger,
                 MQTT_Fail=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                ErrorDetail=f"Exit code: {error.exit_code}\n{error.message}\n{mqtt_error_output(error)}",
             )
         elif error.kind == "syncoid":
             MailTo(
@@ -609,6 +696,7 @@ def send_error_mail(
                 logger,
                 SynCoidFail=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                ErrorDetail=f"Exit code: {error.exit_code}\n{error.message}\n{mqtt_error_output(error)}",
             )
         else:
             MailTo(
@@ -617,6 +705,7 @@ def send_error_mail(
                 logger,
                 Exit_Code=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                ErrorDetail=f"Exit code: {error.exit_code}\n{error.message}\n{mqtt_error_output(error)}",
             )
     except Exception:
         logger.exception("Additionally failed to send the error mail")

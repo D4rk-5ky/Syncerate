@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.29`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.30`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -19,6 +19,7 @@ syncerate/
 ├── logging_setup.py
 ├── models.py
 ├── notifications.py
+├── process_utils.py
 ├── syncoid_runner.py
 └── system_actions.py
 tests/
@@ -28,6 +29,7 @@ tests/
 ├── test_config.py
 ├── test_datasets.py
 ├── test_notifications.py
+├── test_storage_failure.py
 ├── test_packaging.py
 ├── test_syncoid_runner.py
 └── test_system_actions.py
@@ -74,8 +76,11 @@ It imports and re-exports the existing public constants, classes, and functions 
 
 ```python
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     sys.exit(main())
 ```
+
+`multiprocessing.freeze_support()` dispatches notification subprocesses correctly in a PyInstaller executable before argument parsing can mistake worker arguments for app flags. It is inert for ordinary source runs.
 
 Keeping `sys.exit()` at this boundary means internal modules return values or raise `SyncerateError` instead of terminating the interpreter unexpectedly.
 
@@ -84,7 +89,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.29"
+VERSION = "0.4.30"
 __version__ = VERSION
 ```
 
@@ -107,6 +112,8 @@ This module contains shared exit codes and the application exception. Keeping th
 - `EXIT_REPEATED_PATTERN = 9`: one output pattern repeated beyond its safety limit.
 - `EXIT_MQTT_ERROR = 10`: optional MQTT dependency or publish operation failed.
 - `EXIT_SYSTEM_ACTION_ERROR = 11`: reserved for system-action failures; current behavior still logs system-action exceptions without converting them to this code.
+
+- `EXIT_STORAGE_FULL = 12`: an explicit out-of-space/no-space/quota diagnostic stopped replication.
 
 ### `SyncerateError`
 
@@ -164,7 +171,8 @@ Fields:
 - `ssh_agent_key_lifetime_seconds`: positive lifetime for the loaded private-agent identity, defaulting to `3600`;
 - `retry_broken_pipe`: normalized Boolean controlling optional per-dataset retries;
 - `broken_pipe_retry_count`: validated retries available to each individual dataset, defaulting to `1`;
-- `broken_pipe_retry_wait_seconds`: validated whole seconds to wait before each retry, defaulting to `10`.
+- `broken_pipe_retry_wait_seconds`: validated whole seconds to wait before each retry, defaulting to `10`;
+- `notification_timeout_seconds`: positive deadline for each mail delivery or MQTT publish batch, defaulting to `30`; cleanup can add a few seconds.
 
 Properties:
 
@@ -263,7 +271,7 @@ Private startup helper that reads a required option, strips surrounding whitespa
 
 ### `load_app_config(config_path)`
 
-Reads and validates the selected INI file, then returns immutable `AppConfig`. It verifies the file and section, validates all required nonempty text, strictly parses supported Booleans, validates the Syncoid template before any dataset is touched, validates positive/non-negative numeric retry/agent settings, normalizes `LogDestination = No` to `None`, and validates enabled MQTT channels before replication.
+Reads and validates the selected INI file, then returns immutable `AppConfig`. It verifies the file and section, validates all required nonempty text, strictly parses supported Booleans, validates the Syncoid template before any dataset is touched, validates positive/non-negative numeric retry/agent settings and positive `NotificationTimeoutSeconds`, normalizes `LogDestination = No` to `None`, and validates enabled MQTT channels before replication.
 
 For MQTT it requires a broker address, port `1..65535`, the legacy topic/message when `Use_MQTT` is enabled, the HA availability topic when that legacy integration is enabled, and a dedicated JSON topic when `MQTT_JSON_Status` is enabled. Conflicting retained/non-retained topics are rejected. Broker credentials, payload text, and topic values stay in `raw_config`; validated feature switches are stored as typed fields in `AppConfig`.
 
@@ -405,7 +413,15 @@ Builds the legacy optional backup-title/comment email prefix. It remains public 
 
 Builds the email header from the shared `format_final_run_summary()` formatter whenever a runtime is supplied, followed by the normal separator. Success/warning-success callers pass their completed `ReplicationSummary`, so email gets the same title/blank-line/comment/blank-line/transfer-total/runtime layout already written to terminal and `.log`. Failure callers omit the replication summary because an interrupted run cannot claim a complete total. If a legacy/manual caller supplies no runtime, it falls back to `backup_header_text()` rather than dropping the old metadata.
 
-### `send_mail(subject, body, recipient, attachment_files=None)`
+### `_notification_worker(kind, arguments, connection)`
+
+Starts a private POSIX session (`os.setsid`) and performs one mail or MQTT operation. Mail uses the original `subprocess.Popen` command/body interface; MQTT uses the original Paho `publish.multiple` batch semantics. It returns success plus a small result, or a bounded exception description through a Pipe; mail stderr is capped to its last 4000 characters. The separate session makes a blocked notification and its ordinary subprocesses independently stoppable.
+
+### `_run_notification(kind, arguments, timeout_seconds)`
+
+Uses the explicit multiprocessing `spawn` context to isolate DNS, broker negotiation, and mail delivery behind a wall-clock wait. Arguments and credentials pass in memory rather than via process command lines or scratch files. The parent polls the Pipe for the configured deadline, receives a result, and closes both Pipe ends. A stalled worker raises `TimeoutError`, cleans its owned process group, and uses bounded joins with kill escalation. Cleanup problems are logged; this function does not decide the backup exit code. This avoids daemon-thread deliveries continuing after the app has reported failure. The normal CLI and frozen entry point dispatch workers using `freeze_support()`.
+
+### `send_mail(subject, body, recipient, attachment_files=None, *, timeout_seconds=30)`
 
 Runs the local command:
 
@@ -413,13 +429,13 @@ Runs the local command:
 mail -s <subject> <recipient> --attach <file> ...
 ```
 
-The email body is passed on standard input. The function returns the command exit code and stderr instead of terminating the application.
+The email body is passed on standard input. `_run_notification()` bounds delivery, and the function returns the command exit code and bounded stderr instead of terminating the application. `MailTo()` passes the validated configured deadline; direct callers retain a 30-second default.
 
 ### `WasMailSent(mail_exit_code, popen_stderr, logger)`
 
 Logs whether the local mail program accepted the message. It keeps the existing public function name for compatibility.
 
-### `MailTo(app_config, run_context, logger, ..., ReplicationSummaryData=None)`
+### `MailTo(app_config, run_context, logger, ..., ReplicationSummaryData=None, ErrorDetail="")`
 
 Builds the current success and failure message variants:
 
@@ -429,7 +445,7 @@ Builds the current success and failure message variants:
 - Syncoid error;
 - MQTT error.
 
-When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. Successful/warning-success calls also pass `ReplicationSummaryData`, so `run_summary_header_text()` includes the same measured transfer total already logged before mail construction. Error variants omit that summary and therefore include metadata/runtime without presenting a possibly incomplete transfer total. When a completed run carries a Broken Pipe warning, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
+When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. Successful/warning-success calls also pass `ReplicationSummaryData`, so `run_summary_header_text()` includes the same measured transfer total already logged before mail construction. Error variants omit that summary and therefore include metadata/runtime without presenting a possibly incomplete transfer total. When a completed run carries a Broken Pipe warning, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message; `ErrorDetail` adds the failure code, reason, and bounded captured output. This keeps storage diagnostics useful without file logs. Every send passes `notification_timeout_seconds`. It does not call `sys.exit()`.
 
 ### `mqtt_error_output(error, max_chars=4000)`
 
@@ -465,7 +481,7 @@ Important behavior:
 5. `MQTT_JSON_Status = Yes` independently publishes structured success/failure JSON to `mqtt_json_topic` with `retain=False` hard-coded. JSON never replaces or shares the old retained topic.
 6. JSON can therefore run alongside the old MQTT/HA outputs, or by itself while `Use_MQTT = No`.
 7. Fatal failure calls produce only JSON status; the old success-only MQTT and HA availability signals are not emitted for a failed run.
-8. Publish/dependency failures still raise `SyncerateError` with exit code `10`.
+8. Publishing uses `_run_notification()` with the configured deadline, preserving the original Paho messages/retain/QoS semantics. Publish/dependency/timeout failures raise `SyncerateError` with exit code `10`. A failure-report timeout is caught by `send_mqtt_failure_status()` so the original replication error survives and error mail can still run.
 
 ### `send_mqtt_failure_status(error, app_config, logger)`
 
@@ -473,7 +489,13 @@ Best-effort fatal-failure publisher used by the top-level exception boundary whe
 
 ### `send_error_mail(error, app_config, run_context, logger, runtime_seconds=None)`
 
-Chooses the correct `MailTo()` variant from the error kind and forwards the captured runtime so failure emails can use the same summary header. Notification failure is caught and logged so it cannot replace the original application exit code.
+Chooses the correct `MailTo()` variant from the error kind, supplies error code/reason/output via `ErrorDetail`, and forwards the captured runtime so failure emails can use the same summary header. Notification failure is caught and logged so it cannot replace the original application exit code.
+
+## `syncerate/process_utils.py`
+
+### `terminate_process_group(process_group, grace_seconds=1.0)`
+
+Signals only a process group the caller created for its own child. Refuses group IDs at or below 1 and the application's own group. Sends `SIGTERM`, waits a fixed short grace, then sends `SIGKILL`; already absent groups are harmless. A fixed grace avoids requiring process enumeration or `killpg(..., 0)` permission. Syncoid cleanup and notification deadlines share this helper. It performs no ZFS commands, filesystem deletion, or remote process discovery. Detached process groups and uninterruptible kernel I/O are outside this local mechanism.
 
 ## `syncerate/system_actions.py`
 
@@ -560,6 +582,10 @@ A context manager around the complete replication list. When `UseSSHAgent` is di
 
 Flushes and closes the per-child `.out` handle without closing the child itself. It clears `child.logfile` to prevent duplicate closes.
 
+### `stop_syncoid_attempt(child, logger=None)`
+
+Uses the owned Pexpect child process group to stop the current Syncoid attempt and normal local SSH/mbuffer/send/receive helpers, including helpers still running after the leader exits. A child without recorded group metadata falls back to Pexpect termination for compatibility. Cleanup logs failures, closes the existing child logfile through `close_child_logfile()`, and closes/reaps the child. The group belongs to Pexpect's newly created PTY session; no system-wide process killing is used.
+
 ### `die(...)`
 
 Converts the former internal termination paths into `SyncerateError`.
@@ -567,8 +593,8 @@ Converts the former internal termination paths into `SyncerateError`.
 For a known child-output error it:
 
 1. captures `child.before`, `child.after`, and `child.buffer`;
-2. force-terminates the child;
-3. closes the output logfile;
+2. stops the owned attempt group through `stop_syncoid_attempt()`;
+3. closes the output logfile and child;
 4. raises a categorized error.
 
 For a completed Syncoid child with a nonzero status, it captures the last output and raises a `syncoid` error. It never calls `sys.exit()`.
@@ -616,7 +642,7 @@ Stateful stream-aware parser used by one monitored Syncoid attempt. It watches S
 
 The counter measures bytes actually sent through Syncoid's stream pipeline. Repeated progress updates are not double-counted, while a Broken Pipe retry is a new attempt and therefore its actually retransmitted bytes are intentionally included in the run total.
 
-### `build_attempt_result(child, command, same_pattern_over_limit, shared_missing_destroy_snapshot, broken_pipe_detected, transfer_counter)`
+### `build_attempt_result(child, modified_command, transfer_counter, *, repeated_pattern, ignored_missing_destroy_snapshot, broken_pipe_detected=False)`
 
 Finalizes the attempt's `TransferByteCounter` and constructs one `SyncoidAttemptResult` with both the existing process/error flags and the measured byte fields. Centralizing this return path ensures EOF, Broken Pipe, and repetition-stop exits cannot forget to finalize accounting.
 
@@ -629,6 +655,10 @@ pexpect.spawn(command[0], command[1:], timeout=None, encoding="utf-8", env=proce
 ```
 
 Using an argv list avoids shell re-parsing. `process_env` is normally `None`; private-agent mode passes the isolated agent environment to the **same Syncoid command**, so Syncoid and the SSH processes it creates inherit `SSH_AUTH_SOCK`. Pexpect still owns Syncoid, not SSH or mbuffer directly. All observed child output is also fed to `TransferByteCounter`; `--quiet` marks byte measurement unavailable up front, and a started transfer with no parseable `pv` counter makes that attempt's measurement incomplete rather than guessing a size.
+
+`_STORAGE_FULL_RE` recognizes colon-prefixed diagnostic reasons `out of space`, `no space left on device`, and `disk quota exceeded` case-insensitively. `_STORAGE_FULL_MESSAGE` keeps the user-facing explanation identical in direct detection and the Broken Pipe grace read. The pattern wakes `expect()` without waiting for EOF or newline. Every match also scans already buffered output before selecting a warning/recovery/retry branch, so a secondary Broken Pipe cannot hide an already received storage failure. It raises code `12` through `die()` and the existing main failure boundary. No recovery command or snapshot deletion is added.
+
+The monitor is wrapped in `try/except BaseException` so unexpected decoding/logging/monitor failures and interrupts close the attempt too. Normal EOF preserves the child's real status for `run_replications()`. Successful long-running transfers still have no general inactivity deadline.
 
 It monitors these conditions:
 
@@ -644,11 +674,12 @@ It monitors these conditions:
 10. **Syncoid receive-state reset warning** — recognizes the specific `resetting partially receive state because the snapshot source no longer exists` warning as nonfatal and reports that Syncoid is resetting the stale stream.
 11. **Fresh replacement send** — when recovery is active, `INFO: Sending incremental` or `INFO: Sending full` marks recovery complete and restores ordinary Broken Pipe handling.
 12. **Resume feature unavailable** — logs the exact nonfatal message and waits for Syncoid's real exit status.
-13. **Broken Pipe** — during stale receive recovery it is logged and ignored as an expected symptom of the failed resume pipeline; otherwise, when `RetryBrokenPipe` is enabled, it terminates the current attempt and returns `broken_pipe_detected=True`, and when disabled it waits for the real child exit status.
+13. **Broken Pipe** — during stale receive recovery it is logged and ignored as an expected symptom of the failed resume pipeline; otherwise, when `RetryBrokenPipe` is enabled, it gives a following storage diagnostic up to one second to arrive, then stops the attempt group and returns `broken_pipe_detected=True`, and when disabled it waits for the real child exit status.
 14. **Generic warning** — remains fatal with code `4`, except the separately recognized destroy warning and stale-receive reset warning.
 15. **Password prompt** — recognizes real prompt-shaped lines including typical `user@host's password:` output and uses the same shared nested-prompt secret path.
+16. **Full storage/quota** — always fatal with code `12`, before retry or recovery exceptions can classify it as nonfatal.
 
-Generic warning recognition is anchored to warning-line shapes, preventing ordinary words such as `WARNINGS` from becoming fatal. Credential expressions likewise require prompt shapes, so dataset/path text containing `password` is not answered with a secret.
+Generic warning recognition uses a zero-width start-of-line/CR/LF assertion so it cannot win by consuming the newline before a specifically allowed warning. This preserves specific stale-reset/resume-warning precedence. It remains anchored to warning-line shapes, preventing ordinary words such as `WARNINGS` from becoming fatal. Credential expressions likewise require prompt shapes, so dataset/path text containing `password` is not answered with a secret.
 
 Only automatically answered interactive host-key/password/passphrase patterns are limited to five matches. Normal repeatable progress such as multiple `INFO: Sending ...` lines is deliberately exempt, avoiding false code-9 failures on legitimate multi-send output.
 
@@ -772,16 +803,18 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
 - Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
 - Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version` and checks for exactly `Syncerate.py 0.4.29`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script.
+- Runs the new executable with `--version` and checks for exactly `Syncerate.py 0.4.30`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script.
 
 ### `requirements-build.txt`
 
 - Pins `PyInstaller`, `pyinstaller-hooks-contrib`, `pexpect`, and `paho-mqtt` for the documented standalone build environment. Transitive dependencies are resolved by pip.
 - These packages are build inputs; a user running `dist/Syncerate` does not install them separately.
 
+The original Linux `dist/Syncerate` is preserved byte-for-byte in this source release; `dist/README.md` identifies it as unrebuilt. The updated runtime must be started from source or rebuilt on the target Linux architecture.
+
 ## Regression test suite
 
-The packaged `tests/` directory uses only Python `unittest` plus Syncerate's existing runtime dependency `pexpect`; it does not require pytest. Real tiny child processes are used where Pexpect behavior matters.
+The packaged `tests/` directory uses Python `unittest` plus Syncerate's existing runtime dependency `pexpect`; install optional `paho-mqtt` to run all notification cases. It does not require pytest. Real tiny child processes are used where Pexpect behavior matters.
 
 ### `tests/helpers.py`
 
@@ -955,3 +988,32 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_nonzero_action_is_logged_but_does_not_raise()`: regression check that nonzero action is logged but does not raise.
 - `test_mail_enabled_preserves_two_minute_delay()`: regression check that mail enabled preserves two minute delay.
 
+
+## Storage-failure regression symbols (`tests/test_storage_failure.py`)
+
+- `StorageFailureTests`: exercises real PTY children and top-level failure routing without using real ZFS pools.
+- `run_output()`: starts a fake child that emits diagnostics and stalls, verifies code 12 and bounded completion, and returns the captured error for diagnostic assertions.
+- `test_reported_error_without_newline_stops_hanging_receive()`: reproduces the provided error with mbuffer output and progress text, proving EOF is unnecessary.
+- `test_split_error_and_quota_variants_stop_without_eof()`: emits characters separately for full/new receive, ENOSPC, and quota messages to verify chunk-independent detection.
+- `test_storage_error_overrides_recovery_and_buffered_broken_pipe()`: verifies full storage cannot become retry-exhaustion success or be ignored as snapshot recovery.
+- `test_benign_dataset_name_does_not_trigger_storage_failure()`: protects datasets whose names include ordinary space-related words.
+- `test_delayed_storage_reason_after_broken_pipe_is_not_retried()`: checks the bounded grace read when stderr arrives just after a secondary Broken Pipe.
+- `test_stale_receive_recovery_still_completes()`: verifies the intended nonfatal reset-warning precedence and successful replacement send.
+- `test_stubborn_pipeline_helper_is_stopped_even_after_leader_exits()`: starts a helper that ignores TERM/HUP, lets the leader exit, and checks that its heartbeat stops after group cleanup; a finalizer cleans the test helper if an assertion fails.
+- `test_own_process_group_is_never_signalled()`: guards against terminating Syncerate's own process group.
+- `test_full_pool_reaches_mail_and_json_failure_and_skips_next_dataset()`: exercises real configuration, dataset pairing, monitor, error logging, and notification construction with both logging modes; intercepts delivery, checks code 12/non-retained failure JSON/email reason, and proves the next dataset and system action are skipped.
+- `NotificationDeadlineTests`: checks config validation and real subprocess delivery bounds independently of replication.
+- `test_notification_timeout_default_and_validation()`: verifies the 30-second default and rejects disabled, negative, fractional, or textual timeout values.
+- `test_mail_worker_passes_body_and_returns_stderr_and_exit_status()`: checks a spawned fake mail process receives the body and returns its status/diagnostic.
+- `test_hung_mail_command_is_bounded()`: proves a sleeping mail process cannot block its caller indefinitely.
+- `test_mail_public_api_preserves_argv_and_timeout()`: checks recipient/subject/attachment argument compatibility and configured deadline forwarding.
+- `test_unresponsive_mqtt_broker_is_bounded()`: uses only a local TCP listener that never replies with MQTT CONNACK, proving protocol negotiation is deadline-bounded.
+- `test_mqtt_timeout_preserves_replication_failure_and_mail_is_attempted()`: checks a secondary publish timeout preserves the primary storage error and the mail path remains available.
+
+`MQTT_AVAILABLE` skips MQTT-dependent cases when the optional library is absent. No test sends email or publishes to a production broker.
+
+- `receive_mqtt_packet(connection)`: reads a single MQTT fixed header, variable-length size, and payload from a timeout-bounded local test socket; used to inspect real Paho wire output.
+- `test_cli_delivers_failure_to_local_broker_and_fake_mail_command()`: starts the real source CLI with a hanging fake transfer, captures non-retained QoS-0 failure JSON on a local broker stub, captures the error body through a fake local `mail` executable, and checks process exit 12. No notification-delivery function is mocked.
+- Its local `serve()` helper accepts MQTT CONNECT, replies with CONNACK, and captures one PUBLISH; socket timeouts and a daemon thread prevent a broken test server from blocking the suite.
+
+Release verification records live in `VERIFICATION.md`; `PACKAGE_MANIFEST.json` records original and packaged file hashes, classifies changes/additions, and explicitly lists its own hash as excluded to avoid a recursive self-hash. These are release metadata, not runtime inputs.
