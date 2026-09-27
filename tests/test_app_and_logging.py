@@ -1,3 +1,4 @@
+import contextlib
 import io
 import logging
 import shlex
@@ -8,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from syncerate.app import main, successfull_run
+from syncerate.cli import parse_arguments
 from syncerate.logging_setup import (
     format_runtime_duration,
     format_transfer_size,
@@ -19,6 +21,21 @@ from tests.helpers import make_config, make_logger, no_logging_context, write_ex
 
 
 class AppAndLoggingTests(unittest.TestCase):
+    def test_cli_help_describes_every_application_flag(self):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            with self.assertRaises(SystemExit) as caught:
+                parse_arguments(["--help"])
+
+        self.assertEqual(caught.exception.code, 0)
+        help_text = stream.getvalue()
+        self.assertIn("--conf FILE", help_text)
+        self.assertIn("-c FILE", help_text)
+        self.assertIn("required Syncerate INI configuration file", help_text)
+        self.assertIn("--version", help_text)
+        self.assertIn("Show the installed Syncerate version and exit.", help_text)
+        self.assertIn("Examples:", help_text)
+
     def test_runtime_duration_formats_hours_minutes_seconds_and_milliseconds(self):
         self.assertEqual(format_runtime_duration(3661.2344), "01:01:01.234")
         self.assertEqual(format_runtime_duration(-5), "00:00:00.000")
@@ -250,6 +267,44 @@ class AppAndLoggingTests(unittest.TestCase):
                 "backup/data\n",
             )
             self.assertEqual(main(["--conf", str(config)]), 0)
+
+
+    @mock.patch("syncerate.app.successfull_run")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_main_missing_dataset_continues_list_then_reports_failure_code_8(
+        self,
+        mqtt_failure_mock,
+        error_mail_mock,
+        success_mock,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "good-ran"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                "import pathlib, sys\n"
+                f"marker = pathlib.Path({str(marker)!r})\n"
+                "if sys.argv[1].endswith('/missing'):\n"
+                "    print(\"cannot open 'pool/missing': dataset does not exist\", flush=True)\n"
+                "    sys.exit(2)\n"
+                "marker.write_text('yes')\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/missing\npool/good\n",
+                "backup/missing\nbackup/good\n",
+            )
+
+            self.assertEqual(main(["--conf", str(config)]), 8)
+            self.assertTrue(marker.exists())
+            success_mock.assert_not_called()
+            mqtt_failure_mock.assert_called_once()
+            error_mail_mock.assert_called_once()
+            summary = mqtt_failure_mock.call_args.kwargs["replication_summary"]
+            self.assertTrue(summary.has_missing_dataset_failure)
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
 
     def test_main_emits_final_runtime_summary(self):
         with tempfile.TemporaryDirectory() as td:

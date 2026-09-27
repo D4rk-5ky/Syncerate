@@ -16,23 +16,28 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.31
+
+Previous version: `0.4.30`.
+
+- Added a narrowly scoped non-fatal match for OpenSSH's normal first-contact `Warning: Permanently added 'host' (KEYTYPE) to the list of known hosts.` output. The existing interactive host-key confirmation behavior is unchanged; this release only prevents the follow-up known-hosts message from being misclassified as a generic fatal warning.
+- Added continue-but-fail handling for documented missing ZFS dataset/pool output: `cannot open '...': dataset does not exist`, `cannot open '...': no such pool`, `cannot import '...': no such pool available`, plus Syncoid's own current `WARNING: Skipping dataset (dataset no longer exists): ...` form (while retaining compatibility with the older `WARN` spelling). Syncoid's `CRITICAL ERROR: ` prefix around captured ZFS errors is also accepted.
+- Missing-data pairs are recorded individually and the remaining configured dataset list continues. Syncoid exit `0` is accepted only for the specific recursive missing-dataset skip path and exit `2` for the normal missing source/pool path; any other exit code remains immediately fatal so an unrelated later Syncoid failure is not masked.
+- After the list finishes, any recorded missing dataset/pool makes the overall run fail with the existing exit code `8`. Success-only MQTT/system-action handling is not run.
+- Extended MQTT JSON failure status with `failed_datasets`, containing the affected source, destination, and matched missing-data reason. Extended missing-data failure email text to list the same affected pairs/reasons.
+- Added regression coverage for the OpenSSH known-hosts warning, missing dataset, missing pool, Syncoid's recursive missing-dataset warning, continuation to later pairs, preservation of unrelated nonzero exit codes, overall exit code `8`, and structured MQTT failure reporting.
+- Updated README/current-use behavior, `commented_code_map.md`, version metadata, example-config version metadata, and standalone build-version expectations. No configuration option was added, removed, or renamed.
+
 ## 0.4.30
 
 Previous version: `0.4.29`.
 
-- Added fatal storage/quota diagnostic detection for `: out of space`, `: no space left on device`, and `: disk quota exceeded`, including the reported stalled incremental receive. Detection works without EOF/newline and across output chunks; plain dataset names do not trigger it.
-- Added/exported `EXIT_STORAGE_FULL = 12`. Explicit storage failures bypass Broken Pipe retry/exhaustion success, missing-snapshot exceptions, and stale-resume recovery, stopping the run before later datasets or `SystemAction`.
-- Reused the existing `die()`/`SyncerateError`/top-level error boundary for error logging, optional error mail, and non-retained MQTT failure JSON. Buffered root-cause output takes precedence over secondary Broken Pipe messages; a retryable Broken Pipe also allows one bounded second for a following storage diagnostic.
-- Added shared `process_utils.terminate_process_group()` and `stop_syncoid_attempt()`. Failure/retry cleanup now signals only the owned local attempt group with TERM then KILL, closes logs, and reaps the leader, covering ordinary pipeline helpers even after the leader exits. Unexpected monitor exceptions also clean up. No snapshot deletion, rollback, forced receive-abort, or remote process killing is introduced.
-- Fixed generic-warning precedence by using a zero-width line-boundary assertion. The generic matcher no longer consumes the newline before a specifically recognized nonfatal stale-reset/resume warning. Other generic warnings remain fatal.
-- Added optional positive-integer `NotificationTimeoutSeconds` (default 30), stored on `AppConfig` and validated before replication. Each mail delivery and MQTT batch runs in a spawned worker with a private session, deadline, bounded cleanup, and in-memory arguments. A stalled notification cannot indefinitely block error handling; failure notifications preserve the original replication exit code.
-- Added `multiprocessing.freeze_support()` to the executable entry point for notification workers in rebuilt PyInstaller executables. Preserved lazy MQTT use, original retained success/availability topics, non-retained JSON, mail command/attachments, and mail/system-action best-effort policies.
-- Added failure code/reason/captured output to error email bodies when file logging is disabled; notification worker error/mail-stderr results are bounded to 4000 characters.
-- Clarified CLI help. Updated current-use README with every app flag, example Syncoid flags, storage failure behavior, notification deadline, exit codes, configuration example, and source/binary usage. Updated the function/command map and regression symbol descriptions.
-- Updated the authoritative version, example-config metadata, build version check, and packaging test to 0.4.30. No existing configuration key or function was removed. New function parameters have backwards-compatible defaults.
-- Added real-child regression coverage for stalled/fragmented/no-newline errors, storage failure precedence, normal recovery, descendant termination, notifications with/without logs, skipped later actions, timeout validation, stuck mail, and an unresponsive local MQTT listener. An additional end-to-end source CLI test verifies actual spawned-worker JSON delivery to a local broker stub and error-mail invocation through a fake mail executable.
-- Preserved every original project file, including the supplied Linux x86-64 executable, reference lists, images, Home Assistant examples, and site files. The binary is unchanged and does not include these source fixes; `dist/README.md` makes this explicit. Linux rebuilding and live ZFS/remote SSH/production mail-broker verification are not available on the macOS test host.
-- Added `VERIFICATION.md` and `PACKAGE_MANIFEST.json` for checks, limits, and original-to-release file/hash accounting. The final zip excludes bytecode, caches, and temporary files.
+- Fixed the standalone PyInstaller post-build version check. The frozen executable is named `Syncerate` and argparse therefore reports `Syncerate <version>`; the old wrapper incorrectly required `Syncerate.py <version>` and could reject an otherwise valid build. The wrapper now derives the expected program name from the actual `dist/Syncerate` filename.
+- Expanded the built-in CLI help so every Syncerate application flag has a clear purpose: `--conf`/`-c` documents the required INI path and relative-path behavior, `--version` has an explicit description, and the help footer includes normal-run/version examples.
+- Expanded `README.md` with current-use-only flag behavior and examples, including that `--help` and `--version` do not require `--conf` or start runtime work, while a normal run has no implicit/default configuration path. The existing project disclaimer and liability notice remain unchanged.
+- Corrected the stale `build_attempt_result(...)` signature in `commented_code_map.md`, synchronized its CLI/build descriptions with the actual implementation, and expanded every `TransferByteCounter` method into an individually named explanation of what it does and why it exists.
+- Added regression coverage for the improved CLI help and updated the packaging regression to lock the corrected standalone version-output check.
+- Updated version metadata, example-config version metadata, build-version expectations, README, and `commented_code_map.md` for `0.4.30`. No configuration option was added, removed, or renamed, and no replication, SSH, retry, notification, transfer-accounting, or safety behavior changed.
 
 ## 0.4.29
 

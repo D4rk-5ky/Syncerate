@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from syncerate.errors import (
+    EXIT_DATASET_MISSING,
     EXIT_PASSWORD_DENIED,
     EXIT_REPEATED_PATTERN,
     EXIT_WARNING,
@@ -136,6 +137,97 @@ class SyncoidRunnerTests(unittest.TestCase):
             "print('could not find any snapshots to destroy; check snapshot names.', flush=True)\n"
         )
         self.assertFalse(summary.has_broken_pipe_warning)
+
+
+    def test_openssh_permanently_added_known_host_warning_is_nonfatal(self):
+        summary = self.run_fake(
+            "print(\"Warning: Permanently added '10.0.0.135' (ED25519) to the list of known hosts.\", flush=True)\n"
+        )
+        self.assertFalse(summary.has_missing_dataset_failure)
+
+    def test_missing_dataset_exit_two_is_recorded_and_list_continues(self):
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td) / "good-ran"
+            script = write_executable(
+                Path(td) / "fake_syncoid.py",
+                "import pathlib, sys\n"
+                f"marker = pathlib.Path({str(marker)!r})\n"
+                "if sys.argv[1].endswith('/missing'):\n"
+                "    print(\"CRITICAL ERROR: cannot open 'pool/missing': dataset does not exist\", flush=True)\n"
+                "    sys.exit(2)\n"
+                "marker.write_text('yes')\n",
+            )
+            cfg = make_config(
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet"
+            )
+            pairs = [
+                DatasetPair("pool/missing", "backup/missing", ()),
+                DatasetPair("pool/good", "backup/good", ()),
+            ]
+            summary = run_replications(
+                cfg,
+                no_logging_context(),
+                pairs,
+                None,
+                make_logger("missing-continue"),
+            )
+
+            self.assertTrue(marker.exists())
+            self.assertTrue(summary.has_missing_dataset_failure)
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
+            failure = summary.missing_dataset_failures[0]
+            self.assertEqual(failure.dataset_pair, pairs[0])
+            self.assertIn("dataset does not exist", "\n".join(failure.messages))
+
+    def test_missing_pool_exit_two_is_recorded(self):
+        summary = self.run_fake(
+            "import sys\n"
+            "print(\"cannot open 'missingpool': no such pool\", flush=True)\n"
+            "sys.exit(2)\n"
+        )
+        self.assertTrue(summary.has_missing_dataset_failure)
+        self.assertIn(
+            "no such pool",
+            "\n".join(summary.missing_dataset_failures[0].messages),
+        )
+
+
+    def test_missing_pool_import_message_is_recorded(self):
+        summary = self.run_fake(
+            "import sys\n"
+            "print(\"cannot import 'missingpool': no such pool available\", flush=True)\n"
+            "sys.exit(2)\n"
+        )
+        self.assertTrue(summary.has_missing_dataset_failure)
+        self.assertIn(
+            "no such pool available",
+            "\n".join(summary.missing_dataset_failures[0].messages),
+        )
+
+    def test_other_syncoid_skipping_dataset_warning_remains_fatal_code_8(self):
+        with self.assertRaises(SyncerateError) as caught:
+            self.run_fake(
+                "print('WARNING: Skipping dataset for another reason', flush=True)\n"
+            )
+        self.assertEqual(caught.exception.exit_code, EXIT_DATASET_MISSING)
+        self.assertEqual(caught.exception.kind, "known_child")
+
+    def test_syncoid_missing_dataset_skip_warning_is_recorded_even_on_zero_exit(self):
+        summary = self.run_fake(
+            "print('WARNING: Skipping dataset (dataset no longer exists): pool/data...', flush=True)\n"
+        )
+        self.assertTrue(summary.has_missing_dataset_failure)
+
+    def test_missing_dataset_text_does_not_mask_unrelated_exit_code(self):
+        with self.assertRaises(SyncerateError) as caught:
+            self.run_fake(
+                "import sys\n"
+                "print(\"cannot open 'pool/data': dataset does not exist\", flush=True)\n"
+                "print('later unrelated fatal error', flush=True)\n"
+                "sys.exit(42)\n"
+            )
+        self.assertEqual(caught.exception.exit_code, 42)
+        self.assertEqual(caught.exception.kind, "syncoid")
 
     def test_generic_warning_remains_fatal(self):
         with self.assertRaises(SyncerateError) as cm:

@@ -26,30 +26,17 @@ from .errors import (
     EXIT_PASSWORD_DENIED,
     EXIT_REPEATED_PATTERN,
     EXIT_SCRIPT_ERROR,
-    EXIT_STORAGE_FULL,
     EXIT_WARNING,
     SyncerateError,
 )
-from .process_utils import terminate_process_group
 from .models import (
     AppConfig,
     DatasetPair,
+    MissingDatasetFailure,
     ReplicationSummary,
     RunContext,
     SSHAgentSession,
     SyncoidAttemptResult,
-)
-
-
-# Match diagnostic reasons, not an English phrase inside a dataset name.
-# No newline is required: a failing receive can leave the pipeline blocked
-# immediately after printing this text, or mix it with CR-based pv progress.
-_STORAGE_FULL_RE = re.compile(
-    r"(?i):[ \t]*(?:out of space|no space left on device|disk quota exceeded)\b"
-)
-_STORAGE_FULL_MESSAGE = (
-    "ERROR! Storage is full or a quota was exceeded. "
-    "Stopping replication; free space or correct the quota before retrying."
 )
 
 
@@ -63,6 +50,9 @@ _TRANSFER_START_RE = re.compile(
     r"--no-stream selected; sending newest full snapshot"
     r")"
 )
+
+_SYNCOID_MISSING_DATASET_EXIT_CODES = {0, 2}
+
 
 _PV_PROGRESS_RE = re.compile(
     r"^\s*(?P<amount>\d+(?:[.,]\d+)?)\s*"
@@ -195,6 +185,8 @@ def build_attempt_result(
     repeated_pattern: bool,
     ignored_missing_destroy_snapshot: bool,
     broken_pipe_detected: bool = False,
+    missing_dataset_or_pool_detected: bool = False,
+    missing_dataset_or_pool_messages: tuple[str, ...] = (),
 ) -> SyncoidAttemptResult:
     """Finalize transfer accounting and build one Syncoid attempt result."""
 
@@ -205,6 +197,8 @@ def build_attempt_result(
         repeated_pattern=repeated_pattern,
         ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
         broken_pipe_detected=broken_pipe_detected,
+        missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+        missing_dataset_or_pool_messages=missing_dataset_or_pool_messages,
         transferred_bytes=transferred_bytes,
         transfer_measurement_complete=measurement_complete,
     )
@@ -639,27 +633,6 @@ def close_child_logfile(
     finally:
         child.logfile = None
 
-def stop_syncoid_attempt(child: Any, logger: Optional[logging.Logger] = None) -> None:
-    """Stop this attempt's owned process group, close logs, and reap its leader."""
-
-    try:
-        process_group = getattr(child, "syncerate_process_group", None)
-        if process_group is not None:
-            terminate_process_group(process_group)
-        else:
-            child.terminate(force=True)
-    except Exception:
-        if logger is not None:
-            logger.exception("Could not terminate the Syncoid attempt cleanly")
-    finally:
-        close_child_logfile(child, logger)
-        try:
-            child.close(force=True)
-        except Exception:
-            if logger is not None:
-                logger.exception("Could not close/reap the Syncoid child")
-
-
 def die(
     child: Any = None,
     errstr: Optional[str] = None,
@@ -686,7 +659,13 @@ def die(
             getattr(child, "buffer", "")
         )
 
-        stop_syncoid_attempt(child, logger)
+        try:
+            child.terminate(force=True)
+        except Exception:
+            if logger is not None:
+                logger.exception("Could not terminate child process cleanly")
+
+        close_child_logfile(child, logger)
 
         raise SyncerateError(
             errstr or "Known Syncoid error",
@@ -787,6 +766,8 @@ def ssh_command(
     stale_resume_recovery_active = False
     stale_resume_reset_announced = False
     broken_pipe_detected = False
+    missing_dataset_or_pool_detected = False
+    missing_dataset_or_pool_messages: list[str] = []
     modified_command = list(syncoid_command)
     transfer_counter = TransferByteCounter(
         measurement_possible="--quiet" not in modified_command
@@ -817,343 +798,351 @@ def ssh_command(
         env=process_env,
     )
 
-    # Pexpect creates a new session for its PTY child. Record the owned group
-    # before monitoring so cleanup can also reach helpers after the leader exits.
-    child.syncerate_process_group = child.pid
+    output_handle = None
+    if run_context.logging_enabled:
+        assert run_context.output_file is not None
+        output_handle = open(run_context.output_file, "a", encoding="utf-8")
+        child.logfile = output_handle
 
-    try:
-        output_handle = None
-        if run_context.logging_enabled:
-            assert run_context.output_file is not None
-            output_handle = open(run_context.output_file, "a", encoding="utf-8")
-            child.logfile = output_handle
+    PATTERN_HOSTKEY = 0
+    PATTERN_NO_DESTROY_SNAP = 1
+    PATTERN_PERMISSION_DENIED = 2
+    PATTERN_TIMEOUT = 3
+    PATTERN_REFUSED = 4
+    PATTERN_PASSPHRASE = 5
+    PATTERN_EOF = 6
+    PATTERN_MISSING_DATASET_SKIP = 7
+    PATTERN_WARN_SKIPPING = 8
+    PATTERN_STALE_RESUME_SOURCE = 9
+    PATTERN_RESUME_RESET = 10
+    PATTERN_FRESH_SEND = 11
+    PATTERN_RESUME_UNAVAILABLE = 12
+    PATTERN_BROKEN_PIPE = 13
+    PATTERN_SSH_KNOWN_HOST = 14
+    PATTERN_ZFS_MISSING_DATASET_OR_POOL = 15
+    PATTERN_GENERIC_WARN = 16
+    PATTERN_PASSWORD = 17
 
-        PATTERN_HOSTKEY = 0
-        PATTERN_NO_DESTROY_SNAP = 1
-        PATTERN_PERMISSION_DENIED = 2
-        PATTERN_TIMEOUT = 3
-        PATTERN_REFUSED = 4
-        PATTERN_PASSPHRASE = 5
-        PATTERN_EOF = 6
-        PATTERN_WARN_SKIPPING = 7
-        PATTERN_STALE_RESUME_SOURCE = 8
-        PATTERN_RESUME_RESET = 9
-        PATTERN_FRESH_SEND = 10
-        PATTERN_RESUME_UNAVAILABLE = 11
-        PATTERN_BROKEN_PIPE = 12
-        PATTERN_GENERIC_WARN = 13
-        PATTERN_PASSWORD = 14
-        PATTERN_STORAGE_FULL = 15
+    patterns = [
+        "Are you sure you want to continue connecting",
+        "could not find any snapshots to destroy; check snapshot names.",
+        "Permission denied",
+        "Connection timed out",
+        "Connection refused",
+        r"(?im)(?:^|[\r\n])[^\r\n]*\benter passphrase for [^\r\n]*:\s*",
+        pexpect.EOF,
+        r"(?im)(?:^|[\r\n])(?:WARN(?:ING)?(?::)?[ \t]+)Skipping dataset \(dataset no longer exists\):[^\r\n]*",
+        r"(?im)(?:^|[\r\n])(?:WARN(?:ING)?(?::)?[ \t]+)Skipping dataset",
+        r"(?i)used in the initial send no longer exists",
+        r"(?i)(?:WARN|WARNING): resetting partially receive state because the snapshot source no longer exists",
+        r"(?i)INFO: Sending (?:incremental|full)",
+        r"WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.",
+        r"(?i)broken pipe",
+        r"(?im)(?:^|[\r\n])Warning: Permanently added '[^'\r\n]+' \([^\)\r\n]+\) to the list of known hosts\.[ \t]*",
+        r"(?im)(?:^|[\r\n])(?:CRITICAL ERROR:[ \t]*)?(?:cannot open|cannot import) '[^'\r\n]+': (?:dataset does not exist|no such pool(?: available)?)[ \t]*",
+        r"(?im)(?:^|[\r\n])(?:WARN|WARNING)(?:\b|:)",
+        r"(?im)(?:^|[\r\n])[^\r\n]*\bpassword:\s*$",
+    ]
 
-        patterns = [
-            "Are you sure you want to continue connecting",
-            "could not find any snapshots to destroy; check snapshot names.",
-            "Permission denied",
-            "Connection timed out",
-            "Connection refused",
-            r"(?im)(?:^|[\r\n])[^\r\n]*\benter passphrase for [^\r\n]*:\s*",
-            pexpect.EOF,
-            "WARN Skipping dataset",
-            r"(?i)used in the initial send no longer exists",
-            r"(?i)(?:WARN|WARNING): resetting partially receive state because the snapshot source no longer exists",
-            r"(?i)INFO: Sending (?:incremental|full)",
-            r"WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.",
-            r"(?i)broken pipe",
-            r"(?im)(?<![^\r\n])(?:WARN|WARNING)(?:\b|:)",
-            r"(?im)(?:^|[\r\n])[^\r\n]*\bpassword:\s*$",
-            _STORAGE_FULL_RE,
-        ]
+    max_pattern_executions = 5
+    repeat_guarded_patterns = {
+        PATTERN_HOSTKEY,
+        PATTERN_PASSPHRASE,
+        PATTERN_PASSWORD,
+    }
+    pattern_count = {index: 0 for index in repeat_guarded_patterns}
 
-        max_pattern_executions = 5
-        repeat_guarded_patterns = {
-            PATTERN_HOSTKEY,
-            PATTERN_PASSPHRASE,
-            PATTERN_PASSWORD,
-        }
-        pattern_count = {index: 0 for index in repeat_guarded_patterns}
+    while True:
+        index = child.expect(patterns)
 
-        while True:
-            index = child.expect(patterns)
+        transfer_counter.feed(safe_text(child.before))
+        if isinstance(child.after, str):
+            transfer_counter.feed(child.after)
 
-            transfer_counter.feed(safe_text(child.before))
-            if isinstance(child.after, str):
-                transfer_counter.feed(child.after)
+        if index in repeat_guarded_patterns:
+            pattern_count[index] += 1
 
-            # Inspect all buffered output before warning/retry/recovery branches.
-            # A secondary Broken Pipe in the same read must not mask pool exhaustion.
-            observed_output = safe_text(child.before)
-            if isinstance(child.after, str):
-                observed_output += child.after
-            observed_output += safe_text(child.buffer)
-            if index == PATTERN_STORAGE_FULL or _STORAGE_FULL_RE.search(observed_output):
+        if (
+            index in repeat_guarded_patterns
+            and pattern_count[index] > max_pattern_executions
+        ):
+            logger.error("")
+            logger.error(
+                "Pattern '%s' has been executed more than %s times.",
+                patterns[index],
+                max_pattern_executions,
+            )
+            logger.error("")
+            repeated_pattern = True
+            break
+
+        if index == PATTERN_HOSTKEY:
+            child.sendline("yes")
+
+        elif index == PATTERN_NO_DESTROY_SNAP:
+            logger.info("")
+            logger.info("----------")
+            logger.info("")
+            logger.info(
+                "Syncoid wanted to delete a syncoid-created snapshot that no longer exists."
+            )
+            logger.info("This can happen when multiple hosts share the same datasets.")
+            logger.info("Marking this as non-fatal and continuing until Syncoid exits.")
+            logger.info("")
+            ignored_missing_destroy_snapshot = True
+            continue
+
+        elif index == PATTERN_PERMISSION_DENIED:
+            die(
+                child=child,
+                errstr="ERROR! Incorrect password or SSH permission denied.",
+                error_code=EXIT_PASSWORD_DENIED,
+                logger=logger,
+            )
+
+        elif index == PATTERN_TIMEOUT:
+            die(
+                child,
+                "ERROR! Connection timed out.",
+                EXIT_CONNECTION_TIMEOUT,
+                logger=logger,
+            )
+
+        elif index == PATTERN_REFUSED:
+            die(
+                child,
+                "ERROR! Connection refused.",
+                EXIT_CONNECTION_REFUSED,
+                logger=logger,
+            )
+
+        elif index == PATTERN_PASSPHRASE:
+            if password is None:
                 die(
                     child,
-                    _STORAGE_FULL_MESSAGE,
-                    EXIT_STORAGE_FULL,
+                    "ERROR! Password/passphrase prompt appeared, but PassWord is set to NO.",
+                    EXIT_PASSWORD_DENIED,
                     logger=logger,
                 )
 
-            if index in repeat_guarded_patterns:
-                pattern_count[index] += 1
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+                wait_for_noecho=False,
+            )
 
-            if (
-                index in repeat_guarded_patterns
-                and pattern_count[index] > max_pattern_executions
-            ):
-                logger.error("")
-                logger.error(
-                    "Pattern '%s' has been executed more than %s times.",
-                    patterns[index],
-                    max_pattern_executions,
-                )
-                logger.error("")
-                repeated_pattern = True
-                break
+        elif index == PATTERN_EOF:
+            close_child_logfile(child, logger)
+            return build_attempt_result(
+                child,
+                modified_command,
+                transfer_counter,
+                repeated_pattern=repeated_pattern,
+                ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+                missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+                missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
+            )
 
-            if index == PATTERN_HOSTKEY:
-                child.sendline("yes")
+        elif index == PATTERN_MISSING_DATASET_SKIP:
+            missing_dataset_or_pool_detected = True
+            message = safe_text(child.after).strip()
+            if message and message not in missing_dataset_or_pool_messages:
+                missing_dataset_or_pool_messages.append(message)
+            logger.error("")
+            logger.error("Syncoid reported that a source dataset disappeared or does not exist.")
+            logger.error("Recording this dataset pair as failed and allowing Syncoid to finish before continuing the list.")
+            logger.error("")
+            continue
 
-            elif index == PATTERN_NO_DESTROY_SNAP:
-                logger.info("")
-                logger.info("----------")
+        elif index == PATTERN_WARN_SKIPPING:
+            die(
+                child,
+                "ERROR! Syncoid skipped a dataset. Check source/destination datasets.",
+                EXIT_DATASET_MISSING,
+                logger=logger,
+            )
+
+        elif index == PATTERN_STALE_RESUME_SOURCE:
+            stale_resume_recovery_active = True
+            stale_resume_reset_announced = False
+
+            logger.warning("")
+            logger.warning("----------")
+            logger.warning("")
+            logger.warning(
+                "Syncoid reported that the source snapshot required by the interrupted receive no longer exists."
+            )
+            logger.warning(
+                "Allowing Syncoid to finish its built-in stale receive-state recovery instead of interrupting it."
+            )
+            logger.warning(
+                "Syncerate will keep the original Syncoid command unchanged and wait for Syncoid to reset the partial receive state itself."
+            )
+            logger.warning("")
+            continue
+
+        elif index == PATTERN_RESUME_RESET:
+            stale_resume_recovery_active = True
+            stale_resume_reset_announced = True
+
+            logger.warning("")
+            logger.warning("Syncoid is resetting the stale partially received ZFS stream.")
+            logger.warning(
+                "The old resumable receive token points to a source snapshot that no longer exists."
+            )
+            logger.warning(
+                "Waiting for Syncoid to clear the receive state and start a fresh valid send."
+            )
+            logger.warning("")
+            continue
+
+        elif index == PATTERN_FRESH_SEND:
+            if stale_resume_recovery_active:
                 logger.info("")
                 logger.info(
-                    "Syncoid wanted to delete a syncoid-created snapshot that no longer exists."
+                    "Syncoid stale receive-state recovery completed; a new valid send is starting."
                 )
-                logger.info("This can happen when multiple hosts share the same datasets.")
-                logger.info("Marking this as non-fatal and continuing until Syncoid exits.")
                 logger.info("")
-                ignored_missing_destroy_snapshot = True
-                continue
-
-            elif index == PATTERN_PERMISSION_DENIED:
-                die(
-                    child=child,
-                    errstr="ERROR! Incorrect password or SSH permission denied.",
-                    error_code=EXIT_PASSWORD_DENIED,
-                    logger=logger,
-                )
-
-            elif index == PATTERN_TIMEOUT:
-                die(
-                    child,
-                    "ERROR! Connection timed out.",
-                    EXIT_CONNECTION_TIMEOUT,
-                    logger=logger,
-                )
-
-            elif index == PATTERN_REFUSED:
-                die(
-                    child,
-                    "ERROR! Connection refused.",
-                    EXIT_CONNECTION_REFUSED,
-                    logger=logger,
-                )
-
-            elif index == PATTERN_PASSPHRASE:
-                if password is None:
-                    die(
-                        child,
-                        "ERROR! Password/passphrase prompt appeared, but PassWord is set to NO.",
-                        EXIT_PASSWORD_DENIED,
-                        logger=logger,
-                    )
-
-                send_secret(
-                    child,
-                    password,
-                    output_handle,
-                    run_context.logging_enabled,
-                    wait_for_noecho=False,
-                )
-
-            elif index == PATTERN_EOF:
-                close_child_logfile(child, logger)
-                return build_attempt_result(
-                    child,
-                    modified_command,
-                    transfer_counter,
-                    repeated_pattern=repeated_pattern,
-                    ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
-                )
-
-            elif index == PATTERN_WARN_SKIPPING:
-                die(
-                    child,
-                    "ERROR! Syncoid skipped a dataset. Check source/destination datasets.",
-                    EXIT_DATASET_MISSING,
-                    logger=logger,
-                )
-
-            elif index == PATTERN_STALE_RESUME_SOURCE:
-                stale_resume_recovery_active = True
+                stale_resume_recovery_active = False
                 stale_resume_reset_announced = False
+            continue
 
-                logger.warning("")
-                logger.warning("----------")
-                logger.warning("")
-                logger.warning(
-                    "Syncoid reported that the source snapshot required by the interrupted receive no longer exists."
-                )
-                logger.warning(
-                    "Allowing Syncoid to finish its built-in stale receive-state recovery instead of interrupting it."
-                )
-                logger.warning(
-                    "Syncerate will keep the original Syncoid command unchanged and wait for Syncoid to reset the partial receive state itself."
-                )
-                logger.warning("")
-                continue
+        elif index == PATTERN_RESUME_UNAVAILABLE:
+            logger.warning("")
+            logger.warning(
+                "Syncoid reported that resumable receive is unavailable for this transfer."
+            )
+            logger.warning(
+                "Syncoid explicitly continues without resume support, so Syncerate will wait for its real exit status."
+            )
+            logger.warning("")
+            continue
 
-            elif index == PATTERN_RESUME_RESET:
-                stale_resume_recovery_active = True
-                stale_resume_reset_announced = True
-
-                logger.warning("")
-                logger.warning("Syncoid is resetting the stale partially received ZFS stream.")
-                logger.warning(
-                    "The old resumable receive token points to a source snapshot that no longer exists."
-                )
-                logger.warning(
-                    "Waiting for Syncoid to clear the receive state and start a fresh valid send."
-                )
-                logger.warning("")
-                continue
-
-            elif index == PATTERN_FRESH_SEND:
-                if stale_resume_recovery_active:
-                    logger.info("")
-                    logger.info(
-                        "Syncoid stale receive-state recovery completed; a new valid send is starting."
-                    )
-                    logger.info("")
-                    stale_resume_recovery_active = False
-                    stale_resume_reset_announced = False
-                continue
-
-            elif index == PATTERN_RESUME_UNAVAILABLE:
+        elif index == PATTERN_BROKEN_PIPE:
+            if stale_resume_recovery_active:
                 logger.warning("")
                 logger.warning(
-                    "Syncoid reported that resumable receive is unavailable for this transfer."
+                    "Broken Pipe occurred while Syncoid is recovering a stale interrupted receive."
                 )
-                logger.warning(
-                    "Syncoid explicitly continues without resume support, so Syncerate will wait for its real exit status."
-                )
-                logger.warning("")
-                continue
-
-            elif index == PATTERN_BROKEN_PIPE:
-                if stale_resume_recovery_active:
-                    logger.warning("")
+                if stale_resume_reset_announced:
                     logger.warning(
-                        "Broken Pipe occurred while Syncoid is recovering a stale interrupted receive."
+                        "This is treated as part of Syncoid's reset sequence; Syncerate will keep waiting for the replacement send."
                     )
-                    if stale_resume_reset_announced:
-                        logger.warning(
-                            "This is treated as part of Syncoid's reset sequence; Syncerate will keep waiting for the replacement send."
-                        )
-                    else:
-                        logger.warning(
-                            "This is an expected secondary symptom of the failed resume attempt; Syncerate will keep waiting for Syncoid's reset."
-                        )
-                    logger.warning("")
-                    continue
-
-                if not retry_broken_pipe:
-                    logger.warning("")
+                else:
                     logger.warning(
-                        "Broken Pipe appeared in Syncoid output, but RetryBrokenPipe is disabled."
+                        "This is an expected secondary symptom of the failed resume attempt; Syncerate will keep waiting for Syncoid's reset."
                     )
-                    logger.warning(
-                        "Waiting for Syncoid's real exit status and preserving normal failure handling."
-                    )
-                    logger.warning("")
-                    continue
-
                 logger.warning("")
-                logger.warning("Broken Pipe appeared in Syncoid output.")
+                continue
+
+            if not retry_broken_pipe:
+                logger.warning("")
                 logger.warning(
-                    "Stopping this attempt so the dataset-level retry policy can handle it."
+                    "Broken Pipe appeared in Syncoid output, but RetryBrokenPipe is disabled."
+                )
+                logger.warning(
+                    "Waiting for Syncoid's real exit status and preserving normal failure handling."
                 )
                 logger.warning("")
+                continue
 
-                # Pipeline stderr can arrive just after its secondary Broken Pipe.
-                # Allow one bounded read before deciding this is retryable.
-                final_index = child.expect([_STORAGE_FULL_RE, pexpect.EOF, pexpect.TIMEOUT], timeout=1)
-                transfer_counter.feed(safe_text(child.before))
-                if isinstance(child.after, str):
-                    transfer_counter.feed(child.after)
-                if final_index == 0:
-                    die(
-                        child,
-                        _STORAGE_FULL_MESSAGE,
-                        EXIT_STORAGE_FULL,
-                        logger=logger,
-                    )
-                broken_pipe_detected = True
+            logger.warning("")
+            logger.warning("Broken Pipe appeared in Syncoid output.")
+            logger.warning(
+                "Stopping this attempt so the dataset-level retry policy can handle it."
+            )
+            logger.warning("")
 
-                stop_syncoid_attempt(child, logger)
-                return build_attempt_result(
-                    child,
-                    modified_command,
-                    transfer_counter,
-                    repeated_pattern=repeated_pattern,
-                    ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
-                    broken_pipe_detected=broken_pipe_detected,
+            broken_pipe_detected = True
+
+            try:
+                child.terminate(force=True)
+            except Exception:
+                logger.exception(
+                    "Could not terminate the Broken Pipe attempt cleanly"
                 )
 
-            elif index == PATTERN_GENERIC_WARN:
-                warning_text = safe_text(child.after) + safe_text(child.buffer)
+            close_child_logfile(child, logger)
+            return build_attempt_result(
+                child,
+                modified_command,
+                transfer_counter,
+                repeated_pattern=repeated_pattern,
+                ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+                broken_pipe_detected=broken_pipe_detected,
+                missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+                missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
+            )
 
-                if (
-                    ignored_missing_destroy_snapshot
-                    and "zfs destroy" in warning_text
-                    and "failed: 256" in warning_text
-                ):
-                    logger.info("")
-                    logger.info("Syncoid produced the known non-fatal destroy warning.")
-                    logger.info(
-                        "Continuing because ignored_missing_destroy_snapshot is True."
-                    )
-                    logger.info("")
-                    continue
+        elif index == PATTERN_SSH_KNOWN_HOST:
+            logger.info("")
+            logger.info("OpenSSH added the remote host key to known_hosts; continuing Syncoid.")
+            logger.info("")
+            continue
 
+        elif index == PATTERN_ZFS_MISSING_DATASET_OR_POOL:
+            missing_dataset_or_pool_detected = True
+            message = safe_text(child.after).strip()
+            if message and message not in missing_dataset_or_pool_messages:
+                missing_dataset_or_pool_messages.append(message)
+            logger.error("")
+            logger.error("ZFS reported a missing dataset or pool.")
+            logger.error("Recording this dataset pair as failed and allowing Syncoid to finish before continuing the list.")
+            logger.error("")
+            continue
+
+        elif index == PATTERN_GENERIC_WARN:
+            warning_text = safe_text(child.after) + safe_text(child.buffer)
+
+            if (
+                ignored_missing_destroy_snapshot
+                and "zfs destroy" in warning_text
+                and "failed: 256" in warning_text
+            ):
+                logger.info("")
+                logger.info("Syncoid produced the known non-fatal destroy warning.")
+                logger.info(
+                    "Continuing because ignored_missing_destroy_snapshot is True."
+                )
+                logger.info("")
+                continue
+
+            die(
+                child,
+                "ERROR! Syncoid produced a warning.",
+                EXIT_WARNING,
+                logger=logger,
+            )
+
+        elif index == PATTERN_PASSWORD:
+            if password is None:
                 die(
                     child,
-                    "ERROR! Syncoid produced a warning.",
-                    EXIT_WARNING,
+                    "ERROR! Password/passphrase prompt appeared, but PassWord is set to NO.",
+                    EXIT_PASSWORD_DENIED,
                     logger=logger,
                 )
 
-            elif index == PATTERN_PASSWORD:
-                if password is None:
-                    die(
-                        child,
-                        "ERROR! Password/passphrase prompt appeared, but PassWord is set to NO.",
-                        EXIT_PASSWORD_DENIED,
-                        logger=logger,
-                    )
+            send_secret(
+                child,
+                password,
+                output_handle,
+                run_context.logging_enabled,
+                wait_for_noecho=False,
+            )
 
-                send_secret(
-                    child,
-                    password,
-                    output_handle,
-                    run_context.logging_enabled,
-                    wait_for_noecho=False,
-                )
-
-        close_child_logfile(child, logger)
-        return build_attempt_result(
-            child,
-            modified_command,
-            transfer_counter,
-            repeated_pattern=repeated_pattern,
-            ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
-        )
-    except BaseException:
-        if not child.closed:
-            stop_syncoid_attempt(child, logger)
-        raise
-
+    close_child_logfile(child, logger)
+    return build_attempt_result(
+        child,
+        modified_command,
+        transfer_counter,
+        repeated_pattern=repeated_pattern,
+        ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+        missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+        missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
+    )
 
 def run_replications(
     app_config: AppConfig,
@@ -1163,7 +1152,7 @@ def run_replications(
     logger: logging.Logger,
     ssh_agent_session: Optional[SSHAgentSession] = None,
 ) -> ReplicationSummary:
-    """Run all dataset pairs and return any non-fatal run warnings."""
+    """Run all dataset pairs and return accumulated warnings/deferred failures."""
 
     summary = ReplicationSummary()
 
@@ -1299,6 +1288,29 @@ def run_replications(
                     EXIT_SCRIPT_ERROR,
                     kind="script",
                 )
+
+            if (
+                result.missing_dataset_or_pool_detected
+                and child.exitstatus in _SYNCOID_MISSING_DATASET_EXIT_CODES
+            ):
+                failure = MissingDatasetFailure(
+                    dataset_pair=dataset_pair,
+                    messages=result.missing_dataset_or_pool_messages,
+                )
+                summary.missing_dataset_failures.append(failure)
+
+                logger.error("")
+                logger.error("----------")
+                logger.error("")
+                logger.error(
+                    "Skipping failed dataset pair and continuing: %s -> %s",
+                    dataset_pair.source,
+                    dataset_pair.destination,
+                )
+                for message in failure.messages:
+                    logger.error("ZFS/Syncoid: %s", message)
+                logger.error("")
+                break
 
             if child.exitstatus != EXIT_OK:
                 exit_code = int(child.exitstatus)

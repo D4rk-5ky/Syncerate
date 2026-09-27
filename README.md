@@ -2,9 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current source version: `0.4.30`
-
-**Use `python3 Syncerate.py --conf /path/to/Syncerate.cfg` for the updated application in this archive.** The original Linux `dist/Syncerate` executable is preserved, but has not been rebuilt and does not contain the full-pool fix. To use the updated standalone application, rebuild it on the target Linux architecture using the instructions below.
+Current version: `0.4.31`
 
 ## Disclaimer and liability notice
 
@@ -38,7 +36,7 @@ By using this software, you accept responsibility for reviewing, configuring, te
 
 Required:
 
-- Python 3.9 or later on a POSIX system (Linux is the deployment target)
+- Python 3
 - ZFS
 - Sanoid/Syncoid
 - Python `pexpect`
@@ -76,9 +74,9 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi or another supported POSIX target. This application uses POSIX PTYs, process groups, and ZFS commands; it is not a native Windows application. PyInstaller is not a cross-compiler.
+PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
 
-After rebuilding the executable from the current source, run it like the Python entry point:
+Run the packaged executable exactly like the Python entry point:
 
 ```bash
 ./dist/Syncerate --version
@@ -117,23 +115,47 @@ Create source and destination list files, then edit `config/Syncerate.cfg` with 
 
 ## Command-line options
 
+Syncerate has three application flags. `--conf`/`-c` is required for a normal replication run; `--help` and `--version` exit directly from the argument parser and therefore do not require a configuration file or start runtime work.
+
 | Option | Required | What it does |
 | --- | --- | --- |
-| `-c FILE`, `--conf FILE` | Yes | Loads the specified Syncerate configuration file. |
-| `-h`, `--help` | No | Shows command usage and exits. |
-| `--version` | No | Shows the installed Syncerate version and exits. |
+| `-c FILE`, `--conf FILE` | Yes for a normal run | Selects the required Syncerate INI configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. The selected file must contain the `[Syncerate Config]` section. |
+| `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
+| `--version` | No | Prints `<program-name> 0.4.31` and exits. The program name reflects the entry point used, for example `Syncerate.py 0.4.31` from the Python script or `Syncerate 0.4.31` from `dist/Syncerate`. It does not start a replication run. |
 
-Run Syncerate with the long option:
+### `--conf FILE` / `-c FILE`
+
+The long and short forms are identical. Supply exactly one configuration path for every normal run:
 
 ```bash
 ./Syncerate.py --conf ./config/Syncerate.cfg
-```
-
-Or with the short option:
-
-```bash
 ./Syncerate.py -c ./config/Syncerate.cfg
 ```
+
+An absolute path is also valid:
+
+```bash
+./Syncerate.py --conf /etc/syncerate/Syncerate.cfg
+```
+
+If the file cannot be read, its required section/options are missing, or a documented value fails validation, Syncerate reports a configuration error and returns exit code `2` before replication begins.
+
+### `--help` / `-h`
+
+```bash
+./Syncerate.py --help
+```
+
+Use this to see the executable's current syntax and examples. No `--conf` argument is needed when requesting help.
+
+### `--version`
+
+```bash
+./Syncerate.py --version
+./dist/Syncerate --version
+```
+
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename.
 
 Run the packaged regression suite after installation or modification with:
 
@@ -141,7 +163,7 @@ Run the packaged regression suite after installation or modification with:
 python3 -m unittest discover -s tests -v
 ```
 
-The suite uses Python's standard `unittest` framework and `pexpect`. Install optional `paho-mqtt` to exercise every MQTT regression. It uses fake child processes and does not run real ZFS replication.
+The suite uses Python's standard `unittest` framework and the same `pexpect` dependency required by Syncerate. It uses fake child processes and does not run real ZFS replication.
 
 ## Source dataset list
 
@@ -245,7 +267,6 @@ PassWord = No
 UseSSHAgent = No
 SSHAgentKeyLifetimeSeconds = 3600
 Mail = No
-NotificationTimeoutSeconds = 30
 DateTime = %Y-%m-%d_%H_%M_%S
 LogDestination = No
 SystemAction = No
@@ -282,7 +303,6 @@ mqtt_json_topic = homeassistant/syncerate/status
 | `UseSSHAgent` | No | Enables an isolated per-run OpenSSH agent with `Yes`, `True`, `1`, or `On`. Requires `--sshkey` in `SyncoidCommand`. Disabled values preserve the legacy Pexpect-through-Syncoid authentication path. |
 | `SSHAgentKeyLifetimeSeconds` | No | Positive whole-number lifetime for the identity loaded into the private agent. Defaults to `3600`. If it expires during a long run, Syncerate reloads it before the next dataset. |
 | `Mail` | Yes | Recipient address, or `No` to disable email. |
-| `NotificationTimeoutSeconds` | No | Positive whole seconds for each email delivery or MQTT publish batch; default `30`. Covers DNS, connection, and delivery waits. Cleanup may add a few seconds. Does not limit replication duration. `0`, negative values, and non-integers are rejected. |
 | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
 | `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out` files, or `No` for terminal-only logging. |
 | `SystemAction` | Yes | Trusted shell command executed after a successful run, or `No` to disable it. |
@@ -340,19 +360,7 @@ A remote endpoint uses the SSH user written before `@`. `--sshport` selects a no
 
 Use Syncoid's `--no-privilege-elevation` when the local and remote users already have the required ZFS permissions and Syncoid should not invoke `sudo`. When Syncerate itself is run as root, local ZFS commands already run as root; a non-root remote SSH user still needs appropriate delegated ZFS permissions.
 
-The flags in the supplied command examples belong to Syncoid:
-
-| Flag | Purpose |
-| --- | --- |
-| `--compress none` | Disables Syncoid transport compression; dataset compression properties are separate. |
-| `--sshport PORT` | Selects the SSH port for remote access. |
-| `--sshkey FILE` or `--sshkey=FILE` | Selects the SSH identity file; private-agent mode reads this same value. |
-| `--no-privilege-elevation` | Prevents Syncoid from invoking sudo; the chosen users still need ZFS permissions. |
-| `--recvoptions="o recordsize=1M o compression=zstd-9"` | Passes receive options to ZFS; these examples set destination record size and compression. Review the effect on your target before using them. |
-| `--quiet` | Suppresses normal progress output; Syncerate cannot promise transfer-byte measurement in this mode. |
-| `--pv-options OPTIONS` | Customizes Syncoid's pv arguments; removing/changing byte-counter output can make the final transfer total unavailable. |
-
-Quote values containing spaces so they remain one argument. Syncerate's own flags are only `--conf`/`-c`, `--help`/`-h`, and `--version`; unknown flags supplied to Syncerate itself are rejected. Other Syncoid options go inside `SyncoidCommand` or a destination line, and are interpreted by the installed Syncoid version. `SystemAction` is a separate trusted shell command, not a Syncoid flag.
+Any other Syncoid options can be included in `SyncoidCommand` or added to individual destination lines.
 
 ## Password and passphrase handling
 
@@ -465,7 +473,7 @@ For successful and warning-success runs, Syncerate also reports `Data transferre
 
 Syncerate deliberately does **not** guess a transfer size from Syncoid's rounded `(~ size)` estimates. If a transfer starts but a usable `pv` byte counter cannot be observed—for example because `--quiet` suppresses progress, `pv` is unavailable, or custom `--pv-options` replace the normal byte-counter output—the final success summary reports `Data transferred :   Unavailable`.
 
-The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints the transfer total (for completed replication summaries), inserts one blank line, and prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the transfer total and timer. Success/warning-success email bodies use the same summary. Error email bodies still include the metadata and runtime, but do not claim a complete total-transfer value after an interrupted/failed run. `--help` and `--version` do not produce a runtime summary.
+The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints the transfer total (for completed replication summaries), inserts one blank line, and prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the transfer total and timer. Success/warning-success email bodies use the same summary. Ordinary interrupted error paths include metadata/runtime but do not claim a complete transfer total. The special missing-dataset/pool failure path is different because Syncerate deliberately completes the remaining configured list first; that completed-list failure may therefore include the measured transfer total together with exit code `8`. `--help` and `--version` do not produce a runtime summary.
 
 Example:
 
@@ -496,7 +504,7 @@ Enable email:
 Mail = user@example.com
 ```
 
-A working local `mail` command is required for delivery. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Success and warning-success email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, `Data transferred`, another blank line, and `Total runtime`. Error email bodies include the same metadata and runtime but omit transfer totals because a failed replication may not have a complete trustworthy total. When file logging is enabled, the `.log` summary is written before a success message is built, so both the copied `.log` text in the body and the attached `.log` already contain the transfer total and timer. Log files are attached when file logging is enabled and the relevant files are available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not convert an already completed replication into a failed Syncerate run.
+A working local `mail` command is required for delivery. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Success and warning-success email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, `Data transferred`, another blank line, and `Total runtime`. Ordinary interrupted error emails include the same metadata/runtime but omit transfer totals because the replication list did not complete. Missing-dataset/pool failures are reported separately: Syncerate first continues through the remaining configured pairs, then sends an exit-code-`8` failure mail that lists every failed pair plus the matched ZFS/Syncoid message and may include the completed-list transfer total. When file logging is enabled, relevant `.log`, `.err`, and `.out` files are attached when available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not replace the replication result.
 
 When `RetryBrokenPipe` is enabled and a dataset is skipped after exhausting its configured retry count, the run still returns success when no other failure occurs. The success email subject is exactly:
 
@@ -505,20 +513,6 @@ Syncerate Succsful - WARNING BROKEN PIPE
 ```
 
 The email body lists the skipped source and destination dataset pairs.
-
-## Full pools and quota failures
-
-An explicit diagnostic ending in `: out of space`, `: no space left on device`, or `: disk quota exceeded` is fatal, including the reported `cannot receive incremental stream: out of space`. Matching is case-insensitive and works with partial output chunks, carriage-return progress, and no final newline. Dataset names merely containing these words are not errors.
-
-Syncerate stops the current local Syncoid process group (TERM, then KILL after a one-second grace if still present), closes its output log, and returns **exit code `12`**. Later datasets and `SystemAction` are skipped. This takes precedence over Broken Pipe retries, missing-snapshot exceptions, and stale-receive recovery. When an ordinary retryable Broken Pipe appears first, the monitor allows one second for a following storage diagnostic before stopping/retrying that attempt.
-
-The existing failure handler records the diagnostic in `.log`/`.err`, attempts error mail when `Mail` contains a recipient, and publishes non-retained failure JSON when `MQTT_JSON_Status = Yes`. `Use_MQTT = Yes` alone enables only the retained success message. Error mail includes the reason and exit code even when file logging is disabled.
-
-Each notification has its own `NotificationTimeoutSeconds` deadline (default 30 seconds), plus bounded process cleanup. A stalled MQTT attempt does not prevent the mail attempt; a failed notification does not replace exit code `12`. Notifications are best-effort: configured mail transport and a reachable MQTT broker are still needed for delivery.
-
-Free space or correct the relevant dataset quota before running the same command again. Syncerate does not delete snapshots, roll back datasets, or run `zfs receive -A` in response to storage exhaustion. Syncoid/ZFS retain ownership of resumable receive handling. Only the owned local process group is signalled; detached helpers, remote processes, and uninterruptible kernel I/O cannot be guaranteed to stop by this local cleanup.
-
-This detects the listed explicit diagnostics. It is not a general inactivity watchdog: a completely silent hang or different/localized error text is not automatically classified as a full pool, and healthy long transfers have no new time limit.
 
 ## Interrupted receive recovery
 
@@ -563,7 +557,7 @@ When enabled, Syncerate watches Syncoid output case-insensitively for the text `
 5. After the remaining list finishes, Syncerate returns exit code `0` when no other fatal error occurred.
 6. Logs and the success email identify every dataset pair skipped after exhausting its retries.
 
-The retry count is never shared between datasets. Explicit storage/quota diagnostics always stop the entire run with code `12`. This option does not retry authentication failures, missing datasets, generic warnings, connection failures, or other nonzero Syncoid exits. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
+The retry count is never shared between datasets. This option does not retry authentication failures, missing datasets, generic warnings, connection failures, or other nonzero Syncoid exits. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
 
 ## MQTT notifications
 
@@ -646,11 +640,12 @@ Successful JSON example:
   "error": "",
   "stderr": "",
   "warning": false,
-  "skipped_datasets": []
+  "skipped_datasets": [],
+  "failed_datasets": []
 }
 ```
 
-Failure JSON example:
+Failure JSON example for a missing ZFS dataset:
 
 ```json
 {
@@ -659,17 +654,24 @@ Failure JSON example:
   "title": "Main ZFS backup",
   "name": "Main ZFS backup",
   "job": "syncerate",
-  "exit_code": 7,
-  "error": "Connection refused",
-  "stderr": "last relevant Syncoid/SSH output",
+  "exit_code": 8,
+  "error": "1 dataset pair(s) failed because a ZFS dataset or pool was missing.",
+  "stderr": "- Storage/Missing -> Backup/Missing\n  cannot open 'Storage/Missing': dataset does not exist",
   "warning": false,
-  "skipped_datasets": []
+  "skipped_datasets": [],
+  "failed_datasets": [
+    {
+      "source": "Storage/Missing",
+      "destination": "Backup/Missing",
+      "reason": "cannot open 'Storage/Missing': dataset does not exist"
+    }
+  ]
 }
 ```
 
 `title` comes from `BackupTitle`; `name` carries the same value as a compatibility alias. The configured `SyncoidCommand` is deliberately excluded from JSON so SSH endpoints, key paths, and command options are not exposed through the status event.
 
-The `stderr` field is bounded to the last 4000 characters of relevant captured child/Syncoid output. A Broken Pipe warning-success remains `status: success` and sets `warning: true` with affected source/destination pairs in `skipped_datasets`.
+The `stderr` field is bounded to the last 4000 characters of relevant captured child/Syncoid output. A Broken Pipe warning-success remains `status: success` and sets `warning: true` with affected source/destination pairs in `skipped_datasets`. A missing dataset/pool run is a real failure with exit code `8`; after Syncerate finishes the remaining configured pairs, the JSON failure event includes each affected source/destination pair and the matched ZFS/Syncoid text in `failed_datasets`.
 
 Failure JSON is best-effort and never replaces the original Syncerate exit code. If MQTT itself is the failing component, Syncerate does not recursively try to report that MQTT failure over MQTT. Errors before configuration is loaded cannot be published.
 
@@ -753,12 +755,14 @@ sudo zfs list -t snapshot
 Syncerate monitors Syncoid and SSH output for:
 
 - first-time SSH host-key confirmation;
+- the normal OpenSSH `Warning: Permanently added 'host' (KEYTYPE) to the list of known hosts.` message after accepting a new host key;
 - password and key-passphrase prompts;
 - authentication or permission failure;
 - connection timeout;
 - connection refusal;
-- explicit full-storage and quota diagnostics, which stop the run with code `12`;
-- skipped datasets;
+- Syncoid's specific `WARNING: Skipping dataset (dataset no longer exists): ...` condition (and the older/unprefixed `WARN` spelling);
+- OpenZFS missing-dataset/pool output such as `cannot open 'pool/dataset': dataset does not exist`, `cannot open 'pool': no such pool`, and `cannot import 'pool': no such pool available`, including Syncoid's `CRITICAL ERROR: ` prefix when it relays the captured ZFS error;
+- other skipped-dataset warnings, which remain fatal;
 - an interrupted receive whose original resume snapshot no longer exists, allowing Syncoid to reset the stale receive state and start a valid replacement send;
 - unavailable ZFS resume support where Syncoid continues without it;
 - an interactive host-key, password, or passphrase prompt repeating too many times;
@@ -767,9 +771,11 @@ Syncerate monitors Syncoid and SSH output for:
 - generic warnings;
 - the recognized missing destroy-snapshot condition.
 
-When SSH presents the standard first-connection host-key confirmation prompt, Syncerate automatically answers `yes`, preserving existing behavior. This is convenient but weaker than pre-verifying host keys. For important systems, populate `known_hosts` ahead of time or enforce your preferred `StrictHostKeyChecking` policy through normal SSH configuration/Syncoid options so an unexpected host key is rejected instead of accepted interactively.
+When SSH presents the standard first-connection host-key confirmation prompt, Syncerate automatically answers `yes`, preserving existing behavior. OpenSSH normally follows that with a line like `Warning: Permanently added '10.0.0.135' (ED25519) to the list of known hosts.` Syncerate now recognizes that exact warning shape as informational and continues Syncoid instead of treating it as a generic fatal warning. This is convenient but weaker than pre-verifying host keys. For important systems, populate `known_hosts` ahead of time or enforce your preferred `StrictHostKeyChecking` policy through normal SSH configuration/Syncoid options so an unexpected host key is rejected instead of accepted interactively.
 
-Generic warning **lines** remain fatal except for the specifically recognized Syncoid stale-receive reset warning and the exact unavailable-resume message. Warning matching is anchored to warning-line shapes so benign words such as `WARNINGS` do not become fatal accidentally. Normal repeated `INFO: Sending ...` progress is not subject to the interactive-prompt repetition guard. During stale receive recovery, Syncerate waits for Syncoid to reset the receive state and suppresses only the Broken Pipe associated with that failed resume pipeline. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Ordinary Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
+Missing ZFS data is handled as **continue-but-fail**. When the monitored output matches the established OpenZFS/Syncoid missing signatures, Syncerate lets that Syncoid process finish. Syncoid exit `0` is accepted for its specific recursive `dataset no longer exists` skip case and exit `2` is accepted for the normal initial missing source/pool case. The affected pair is recorded as failed, then Syncerate proceeds to the next configured pair. After the full list is processed, Syncerate returns exit code `8`, does not run success-only MQTT/system-action handling, and reports all recorded failures through the configured JSON MQTT failure event and/or failure email. If the same missing text is followed by another Syncoid exit code, that real exit code remains fatal immediately so an unrelated later error is not masked.
+
+Generic warning **lines** remain fatal except for the explicitly recognized first-contact `Permanently added ... known hosts` message, Syncoid's missing-dataset continuation case, the stale-receive reset warning, and the exact unavailable-resume message. Warning matching is anchored to warning-line shapes so benign words such as `WARNINGS` do not become fatal accidentally. Normal repeated `INFO: Sending ...` progress is not subject to the interactive-prompt repetition guard. During stale receive recovery, Syncerate waits for Syncoid to reset the receive state and suppresses only the Broken Pipe associated with that failed resume pipeline. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Ordinary Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
 
 ## Exit codes
 
@@ -782,10 +788,7 @@ Generic warning **lines** remain fatal except for the specifically recognized Sy
 | `5` | Password, authentication, or permission failure. |
 | `6` | Connection timed out. |
 | `7` | Connection was refused. |
-| `8` | Syncoid skipped or could not find a dataset. |
+| `8` | One or more configured pairs encountered a missing ZFS dataset or pool. Syncerate continues the remaining list for the recognized missing-data cases, then reports the completed run as failed with code `8`. |
 | `9` | The same monitored output pattern repeated too many times. |
 | `10` | MQTT dependency or publishing failure. |
 | `11` | Reserved for system-action failures; the current system-action runner logs failures without returning this code. |
-| `12` | Explicit storage-full/quota error detected; the current attempt is stopped and the remaining dataset list is not run. |
-
-Other nonzero Syncoid exit statuses are preserved; termination by signal is reported as `128 + signal`. A raw Syncoid status can numerically overlap a Syncerate code, so use the accompanying diagnostic to distinguish them.

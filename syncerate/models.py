@@ -29,7 +29,6 @@ class AppConfig:
     retry_broken_pipe: bool = False
     broken_pipe_retry_count: int = 1
     broken_pipe_retry_wait_seconds: int = 10
-    notification_timeout_seconds: int = 30
 
     @property
     def mail_enabled(self) -> bool:
@@ -74,6 +73,8 @@ class SyncoidAttemptResult:
     repeated_pattern: bool = False
     ignored_missing_destroy_snapshot: bool = False
     broken_pipe_detected: bool = False
+    missing_dataset_or_pool_detected: bool = False
+    missing_dataset_or_pool_messages: tuple[str, ...] = ()
     transferred_bytes: int = 0
     transfer_measurement_complete: bool = True
 
@@ -91,11 +92,20 @@ class SSHAgentSession:
     key_lifetime_seconds: int
 
 
+@dataclass(frozen=True)
+class MissingDatasetFailure:
+    """One dataset pair that failed because a ZFS dataset or pool was missing."""
+
+    dataset_pair: DatasetPair
+    messages: tuple[str, ...]
+
+
 @dataclass
 class ReplicationSummary:
-    """Non-fatal conditions collected while processing the dataset list."""
+    """Aggregate conditions collected while processing the dataset list."""
 
     broken_pipe_failed_datasets: list[DatasetPair] = field(default_factory=list)
+    missing_dataset_failures: list[MissingDatasetFailure] = field(default_factory=list)
     transferred_bytes: int = 0
     transfer_measurement_complete: bool = True
 
@@ -104,3 +114,9 @@ class ReplicationSummary:
         """Return True when at least one dataset exhausted its Broken Pipe retries."""
 
         return bool(self.broken_pipe_failed_datasets)
+
+    @property
+    def has_missing_dataset_failure(self) -> bool:
+        """Return True when at least one pair failed on a missing dataset or pool."""
+
+        return bool(self.missing_dataset_failures)

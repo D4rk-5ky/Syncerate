@@ -154,6 +154,21 @@ def format_transfer_size(transferred_bytes: int) -> str:
     return f"{byte_count / 1024:.2f} KB"
 
 
+def format_missing_dataset_failures(replication_summary: ReplicationSummary) -> str:
+    """Return a readable list of dataset pairs that failed because ZFS data was missing."""
+
+    lines: list[str] = []
+    for failure in replication_summary.missing_dataset_failures:
+        pair = failure.dataset_pair
+        lines.append(f"- {pair.source} -> {pair.destination}")
+        if failure.messages:
+            for message in failure.messages:
+                lines.append(f"  {message}")
+        else:
+            lines.append("  ZFS/Syncoid reported a missing dataset or pool.")
+    return "\n".join(lines)
+
+
 def format_final_run_summary(
     app_config: Optional[AppConfig],
     elapsed_seconds: float,

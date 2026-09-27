@@ -8,11 +8,12 @@ from typing import Optional, Sequence
 from .cli import parse_arguments
 from .config import load_app_config
 from .datasets import load_dataset_pairs
-from .errors import EXIT_OK, EXIT_SCRIPT_ERROR, SyncerateError
+from .errors import EXIT_DATASET_MISSING, EXIT_OK, EXIT_SCRIPT_ERROR, SyncerateError
 from .logging_setup import (
     create_run_context,
     get_console_logger,
     get_logger,
+    format_missing_dataset_failures,
     log_startup_configuration,
     log_final_run_summary,
 )
@@ -56,6 +57,16 @@ def log_syncerate_error(
         logger.error("")
         logger.error("This is the warning/error:")
         logger.error(error.child_warning)
+        logger.error("")
+        logger.error("This is the script exit code: %s", error.exit_code)
+
+    elif error.kind == "dataset_missing":
+        logger.error("One or more Syncoid dataset pairs failed because a ZFS dataset or pool was missing")
+        logger.error("Syncerate completed the remaining dataset list before marking the run failed")
+        if error.child_before:
+            logger.error("")
+            logger.error("Failed dataset pairs:")
+            logger.error(error.child_before)
         logger.error("")
         logger.error("This is the script exit code: %s", error.exit_code)
 
@@ -208,6 +219,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     app_config: Optional[AppConfig] = None
     run_context: Optional[RunContext] = None
     logger: Optional[logging.Logger] = None
+    replication_summary: Optional[ReplicationSummary] = None
     started_at = time.monotonic()
 
     try:
@@ -237,6 +249,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 logger,
                 ssh_agent_session=ssh_agent_session,
             )
+        if replication_summary.has_missing_dataset_failure:
+            failure_details = format_missing_dataset_failures(replication_summary)
+            raise SyncerateError(
+                f"{len(replication_summary.missing_dataset_failures)} dataset pair(s) failed because a ZFS dataset or pool was missing.",
+                EXIT_DATASET_MISSING,
+                kind="dataset_missing",
+                child_before=failure_details,
+            )
+
         runtime_seconds = time.monotonic() - started_at
         successfull_run(
             app_config,
@@ -253,14 +274,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         log_syncerate_error(error, logger)
         runtime_seconds = time.monotonic() - started_at
-        log_final_run_summary(app_config, runtime_seconds, logger)
-        send_mqtt_failure_status(error, app_config, logger)
+        completed_failure_summary = (
+            replication_summary if error.kind == "dataset_missing" else None
+        )
+        log_final_run_summary(
+            app_config,
+            runtime_seconds,
+            logger,
+            completed_failure_summary,
+        )
+        send_mqtt_failure_status(
+            error,
+            app_config,
+            logger,
+            replication_summary=completed_failure_summary,
+        )
         send_error_mail(
             error,
             app_config,
             run_context,
             logger,
             runtime_seconds=runtime_seconds,
+            replication_summary=completed_failure_summary,
         )
         return error.exit_code
 
