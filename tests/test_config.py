@@ -51,6 +51,27 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(cfg.mqtt_json_status)
         self.assertIsNone(cfg.log_destination)
 
+
+    def test_success_notification_switches_default_to_enabled_when_omitted(self):
+        cfg = self.load_text(BASE)
+        self.assertTrue(cfg.send_mail_on_success)
+        self.assertTrue(cfg.send_mqtt_on_success)
+
+    def test_success_notification_switches_can_be_disabled(self):
+        cfg = self.load_text(
+            BASE
+            + "SendMailOnSuccess = No\n"
+            + "SendMQTTOnSuccess = Off\n"
+        )
+        self.assertFalse(cfg.send_mail_on_success)
+        self.assertFalse(cfg.send_mqtt_on_success)
+
+    def test_success_notification_switch_rejects_invalid_boolean(self):
+        for option in ("SendMailOnSuccess", "SendMQTTOnSuccess"):
+            with self.subTest(option=option):
+                with self.assertRaisesRegex(ValueError, option):
+                    self.load_text(BASE + f"{option} = sometimes\n")
+
     def test_multiline_backup_comment_uses_ini_continuation_lines(self):
         cfg = self.load_text(
             BASE
@@ -73,16 +94,19 @@ class ConfigTests(unittest.TestCase):
             self.load_text(BASE.replace("RetryBrokenPipe = No", "RetryBrokenPipe = YESS"))
 
     def test_all_documented_boolean_spellings_are_accepted(self):
-        for value in ("Yes", "True", "1", "On"):
-            cfg = self.load_text(
-                BASE.replace("RetryBrokenPipe = No", f"RetryBrokenPipe = {value}")
-            )
-            self.assertTrue(cfg.retry_broken_pipe)
-        for value in ("No", "False", "0", "Off"):
-            cfg = self.load_text(
-                BASE.replace("RetryBrokenPipe = No", f"RetryBrokenPipe = {value}")
-            )
-            self.assertFalse(cfg.retry_broken_pipe)
+        for enabled, values in (
+            (True, ("Yes", "True", "1", "On", "tRuE")),
+            (False, ("No", "False", "0", "Off", "fAlSe")),
+        ):
+            for value in values:
+                with self.subTest(value=value):
+                    cfg = self.load_text(
+                        BASE.replace("RetryBrokenPipe = No", f"RetryBrokenPipe = {value}")
+                        + f"SendMailOnSuccess = {value}\nSendMQTTOnSuccess = {value}\n"
+                    )
+                    self.assertEqual(cfg.retry_broken_pipe, enabled)
+                    self.assertEqual(cfg.send_mail_on_success, enabled)
+                    self.assertEqual(cfg.send_mqtt_on_success, enabled)
 
     def test_empty_password_option_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "PassWord must not be empty"):

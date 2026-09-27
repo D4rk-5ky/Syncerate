@@ -16,6 +16,28 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.33
+
+Previous version: `0.4.32`.
+
+- Reused the existing optional `SendMailOnSuccess` and `SendMQTTOnSuccess` settings, which default to true. Each suppresses only its own successful/warning-success notifications when false; master channel settings still apply. Examples now show the `True` spelling explicitly.
+- Extended `send_mqtt_failure_status()` to handle either enabled MQTT mode. `Use_MQTT` alone now sends a non-retained JSON error event on the exact `mqtt_topic` plus `/error`. When `MQTT_JSON_Status` is enabled, the existing `mqtt_json_topic` is used and no duplicate fallback event is sent.
+- Reused `send_mqtt_messages()` and `build_mqtt_status_payload()` for error delivery, preserving structured errors, captured output, and missing-dataset details. Success payloads and HA availability remain success-only; failure events never replace retained success state.
+- Preserved error mail independently of the success toggle, original failure exit codes when error publishing fails, and the guard against reporting an MQTT publishing error recursively over MQTT.
+- Added regression coverage for channel/topic routing, both success toggle values, independent mail/MQTT switches, warning-success behavior, default-enabled success, disabled channels, error-report recursion, and error-mail delivery when MQTT failure reporting fails. Expanded Boolean validation coverage for both switches.
+- Updated README usage, commented code map, config comments, Home Assistant subscription guidance, package version, build-version check, and its packaging test. No replication, SSH, retry, dataset validation, or system-action behavior was changed. All original project files remain included.
+
+## 0.4.32
+
+Previous version: `0.4.31`.
+
+- Added optional strict Boolean `SendMailOnSuccess`, defaulting to `Yes` when omitted. When `Mail` contains a recipient and `SendMailOnSuccess = No`, successful and warning-success runs skip email, while handled error paths still attempt the normal error email.
+- Added optional strict Boolean `SendMQTTOnSuccess`, also defaulting to `Yes` when omitted. Setting it to `No` suppresses all successful-run MQTT publishing: the legacy retained `mqtt_message`, the optional retained Home Assistant availability `online` signal, and the independent non-retained JSON success event.
+- Kept MQTT error reporting independent from the new success switch. When `MQTT_JSON_Status = Yes`, handled failures still publish the existing non-retained JSON failure event even if `SendMQTTOnSuccess = No`. The historical `Use_MQTT` topic remains success-only so existing retained-topic consumers are not given a new failure payload format.
+- Kept error-email behavior independent from the new success switch. `send_error_mail()` still depends only on whether `Mail` itself is enabled, so suppressing routine success mail cannot hide failures.
+- Added regression coverage for default-enabled compatibility, explicit disable values, invalid Boolean rejection, successful mail/MQTT suppression, and preservation of error mail/MQTT JSON failure reporting.
+- Updated README/current-use behavior, `commented_code_map.md`, `config/example-Syncerate.cfg`, version metadata, and standalone build-version expectations for 0.4.32. Replication, SSH, Syncoid, dataset, retry, missing-data, transfer-accounting, and system-action behavior are unchanged.
+
 ## 0.4.31
 
 Previous version: `0.4.30`.

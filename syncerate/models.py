@@ -22,6 +22,8 @@ class AppConfig:
     destination_list_path: str
     password_option: str
     syncoid_command: str
+    send_mail_on_success: bool = True
+    send_mqtt_on_success: bool = True
     mqtt_json_status: bool = False
     use_home_assistant: bool = False
     use_ssh_agent: bool = False

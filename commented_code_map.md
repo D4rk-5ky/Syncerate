@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.31`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.33`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -84,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.31"
+VERSION = "0.4.33"
 __version__ = VERSION
 ```
 
@@ -131,6 +131,8 @@ Immutable configuration state loaded from one INI file. It replaces former runti
 - `MailOption`;
 - `SystemOption`;
 - `Use_MQTT`;
+- `SendMailOnSuccess`;
+- `SendMQTTOnSuccess`;
 - `MQTT_JSON_Status`;
 - `mqtt_json_topic` (dedicated JSON-only topic read from the raw config);
 - `DateTime`;
@@ -151,7 +153,9 @@ Fields:
 - `raw_config`: retained `RawConfigParser` for lazy MQTT/HA option reads;
 - `mail_option`: recipient or `No`;
 - `system_option`: successful-run command or `No`;
-- `use_mqtt`: normalized Boolean;
+- `use_mqtt`: normalized Boolean enabling retained success MQTT and non-retained failure events;
+- `send_mail_on_success`: normalized Boolean controlling only success/warning-success mail; defaults to `True` when the INI option is omitted;
+- `send_mqtt_on_success`: normalized Boolean controlling only success/warning-success MQTT publishing across both legacy/HA and JSON success paths; defaults to `True` when the INI option is omitted;
 - `mqtt_json_status`: normalized Boolean independently enabling structured non-retained success/failure MQTT status;
 - `use_home_assistant`: the strictly validated legacy Home Assistant availability Boolean reused by notifications instead of reparsing raw text;
 - `datetime_format`: filename timestamp format;
@@ -269,7 +273,7 @@ Legacy compatibility helper that returns true only for `YES`, `TRUE`, `1`, or `O
 
 ### `parse_boolean_option(raw_config, option_name, *, fallback="No")`
 
-Reads one documented Boolean and accepts exactly the enabled/disabled spellings `Yes/No`, `True/False`, `1/0`, and `On/Off` case-insensitively. Any other nonempty spelling raises `ValueError` before replication begins. This is used for `UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `Use_HomeAssistant`, and `MQTT_JSON_Status`.
+Reads one documented Boolean and accepts exactly the enabled/disabled spellings `Yes/No`, `True/False`, `1/0`, and `On/Off` case-insensitively. Any other nonempty spelling raises `ValueError` before replication begins. This is used for `UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`. Most callers use the default fallback `No`; the two success-notification controls deliberately pass `fallback="Yes"` so existing configurations keep their default success notification behavior when those new keys are omitted.
 
 ### `validate_syncoid_command_template(command_template)`
 
@@ -281,7 +285,7 @@ Private startup helper that reads a required option, strips surrounding whitespa
 
 ### `load_app_config(config_path)`
 
-Reads and validates the selected INI file, then returns immutable `AppConfig`. It verifies the file and section, validates all required nonempty text, strictly parses supported Booleans, validates the Syncoid template before any dataset is touched, validates positive/non-negative numeric retry/agent settings, normalizes `LogDestination = No` to `None`, and validates enabled MQTT channels before replication.
+Reads and validates the selected INI file, then returns immutable `AppConfig`. It verifies the file and section, validates all required nonempty text, strictly parses supported Booleans, validates the Syncoid template before any dataset is touched, validates positive/non-negative numeric retry/agent settings, normalizes `LogDestination = No` to `None`, and validates enabled MQTT channels before replication. `SendMailOnSuccess` and `SendMQTTOnSuccess` are optional strict Booleans with `Yes` defaults so older configs continue sending success notifications until the user explicitly disables them.
 
 For MQTT it requires a broker address, port `1..65535`, the legacy topic/message when `Use_MQTT` is enabled, the HA availability topic when that legacy integration is enabled, and a dedicated JSON topic when `MQTT_JSON_Status` is enabled. Conflicting retained/non-retained topics are rejected. Broker credentials, payload text, and topic values stay in `raw_config`; validated feature switches are stored as typed fields in `AppConfig`.
 
@@ -478,7 +482,7 @@ The configured `SyncoidCommand` is deliberately excluded from MQTT JSON so conne
 
 ### `send_mqtt_messages(app_config, logger, *, success=True, exit_code=0, error_message="", stderr_text="", replication_summary=None)`
 
-Publishes the original retained success signals and the independent JSON event channel.
+Publishes retained success signals and non-retained JSON events using the existing payload builder.
 
 Important behavior:
 
@@ -487,17 +491,18 @@ Important behavior:
 3. On a successful run with `Use_MQTT = Yes`, the configured `mqtt_message` is published to `mqtt_topic` with `retain=True`, preserving the historical Syncerate behavior.
 4. On that same legacy path, validated `app_config.use_home_assistant` additionally publishes retained payload `online` to `HomeAssistant_Available`, preserving historical behavior without reparsing the raw Boolean.
 5. `MQTT_JSON_Status = Yes` independently publishes structured success/failure JSON to `mqtt_json_topic` with `retain=False` hard-coded. JSON never replaces or shares the old retained topic.
-6. JSON can therefore run alongside the old MQTT/HA outputs, or by itself while `Use_MQTT = No`.
-7. Fatal failure calls produce only JSON status; the old success-only MQTT and HA availability signals are not emitted for a failed run.
-8. Publish/dependency failures still raise `SyncerateError` with exit code `10`.
+6. When `Use_MQTT` is enabled without `MQTT_JSON_Status`, failures use the same JSON payload on the exact `mqtt_topic` plus `/error`. The derived subtopic keeps retained success/HA consumers separate. When JSON status is enabled, its dedicated topic takes precedence and no duplicate error is published.
+7. `app.successfull_run()` calls this function for successful/warning-success runs only when `send_mqtt_on_success` is true. The notification function itself still accepts `success=False` for the independent failure path.
+8. Fatal failure calls produce only JSON status; the old success-only MQTT and HA availability signals are not emitted for a failed run.
+9. Publish/dependency failures still raise `SyncerateError` with exit code `10`.
 
 ### `send_mqtt_failure_status(error, app_config, logger, replication_summary=None)`
 
-Best-effort fatal-failure publisher used by the top-level exception boundary whenever `MQTT_JSON_Status` is enabled, even if legacy `Use_MQTT` is disabled. The optional completed `ReplicationSummary` is forwarded for the missing-data path so `failed_datasets` is populated. It calls `send_mqtt_messages()` with `success=False`, so only the dedicated non-retained JSON failure event is published. If that MQTT publish also fails, the secondary failure is logged but the original application exit code is preserved. MQTT-originated errors are skipped to prevent recursion.
+Best-effort fatal-failure publisher used by the top-level exception boundary whenever either `Use_MQTT` or `MQTT_JSON_Status` is enabled. `SendMQTTOnSuccess` is intentionally not consulted here: disabling success MQTT must never hide configured failure reporting. The optional completed `ReplicationSummary` is forwarded for the missing-data path so `failed_datasets` is populated. It calls `send_mqtt_messages()` with `success=False`, so one non-retained JSON failure event is published on `mqtt_json_topic` when JSON status is enabled, or `<mqtt_topic>/error` for `Use_MQTT` alone. If that MQTT publish also fails, the secondary failure is logged but the original application exit code is preserved. MQTT-originated errors are skipped to prevent recursion.
 
 ### `send_error_mail(error, app_config, run_context, logger, runtime_seconds=None, replication_summary=None)`
 
-Chooses the correct `MailTo()` variant from the error kind and forwards the captured runtime. For `dataset_missing`, it also forwards the completed `ReplicationSummary` so the dedicated exit-code-`8` email lists failed pairs/reasons and can include the completed transfer total. Notification failure is caught and logged so it cannot replace the original application exit code.
+Chooses the correct `MailTo()` variant from the error kind and forwards the captured runtime. It checks only whether `Mail` itself is enabled; `SendMailOnSuccess` is intentionally ignored so disabling successful-run mail never suppresses configured error mail. For `dataset_missing`, it also forwards the completed `ReplicationSummary` so the dedicated exit-code-`8` email lists failed pairs/reasons and can include the completed transfer total. Notification failure is caught and logged so it cannot replace the original application exit code.
 
 ## `syncerate/system_actions.py`
 
@@ -735,15 +740,15 @@ List validation already writes its detailed message in `datasets.py`, so it is n
 
 ### `successfull_run(app_config, run_context, logger, replication_summary=None, runtime_seconds=None)`
 
-Runs the post-transfer order and uses `ReplicationSummary` to select normal success or warning-success logging and email:
+Runs the post-transfer order and uses `ReplicationSummary` to select normal success or warning-success logging and notifications:
 
 1. append successful-run text to `.out` when enabled;
-2. original retained MQTT/optional HA success signals when `Use_MQTT` is enabled, plus independent non-retained JSON success status when `MQTT_JSON_Status` is enabled;
+2. when `send_mqtt_on_success` is true, publish original retained MQTT/optional HA success signals when `Use_MQTT` is enabled plus independent non-retained JSON success status when `MQTT_JSON_Status` is enabled; when false, skip every successful-run MQTT publish without changing the configured failure path;
 3. write the completed transfer total plus already captured runtime summary to terminal/`.log`;
-4. best-effort success email using that same `ReplicationSummary` and runtime value;
+4. when both `Mail` and `send_mail_on_success` are enabled, attempt best-effort success email using that same `ReplicationSummary` and runtime value; when success mail is disabled, skip only that success email;
 5. best-effort system action.
 
-Writing the summary before step 4 guarantees the email's `.log` copy/attachment already contains both `Data transferred` and `Total runtime`. `runtime_seconds=None` remains supported for compatibility with direct internal/manual calls. MQTT failure remains fatal with code `10`. Success-mail exceptions are logged instead of masking completed replication, and the system action still runs afterward. System-action failure is likewise logged without changing the completed replication result.
+Writing the summary before step 4 guarantees the email's `.log` copy/attachment already contains both `Data transferred` and `Total runtime`. `runtime_seconds=None` remains supported for compatibility with direct internal/manual calls. MQTT failure during an attempted success publish remains fatal with code `10`. Success-mail exceptions are logged instead of masking completed replication, and the system action still runs afterward. The two success switches are deliberately confined to this function; top-level error notification helpers do not consult them. System-action failure is likewise logged without changing the completed replication result.
 
 ### `main(argv=None)`
 
@@ -817,7 +822,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
 - Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
 - Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.31`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.33`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -837,7 +842,7 @@ The packaged `tests/` directory uses only Python `unittest` plus Syncerate's exi
 
 ### `tests/test_config.py` — `ConfigTests`
 
-`load_text()` writes and loads temporary INI content. The test methods cover the shipped example config, compatibility `option_is_enabled()`, strict Boolean spellings/typos, empty required values, Syncoid placeholder/shlex validation, enabled MQTT broker/port/topic requirements, Home Assistant availability requirements, and JSON topic separation.
+`load_text()` writes and loads temporary INI content. The test methods cover the shipped example config, compatibility `option_is_enabled()`, strict Boolean spellings/typos, the enabled-by-default and explicitly-disabled success-notification controls, empty required values, Syncoid placeholder/shlex validation, enabled MQTT broker/port/topic requirements, Home Assistant availability requirements, and JSON topic separation.
 
 ### `tests/test_datasets.py` — `DatasetTests`
 
@@ -849,7 +854,7 @@ Covers blank/comment filtering, quoted `: ` inside extra arguments, malformed qu
 
 ### `tests/test_notifications.py` — `NotificationTests`
 
-Covers the runtime-aware email summary header, JSON warning-success/skipped-pair payloads, failure payload contents, and bounded MQTT stderr extraction.
+Covers the runtime-aware email summary header, JSON warning-success/skipped-pair payloads, failure payload contents, bounded MQTT stderr extraction, actual publish arguments for each MQTT mode, independent success switches, disabled channels, and verifies that `SendMailOnSuccess`/`SendMQTTOnSuccess` never suppress their corresponding configured error-notification paths.
 
 ### `tests/test_packaging.py` — `PackagingTests`
 
@@ -864,7 +869,7 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 ### `tests/test_app_and_logging.py` — `AppAndLoggingTests`
 
 - `write_config()`: creates a temporary end-to-end config plus dataset lists.
-- test methods verify success-mail exceptions remain best-effort while the system action continues, startup log redaction excludes unrelated sections/secrets, multiline comments remain separate prefixed log records, runtime/transfer-size formatting and final-summary ordering are stable, unavailable transfer measurement is represented honestly, a real `main()` success emits the summary block, a fake Syncoid success reaches exit `0`, empty lists return code `1`, and invalid Boolean configuration returns code `2` before the child can run.
+- test methods verify success-mail exceptions remain best-effort while the system action continues, success mail and MQTT can each be disabled without affecting unrelated post-run behavior, startup log redaction excludes unrelated sections/secrets, multiline comments remain separate prefixed log records, runtime/transfer-size formatting and final-summary ordering are stable, unavailable transfer measurement is represented honestly, a real `main()` success emits the summary block, a fake Syncoid success reaches exit `0`, empty lists return code `1`, and invalid Boolean configuration returns code `2` before the child can run.
 
 `tests/__init__.py` only marks the test package and intentionally contains no runtime logic.
 
@@ -901,6 +906,8 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_final_summary_logs_title_multiline_comment_then_runtime()`: verifies heading/title/comment/transfer-total/runtime ordering, multiline rendering, the blank line after `Final run summary`, the required blank line between title and comment, and the blank line before run statistics, plus the blank line between `Data transferred` and `Total runtime`.
 - `test_startup_multiline_comment_prefixes_every_physical_log_line()`: verifies multiline configuration/comment values cannot create unprefixed physical log lines and that startup metadata includes a blank line after `Backup information` plus the requested blank line between title and comment.
 - `test_success_mail_exception_is_best_effort_and_system_action_still_runs()`: regression check that success mail exception is best effort and system action still runs.
+- `test_success_mail_can_be_disabled_without_disabling_system_action()`: verifies `SendMailOnSuccess = No` suppresses only successful-run mail while the independent system action still executes.
+- `test_success_mqtt_can_be_disabled()`: verifies `SendMQTTOnSuccess = No` prevents the success stage from calling the MQTT publisher even when legacy and JSON MQTT are configured.
 - `test_success_mail_and_attached_log_include_runtime_before_mail_is_sent()`: end-to-end regression for the 0.4.24 ordering bug; verifies the email header and copied `.log` content already contain `Data transferred` and `Total runtime` when `send_mail()` is called.
 - `test_logging_omits_unrelated_sections_and_secret_like_options()`: regression check that logging omits unrelated sections and secret like options.
 - `write_config()`: builds temporary source/destination files plus a runnable end-to-end config.
@@ -915,6 +922,9 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `load_text()`: writes temporary INI text and returns the validated AppConfig.
 - `test_shipped_example_config_loads()`: regression check that shipped example config loads.
 - `test_valid_minimal_config_loads()`: regression check that valid minimal config loads.
+- `test_success_notification_switches_default_to_enabled_when_omitted()`: verifies both new success-notification controls preserve legacy behavior by defaulting to true when absent.
+- `test_success_notification_switches_can_be_disabled()`: verifies both new controls accept documented disabled Boolean spellings and normalize to false.
+- `test_success_notification_switch_rejects_invalid_boolean()`: verifies typo/ambiguous values for the new controls fail startup validation instead of silently changing notification behavior.
 - `test_multiline_backup_comment_uses_ini_continuation_lines()`: verifies indented INI continuation lines load into `backup_comment` as embedded newlines.
 - `test_option_is_enabled_remains_compatibility_helper()`: regression check that option is enabled remains compatibility helper.
 - `test_boolean_typo_is_rejected_by_loader()`: regression check that boolean typo is rejected by loader.
@@ -950,6 +960,8 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_run_summary_email_header_includes_transferred_size()`: verifies successful mail receives the same formatted transfer total followed by runtime as terminal/`.log`.
 - `test_json_success_payload_includes_warning_and_skipped_pairs()`: regression check that json success payload includes warning and skipped pairs.
 - `test_json_failure_payload_contains_error_and_stderr()`: regression check that json failure payload contains error and stderr.
+- `test_error_mail_ignores_success_mail_switch()`: verifies a configured error email is still attempted when `SendMailOnSuccess` is false.
+- `test_mqtt_failure_status_ignores_success_mqtt_switch()`: verifies configured JSON MQTT failure publishing still runs when `SendMQTTOnSuccess` is false.
 - `test_mqtt_error_output_is_bounded_from_the_end()`: regression check that mqtt error output is bounded from the end.
 
 ### `tests/test_syncoid_runner.py`
@@ -1012,3 +1024,17 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_nonzero_action_is_logged_but_does_not_raise()`: regression check that nonzero action is logged but does not raise.
 - `test_mail_enabled_preserves_two_minute_delay()`: regression check that mail enabled preserves two minute delay.
 
+
+
+### Notification test helpers and delivery checks
+
+- `NotificationTests.setUp()`: installs a temporary in-memory Paho module with a mocked `publish.multiple` and registers cleanup. This lets tests inspect the real publisher's payload, routing, and retain settings without network access or the optional MQTT dependency.
+- `NotificationTests.mqtt_config(**overrides)`: builds valid broker/topic settings around the shared `make_config()` helper so tests exercise realistic routing without duplicating application configuration logic.
+- `test_error_publish_routing_ignores_success_switch()`: checks both switch values across legacy-only, JSON-only, and combined MQTT. Confirms exactly one failure event, the expected topic, error details, QoS 0, and retain disabled.
+- `test_success_switches_are_independent_for_success_and_warning()`: checks every mail/MQTT success-switch combination for ordinary success and Broken Pipe warning-success. Verifies existing retained success/HA payloads and non-retained JSON behavior.
+- `test_default_success_switches_send_enabled_channels()`: confirms enabled mail/MQTT send success messages when switch fields retain their default true values.
+- `test_disabled_channels_remain_silent_on_success_and_failure()`: confirms true success switches do not activate disabled master channels or error reporting.
+- `test_mqtt_errors_and_unavailable_config_do_not_republish()`: verifies the existing no-config and MQTT-recursion guards.
+- `test_main_failure_still_sends_mail_when_error_mqtt_fails()`: runs the application error boundary with mocked replication and broker failures. Confirms one attempted MQTT error report, subsequent error email despite both success switches being false, and preservation of the original replication exit code.
+
+The `tests/test_config.py` Boolean checks exercise both success switches with true/false, yes/no, on/off, numeric, and mixed-case spellings; invalid values for either switch must fail startup validation.

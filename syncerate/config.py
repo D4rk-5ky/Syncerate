@@ -139,6 +139,16 @@ def load_app_config(config_path: str) -> AppConfig:
         )
 
     use_mqtt = parse_boolean_option(raw_config, "Use_MQTT")
+    send_mail_on_success = parse_boolean_option(
+        raw_config,
+        "SendMailOnSuccess",
+        fallback="Yes",
+    )
+    send_mqtt_on_success = parse_boolean_option(
+        raw_config,
+        "SendMQTTOnSuccess",
+        fallback="Yes",
+    )
     mqtt_json_status = parse_boolean_option(raw_config, "MQTT_JSON_Status")
     use_home_assistant = parse_boolean_option(raw_config, "Use_HomeAssistant")
     use_ssh_agent = parse_boolean_option(raw_config, "UseSSHAgent")
@@ -242,6 +252,8 @@ def load_app_config(config_path: str) -> AppConfig:
         destination_list_path=destination_list_path,
         password_option=password_option,
         syncoid_command=syncoid_command,
+        send_mail_on_success=send_mail_on_success,
+        send_mqtt_on_success=send_mqtt_on_success,
         mqtt_json_status=mqtt_json_status,
         use_home_assistant=use_home_assistant,
         use_ssh_agent=use_ssh_agent,

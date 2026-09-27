@@ -41,6 +41,8 @@ def make_config(**overrides: Any) -> AppConfig:
         "destination_list_path": "dest-list",
         "password_option": "No",
         "syncoid_command": "syncoid SourceDataSet DestDataSet",
+        "send_mail_on_success": True,
+        "send_mqtt_on_success": True,
         "mqtt_json_status": False,
         "use_home_assistant": False,
         "use_ssh_agent": False,

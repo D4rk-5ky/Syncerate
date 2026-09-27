@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.31`
+Current version: `0.4.33`
 
 ## Disclaimer and liability notice
 
@@ -121,7 +121,7 @@ Syncerate has three application flags. `--conf`/`-c` is required for a normal re
 | --- | --- | --- |
 | `-c FILE`, `--conf FILE` | Yes for a normal run | Selects the required Syncerate INI configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. The selected file must contain the `[Syncerate Config]` section. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.31` and exits. The program name reflects the entry point used, for example `Syncerate.py 0.4.31` from the Python script or `Syncerate 0.4.31` from `dist/Syncerate`. It does not start a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.33` and exits. The program name reflects the entry point used, for example `Syncerate.py 0.4.33` from the Python script or `Syncerate 0.4.33` from `dist/Syncerate`. It does not start a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -267,6 +267,7 @@ PassWord = No
 UseSSHAgent = No
 SSHAgentKeyLifetimeSeconds = 3600
 Mail = No
+SendMailOnSuccess = True
 DateTime = %Y-%m-%d_%H_%M_%S
 LogDestination = No
 SystemAction = No
@@ -276,6 +277,7 @@ BrokenPipeRetryCount = 1
 BrokenPipeRetryWaitSeconds = 10
 
 Use_MQTT = No
+SendMQTTOnSuccess = True
 broker_address = mqtt.example.com
 broker_port = 1883
 mqtt_username =
@@ -302,26 +304,28 @@ mqtt_json_topic = homeassistant/syncerate/status
 | `PassWord` | Yes | Non-empty value: `No`, `Ask`, or a literal SSH password/key passphrase. With private-agent mode, `Ask` is recommended for encrypted keys so the passphrase is not stored in the configuration. |
 | `UseSSHAgent` | No | Enables an isolated per-run OpenSSH agent with `Yes`, `True`, `1`, or `On`. Requires `--sshkey` in `SyncoidCommand`. Disabled values preserve the legacy Pexpect-through-Syncoid authentication path. |
 | `SSHAgentKeyLifetimeSeconds` | No | Positive whole-number lifetime for the identity loaded into the private agent. Defaults to `3600`. If it expires during a long run, Syncerate reloads it before the next dataset. |
-| `Mail` | Yes | Recipient address, or `No` to disable email. |
+| `Mail` | Yes | Recipient address, or `No` to disable email completely. |
+| `SendMailOnSuccess` | No | Boolean controlling only success/warning-success email. Defaults to `True` when omitted. Setting it to `No` does **not** suppress error email; errors still send whenever `Mail` contains a recipient. |
 | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
 | `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out` files, or `No` for terminal-only logging. |
 | `SystemAction` | Yes | Trusted shell command executed after a successful run, or `No` to disable it. |
 | `RetryBrokenPipe` | No | Enables dataset-level Broken Pipe retry handling. Each dataset receives its own retry allowance. When that allowance is exhausted, only that dataset is skipped, the remaining list continues, and the completed run records a successful warning. Missing or disabled values preserve normal Syncoid failure handling. |
 | `BrokenPipeRetryCount` | No | Number of retries allowed for each individual dataset after its initial attempt. Defaults to `1` when omitted. The count resets for every dataset pair. Use `0` to skip an affected dataset immediately after its first Broken Pipe. Negative values and non-integers are rejected. |
 | `BrokenPipeRetryWaitSeconds` | No | Whole number of seconds to wait before each Broken Pipe retry. Defaults to `10` when omitted. Use `0` to retry immediately. Negative values and non-integers are rejected as configuration errors. |
-| `Use_MQTT` | No | Enables the original success-only MQTT output with `Yes`, `True`, `1`, or `On`. On success, `mqtt_message` is published retained to `mqtt_topic`. This legacy behavior is independent from JSON status. |
+| `Use_MQTT` | No | Enables MQTT with `Yes`, `True`, `1`, or `On`. Success publishes retained `mqtt_message` to `mqtt_topic` when `SendMQTTOnSuccess` is true. Failures publish non-retained JSON to `<mqtt_topic>/error`, or to `mqtt_json_topic` when JSON status is enabled. |
+| `SendMQTTOnSuccess` | No | Boolean controlling MQTT publishing only for successful/warning-success runs. Defaults to `True` when omitted. `False` suppresses MQTT/HA success signals and JSON success events. Errors still publish whenever `Use_MQTT` or `MQTT_JSON_Status` is enabled. |
 | `broker_address` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker hostname or IP address shared by the enabled MQTT outputs. |
 | `broker_port` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker TCP port as an integer from `1` through `65535`, commonly `1883`. |
 | `mqtt_username` | No | MQTT username shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
 | `mqtt_password` | No | MQTT password shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
-| `mqtt_topic` | When `Use_MQTT = Yes` | Original success-only MQTT topic. The configured `mqtt_message` is always retained here. JSON is never published to this topic. |
+| `mqtt_topic` | When `Use_MQTT = Yes` | Topic for retained success messages. When only `Use_MQTT` is enabled, failure JSON goes to this exact topic plus `/error`; for example, `syncerate/result/error`. |
 | `mqtt_message` | When `Use_MQTT = Yes` | Original retained success-only payload. Fatal run failures do not publish this legacy message. |
 | `Use_HomeAssistant` | No | Preserves the original Home Assistant availability integration. When both this and `Use_MQTT` are enabled, retained payload `online` is additionally published to `HomeAssistant_Available`. |
 | `HomeAssistant_Available` | When `Use_MQTT = Yes` and HA integration is enabled | Original Home Assistant availability topic. Payload `online` remains retained. |
 | `MQTT_JSON_Status` | No | Independently enables structured success/failure JSON status. It may run together with the old MQTT/HA outputs or by itself while `Use_MQTT = No`. JSON is always non-retained. |
 | `mqtt_json_topic` | When `MQTT_JSON_Status = Yes` | Dedicated JSON-only topic. It must differ from an enabled `mqtt_topic` and `HomeAssistant_Available`; every JSON publish hard-codes `retain = false`. |
 
-Boolean options (`UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `Use_HomeAssistant`, and `MQTT_JSON_Status`) accept `Yes`/`No`, `True`/`False`, `1`/`0`, or `On`/`Off` case-insensitively. Other spellings are rejected at startup instead of being silently treated as disabled.
+Boolean options (`UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`) accept `Yes`/`No`, `True`/`False`, `1`/`0`, or `On`/`Off` case-insensitively. Other spellings are rejected at startup instead of being silently treated as disabled. `SendMailOnSuccess` and `SendMQTTOnSuccess` are the only Boolean options that default to enabled when omitted.
 
 When MQTT is enabled, the broker address, valid port, and the topics required by the enabled channel are validated before replication starts. Although some integrations are disabled with `No`, the required keys should remain in the configuration so startup validation succeeds. Required text options may not be empty; use the documented `No` value to disable mail, logging, or the system action.
 
@@ -390,7 +394,7 @@ The `SyncoidCommand` must contain the identity explicitly, for example:
 SyncoidCommand = syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --sshkey /root/.ssh/syncerate --no-privilege-elevation
 ```
 
-Private-agent mode now preserves the original Syncerate process model: **Pexpect starts Syncoid, and Syncoid remains responsible for starting and controlling SSH, mbuffer, pv, ZFS send/receive, and its own SSH control connections.** Syncerate does not replace Syncoid's SSH process and does not rewrite the configured Syncoid command with hidden SSH options.
+Private-agent mode uses this process model: **Pexpect starts Syncoid, and Syncoid remains responsible for starting and controlling SSH, mbuffer, pv, ZFS send/receive, and its own SSH control connections.** Syncerate does not replace Syncoid's SSH process and does not rewrite the configured Syncoid command with hidden SSH options.
 
 When enabled, Syncerate:
 
@@ -408,9 +412,9 @@ When enabled, Syncerate:
 
 The one-hour default limits the usefulness of an orphaned agent if the Python process is terminated in a way that prevents cleanup. A transfer already authenticated through Syncoid's SSH control connection can continue if the identity lifetime expires; Syncerate reloads the key before the next dataset.
 
-Unlike the earlier private-agent implementation, Syncerate no longer prepends `ForwardAgent`, `StrictHostKeyChecking`, `IdentitiesOnly`, `IdentityAgent`, `AddKeysToAgent`, `BatchMode`, or `PreferredAuthentications` settings to the Syncoid command. SSH behavior therefore comes from the configured `SyncoidCommand`, Syncoid itself, and the executing user's normal SSH configuration. Existing `.cfg` files do not need any changes for this release.
+Syncerate does not prepend `ForwardAgent`, `StrictHostKeyChecking`, `IdentitiesOnly`, `IdentityAgent`, `AddKeysToAgent`, `BatchMode`, or `PreferredAuthentications` settings to the Syncoid command. SSH behavior therefore comes from the configured `SyncoidCommand`, Syncoid itself, and the executing user's normal SSH configuration.
 
-The private agent is still isolated and contains only the configured Syncerate identity. If your own SSH configuration enables agent forwarding, that policy is no longer overridden by Syncerate; disable forwarding in your SSH/Syncoid configuration if you do not want the agent exposed to a remote host.
+The private agent is still isolated and contains only the configured Syncerate identity. If your own SSH configuration enables agent forwarding, Syncerate does not override that policy; disable forwarding in your SSH/Syncoid configuration if you do not want the agent exposed to a remote host.
 
 ### Legacy authentication mode
 
@@ -502,7 +506,10 @@ Enable email:
 
 ```ini
 Mail = user@example.com
+SendMailOnSuccess = True
 ```
+
+`SendMailOnSuccess` defaults to `True` when omitted. Set it to `False` when you want email only for failures. This switch is checked only on the successful/warning-success path; it does not suppress error mail. As long as `Mail` contains a recipient, handled Syncerate errors still attempt to send their normal error email.
 
 A working local `mail` command is required for delivery. Syncerate can send success, warning-success, Syncoid-error, script-error, and MQTT-error messages. Success and warning-success email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, `Data transferred`, another blank line, and `Total runtime`. Ordinary interrupted error emails include the same metadata/runtime but omit transfer totals because the replication list did not complete. Missing-dataset/pool failures are reported separately: Syncerate first continues through the remaining configured pairs, then sends an exit-code-`8` failure mail that lists every failed pair plus the matched ZFS/Syncoid message and may include the completed-list transfer total. When file logging is enabled, relevant `.log`, `.err`, and `.out` files are attached when available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not replace the replication result.
 
@@ -526,7 +533,7 @@ During this recovery Syncerate logs the stages explicitly:
 4. a `Broken pipe` produced by the failed resume pipeline is treated as part of that recovery and does not trigger the normal Broken Pipe retry policy;
 5. when Syncoid reports a new `INFO: Sending incremental` or `INFO: Sending full`, Syncerate logs that recovery completed and restores normal Broken Pipe handling for the replacement transfer.
 
-This keeps ownership of the receive token and reset operation inside Syncoid instead of duplicating ZFS receive-state manipulation in Syncerate. If Syncoid cannot recover and exits nonzero, Syncerate preserves the real Syncoid failure handling. Likewise, the recognized “snapshot to destroy no longer exists” condition is non-fatal only when Syncoid ultimately exits successfully; it no longer masks an unrelated later non-zero Syncoid exit status.
+This keeps ownership of the receive token and reset operation inside Syncoid instead of duplicating ZFS receive-state manipulation in Syncerate. If Syncoid cannot recover and exits nonzero, Syncerate preserves the real Syncoid failure handling. Likewise, the recognized “snapshot to destroy no longer exists” condition is non-fatal only when Syncoid ultimately exits successfully; it does not mask an unrelated later non-zero Syncoid exit status.
 
 ## Optional Broken Pipe retry
 
@@ -561,19 +568,40 @@ The retry count is never shared between datasets. This option does not retry aut
 
 ## MQTT notifications
 
-Syncerate has two independent MQTT paths:
+`SendMQTTOnSuccess` is optional and defaults to `True`. Setting it to `False` suppresses successful and warning-success MQTT messages, including Home Assistant availability and JSON success events. It does not disable error reporting.
 
-- the original retained success/availability behavior controlled by `Use_MQTT` and `Use_HomeAssistant`;
-- the JSON success/failure event channel controlled by `MQTT_JSON_Status`.
+| Enabled MQTT options | Success, when `SendMQTTOnSuccess = True` | Handled error, regardless of the success switch |
+| --- | --- | --- |
+| `Use_MQTT` only | Retained `mqtt_message` on `mqtt_topic`, plus configured HA availability | Non-retained JSON on `<mqtt_topic>/error` |
+| `MQTT_JSON_Status` only | Non-retained JSON on `mqtt_json_topic` | Non-retained JSON on `mqtt_json_topic` |
+| Both | Both success outputs | One non-retained JSON event on `mqtt_json_topic` |
+| Neither | No MQTT publishing | No MQTT publishing |
 
-They share broker credentials, but the JSON channel uses its own topic and never changes the old MQTT/HA behavior.
+The error topic for `Use_MQTT` alone is derived by appending `/error` to the exact configured `mqtt_topic`; there is no extra configuration key. Subscribe your error handler to that topic. Error events use the JSON schema below and contain `status`, `exit_code`, `error`, and captured output in `stderr`. They never publish the success payload or availability `online`, and never replace a retained success message.
+
+For email and MQTT only on errors, configure:
+
+```ini
+Mail = user@example.com
+SendMailOnSuccess = False
+Use_MQTT = True
+SendMQTTOnSuccess = False
+broker_address = mqtt.example.com
+broker_port = 1883
+mqtt_topic = syncerate/result
+mqtt_message = ON
+MQTT_JSON_Status = False
+```
+
+This sends error email and publishes failure JSON on `syncerate/result/error`. Keep the other required application settings in your configuration. Enable `MQTT_JSON_Status` and set `mqtt_json_topic` to route errors to a dedicated status topic instead.
 
 ### Original retained MQTT behavior
 
-Enable the original success-only message:
+Enable retained success messages and non-retained error reports:
 
 ```ini
 Use_MQTT = Yes
+SendMQTTOnSuccess = True
 broker_address = 192.0.2.30
 broker_port = 1883
 mqtt_username = syncerate
@@ -582,7 +610,7 @@ mqtt_topic = home-assistant/syncerate/command
 mqtt_message = ON
 ```
 
-After replication completes successfully, Syncerate publishes `mqtt_message` to `mqtt_topic` with **retain enabled**, exactly as before. Fatal failures do not publish this legacy success message.
+After replication completes successfully, Syncerate publishes `mqtt_message` to `mqtt_topic` with **retain enabled** when `SendMQTTOnSuccess` is true. Handled failures publish JSON on `<mqtt_topic>/error` when JSON status is disabled, or on `mqtt_json_topic` when enabled.
 
 To add the original Home Assistant availability integration:
 
@@ -592,7 +620,7 @@ Use_HomeAssistant = Yes
 HomeAssistant_Available = home-assistant/syncerate/available
 ```
 
-On a successful run, Syncerate additionally publishes retained payload `online` to `HomeAssistant_Available`. This old HA behavior remains tied to `Use_MQTT` and is unchanged.
+On a successful run with `SendMQTTOnSuccess = True`, Syncerate additionally publishes retained payload `online` to `HomeAssistant_Available`. This old HA behavior remains tied to `Use_MQTT` and is unchanged.
 
 A matching example entity configuration is supplied in:
 
@@ -673,7 +701,7 @@ Failure JSON example for a missing ZFS dataset:
 
 The `stderr` field is bounded to the last 4000 characters of relevant captured child/Syncoid output. A Broken Pipe warning-success remains `status: success` and sets `warning: true` with affected source/destination pairs in `skipped_datasets`. A missing dataset/pool run is a real failure with exit code `8`; after Syncerate finishes the remaining configured pairs, the JSON failure event includes each affected source/destination pair and the matched ZFS/Syncoid text in `failed_datasets`.
 
-Failure JSON is best-effort and never replaces the original Syncerate exit code. If MQTT itself is the failing component, Syncerate does not recursively try to report that MQTT failure over MQTT. Errors before configuration is loaded cannot be published.
+Failure JSON is best-effort and never replaces the original Syncerate exit code. `SendMQTTOnSuccess = No` does not affect this path. If MQTT itself is the failing component, Syncerate does not recursively try to report that MQTT failure over MQTT. Errors before configuration is loaded cannot be published.
 
 For a broker without username authentication, leave both credential fields empty:
 
@@ -688,7 +716,7 @@ A matching automation with explicit **success**, **failure**, and default **unkn
 config/HomeAssistant-Automation-For-MQTT-JSON.yaml
 ```
 
-The automation example listens only to the dedicated JSON topics and therefore does not consume the retained legacy MQTT or availability messages.
+The automation example listens to `homeassistant/syncerate/status`. When using `Use_MQTT` without JSON status, change its trigger topic to your derived error topic, such as `syncerate/result/error`; that subscription receives failures only.
 
 ## Successful-run system action
 
@@ -706,7 +734,7 @@ SystemAction = reboot
 SystemAction = /path/to/trusted-script.sh
 ```
 
-The command is executed through a shell only after all dataset transfers succeed, MQTT publishing succeeds when enabled, and email sending has been attempted when enabled. Configure only trusted commands. A system-action exception or non-zero shell return code is logged explicitly, but it remains a best-effort post-run action and does not change an otherwise successful Syncerate exit code.
+The command is executed through a shell only after all dataset transfers succeed, configured success MQTT publishing has completed when `SendMQTTOnSuccess` allows it, and configured success email has been attempted when `SendMailOnSuccess` allows it. Configure only trusted commands. A system-action exception or non-zero shell return code is logged explicitly, but it remains a best-effort post-run action and does not change an otherwise successful Syncerate exit code.
 
 When email and a system action are both enabled, Syncerate waits two minutes before executing the action so the local mail command has time to finish before a shutdown or reboot.
 
@@ -771,7 +799,7 @@ Syncerate monitors Syncoid and SSH output for:
 - generic warnings;
 - the recognized missing destroy-snapshot condition.
 
-When SSH presents the standard first-connection host-key confirmation prompt, Syncerate automatically answers `yes`, preserving existing behavior. OpenSSH normally follows that with a line like `Warning: Permanently added '10.0.0.135' (ED25519) to the list of known hosts.` Syncerate now recognizes that exact warning shape as informational and continues Syncoid instead of treating it as a generic fatal warning. This is convenient but weaker than pre-verifying host keys. For important systems, populate `known_hosts` ahead of time or enforce your preferred `StrictHostKeyChecking` policy through normal SSH configuration/Syncoid options so an unexpected host key is rejected instead of accepted interactively.
+When SSH presents the standard first-connection host-key confirmation prompt, Syncerate automatically answers `yes`, preserving existing behavior. OpenSSH normally follows that with a line like `Warning: Permanently added '10.0.0.135' (ED25519) to the list of known hosts.` Syncerate recognizes that exact warning shape as informational and continues Syncoid instead of treating it as a generic fatal warning. This is convenient but weaker than pre-verifying host keys. For important systems, populate `known_hosts` ahead of time or enforce your preferred `StrictHostKeyChecking` policy through normal SSH configuration/Syncoid options so an unexpected host key is rejected instead of accepted interactively.
 
 Missing ZFS data is handled as **continue-but-fail**. When the monitored output matches the established OpenZFS/Syncoid missing signatures, Syncerate lets that Syncoid process finish. Syncoid exit `0` is accepted for its specific recursive `dataset no longer exists` skip case and exit `2` is accepted for the normal initial missing source/pool case. The affected pair is recorded as failed, then Syncerate proceeds to the next configured pair. After the full list is processed, Syncerate returns exit code `8`, does not run success-only MQTT/system-action handling, and reports all recorded failures through the configured JSON MQTT failure event and/or failure email. If the same missing text is followed by another Syncoid exit code, that real exit code remains fatal immediately so an unrelated later error is not masked.
 

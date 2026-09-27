@@ -175,6 +175,41 @@ class AppAndLoggingTests(unittest.TestCase):
         mail_to.assert_called_once()
         system_action.assert_called_once()
 
+
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.MailTo")
+    def test_success_mail_can_be_disabled_without_disabling_system_action(
+        self, mail_to, system_action
+    ):
+        cfg = make_config(
+            mail_option="user@example.test",
+            send_mail_on_success=False,
+            system_option="echo done",
+        )
+        successfull_run(
+            cfg,
+            no_logging_context(),
+            make_logger("success-mail-disabled"),
+            runtime_seconds=12.5,
+        )
+        mail_to.assert_not_called()
+        system_action.assert_called_once()
+
+    @mock.patch("syncerate.app.send_mqtt_messages")
+    def test_success_mqtt_can_be_disabled(self, send_mqtt_messages_mock):
+        cfg = make_config(
+            use_mqtt=True,
+            mqtt_json_status=True,
+            send_mqtt_on_success=False,
+        )
+        successfull_run(
+            cfg,
+            no_logging_context(),
+            make_logger("success-mqtt-disabled"),
+            runtime_seconds=12.5,
+        )
+        send_mqtt_messages_mock.assert_not_called()
+
     def test_logging_omits_unrelated_sections_and_secret_like_options(self):
         import configparser
 

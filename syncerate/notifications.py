@@ -484,7 +484,7 @@ def send_mqtt_messages(
     stderr_text: str = "",
     replication_summary: Optional[ReplicationSummary] = None,
 ) -> None:
-    """Publish legacy MQTT/HA success signals and independent JSON run status."""
+    """Publish enabled success signals or one non-retained JSON failure event."""
 
     try:
         from paho.mqtt import publish
@@ -522,7 +522,7 @@ def send_mqtt_messages(
 
     messages: list[dict[str, Any]] = []
     use_home_assistant = False
-    json_topic = ""
+    status_topic = ""
 
     # Preserve the historical MQTT behavior exactly. These are success-only
     # signals: the normal mqtt_message is retained, and enabling the old Home
@@ -552,10 +552,16 @@ def send_mqtt_messages(
             }
         )
 
-    # JSON is an independent event channel. It never replaces either legacy
-    # success signal and retain is deliberately hard-coded off.
-    if app_config.mqtt_json_status:
-        json_topic = raw_config.get(CONFIG_SECTION, "mqtt_json_topic").strip()
+    # Prefer the dedicated JSON channel. Legacy-only MQTT still reports errors
+    # on a separate derived topic, so success/availability consumers keep their
+    # existing payloads. Neither failure path depends on the success switch.
+    # Events are never retained, so reconnecting consumers do not replay them.
+    if app_config.mqtt_json_status or (not success and app_config.use_mqtt):
+        status_topic = (
+            raw_config.get(CONFIG_SECTION, "mqtt_json_topic").strip()
+            if app_config.mqtt_json_status
+            else raw_config.get(CONFIG_SECTION, "mqtt_topic") + "/error"
+        )
         mqtt_payload = build_mqtt_status_payload(
             app_config,
             success=success,
@@ -566,7 +572,7 @@ def send_mqtt_messages(
         )
         messages.append(
             {
-                "topic": json_topic,
+                "topic": status_topic,
                 "payload": mqtt_payload,
                 "retain": False,
                 "qos": 0,
@@ -593,10 +599,10 @@ def send_mqtt_messages(
                     "Home Assistant availability message published retained to %s",
                     raw_config.get(CONFIG_SECTION, "HomeAssistant_Available"),
                 )
-        if app_config.mqtt_json_status:
+        if status_topic:
             logger.info(
                 "MQTT JSON status published non-retained to %s: %s",
-                json_topic,
+                status_topic,
                 "success" if success else "failure",
             )
     except Exception as exc:
@@ -617,7 +623,7 @@ def send_mqtt_failure_status(
 
     if (
         app_config is None
-        or not app_config.mqtt_json_status
+        or not (app_config.use_mqtt or app_config.mqtt_json_status)
         or error.kind == "mqtt"
     ):
         return

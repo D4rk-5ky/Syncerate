@@ -174,7 +174,10 @@ def successfull_run(
             for line in lines_of_text:
                 output_file.write(line + "\n")
 
-    if app_config.use_mqtt or app_config.mqtt_json_status:
+    if (
+        app_config.send_mqtt_on_success
+        and (app_config.use_mqtt or app_config.mqtt_json_status)
+    ):
         send_mqtt_messages(
             app_config,
             logger,
@@ -182,6 +185,8 @@ def successfull_run(
             exit_code=EXIT_OK,
             replication_summary=replication_summary,
         )
+    elif app_config.use_mqtt or app_config.mqtt_json_status:
+        logger.info("MQTT success notifications are disabled by SendMQTTOnSuccess")
 
     if runtime_seconds is not None:
         log_final_run_summary(
@@ -191,7 +196,7 @@ def successfull_run(
             replication_summary,
         )
 
-    if app_config.mail_enabled:
+    if app_config.mail_enabled and app_config.send_mail_on_success:
         try:
             MailTo(
                 app_config,
@@ -208,6 +213,8 @@ def successfull_run(
                 "Failed sending the success email; continuing because mail delivery "
                 "is a best-effort notification and replication already completed."
             )
+    elif app_config.mail_enabled:
+        logger.info("Success email is disabled by SendMailOnSuccess")
 
     if app_config.system_action_enabled:
         SystemAction(app_config, logger)
