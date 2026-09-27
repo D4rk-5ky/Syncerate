@@ -11,6 +11,7 @@ from syncerate.errors import (
     SyncerateError,
 )
 from syncerate.models import DatasetPair
+from syncerate.logging_setup import create_run_context
 from syncerate.syncoid_runner import (
     TransferByteCounter,
     build_syncoid_command,
@@ -106,7 +107,7 @@ class SyncoidRunnerTests(unittest.TestCase):
         with private_ssh_agent(cfg, None, make_logger("agent-disabled")) as session:
             self.assertIsNone(session)
 
-    def run_fake(self, body: str, *, command_prefix: str = "", **config_overrides):
+    def run_fake(self, body: str, *, command_prefix: str = "", logger=None, **config_overrides):
         with tempfile.TemporaryDirectory() as td:
             script = write_executable(Path(td) / "fake_syncoid.py", body)
             template = (
@@ -118,7 +119,7 @@ class SyncoidRunnerTests(unittest.TestCase):
                 no_logging_context(),
                 [DatasetPair("pool/data", "backup/data", ())],
                 None,
-                make_logger("fake-run"),
+                logger if logger is not None else make_logger("fake-run"),
             )
 
     def test_missing_destroy_message_does_not_mask_unrelated_nonzero_exit(self):
@@ -204,19 +205,14 @@ class SyncoidRunnerTests(unittest.TestCase):
             "\n".join(summary.missing_dataset_failures[0].messages),
         )
 
-    def test_other_syncoid_skipping_dataset_warning_remains_fatal_code_8(self):
-        with self.assertRaises(SyncerateError) as caught:
-            self.run_fake(
-                "print('WARNING: Skipping dataset for another reason', flush=True)\n"
-            )
-        self.assertEqual(caught.exception.exit_code, EXIT_DATASET_MISSING)
-        self.assertEqual(caught.exception.kind, "known_child")
-
-    def test_syncoid_missing_dataset_skip_warning_is_recorded_even_on_zero_exit(self):
-        summary = self.run_fake(
-            "print('WARNING: Skipping dataset (dataset no longer exists): pool/data...', flush=True)\n"
-        )
-        self.assertTrue(summary.has_missing_dataset_failure)
+    def test_skipping_dataset_warnings_are_ignored(self):
+        for warning in (
+            "WARNING: Skipping dataset for another reason",
+            "WARNING: Skipping dataset (dataset no longer exists): pool/data...",
+        ):
+            with self.subTest(warning=warning):
+                summary = self.run_fake(f"print({warning!r}, flush=True)\n")
+                self.assertFalse(summary.has_missing_dataset_failure)
 
     def test_missing_dataset_text_does_not_mask_unrelated_exit_code(self):
         with self.assertRaises(SyncerateError) as caught:
@@ -229,10 +225,12 @@ class SyncoidRunnerTests(unittest.TestCase):
         self.assertEqual(caught.exception.exit_code, 42)
         self.assertEqual(caught.exception.kind, "syncoid")
 
-    def test_generic_warning_remains_fatal(self):
-        with self.assertRaises(SyncerateError) as cm:
-            self.run_fake("print('WARNING: synthetic warning', flush=True)\n")
-        self.assertEqual(cm.exception.exit_code, EXIT_WARNING)
+    def test_generic_warnings_are_ignored(self):
+        for prefix in ("WARN:", "WARNING:", "Warning:", "WARN ", "  warning:"):
+            with self.subTest(prefix=prefix):
+                summary = self.run_fake(f"print({prefix + ' synthetic warning'!r}, flush=True)\n")
+                self.assertFalse(summary.has_missing_dataset_failure)
+                self.assertFalse(summary.has_broken_pipe_warning)
 
     def test_repeated_normal_sending_progress_is_not_mistaken_for_a_loop(self):
         body = "for _ in range(8): print('INFO: Sending incremental', flush=True)\n"
@@ -255,6 +253,145 @@ class SyncoidRunnerTests(unittest.TestCase):
             "print('WARN: ZFS resume feature not available on source and target machines - sync will continue without resume support.', flush=True)\n"
         )
         self.assertFalse(summary.has_broken_pipe_warning)
+
+    def test_resume_unavailable_can_stop_or_continue(self):
+        for label in ("WARN", "WARNING", "Warning"):
+            for machine in ("source machine", "target machine", "source and target machines"):
+                warning = f"{label}: ZFS resume feature not available on {machine} - sync will continue without resume support."
+                with self.subTest(warning=warning):
+                    body = f"print({warning!r}, flush=True)\n"
+                    logger = make_logger("resume-warning-test")
+                    with self.assertLogs(logger, level="WARNING") as logs:
+                        self.run_fake(body, continue_without_resume=True, logger=logger)
+                    self.assertTrue(any(warning in message for message in logs.output))
+                    with self.assertRaises(SyncerateError) as caught:
+                        self.run_fake(body + "import time; time.sleep(10)\n", continue_without_resume=False)
+                    self.assertEqual(caught.exception.exit_code, EXIT_WARNING)
+                    self.assertIn("ContinueWithoutResume", caught.exception.message)
+
+    def test_continue_without_resume_preserves_real_nonzero_exit(self):
+        with self.assertRaises(SyncerateError) as caught:
+            self.run_fake(
+                "import sys\n"
+                "print('WARN: ZFS resume feature not available on target machine', flush=True)\n"
+                "sys.exit(42)\n", continue_without_resume=True,
+            )
+        self.assertEqual(caught.exception.exit_code, 42)
+
+    def test_warning_error_words_do_not_trigger_error_or_prompt_handlers(self):
+        warnings = [
+            "WARNING: Permission denied",
+            "WARNING: Connection timed out",
+            "WARNING: Connection refused",
+            "WARN: Broken pipe",
+            "WARNING: cannot open 'pool/data': dataset does not exist",
+            "WARNING: Are you sure you want to continue connecting",
+            "WARNING: Enter passphrase for key '/tmp/test':",
+            "WARNING: user@example.test's password:",
+            "WARN: zfs destroy failed: 256",
+        ]
+        body = "\n".join(f"print({line!r}, flush=True)" for line in warnings) + "\n"
+        logger = make_logger("ignored-warning-test")
+        with self.assertNoLogs(logger, level="WARNING"):
+            summary = self.run_fake(body, retry_broken_pipe=True, logger=logger)
+        self.assertFalse(summary.has_missing_dataset_failure)
+        self.assertFalse(summary.has_broken_pipe_warning)
+
+    def test_warning_chunks_and_unterminated_warning_are_consumed(self):
+        summary = self.run_fake(
+            "import sys, time\n"
+            "for chunk in ('WARN', 'ING:', ' Permission denied; ', 'Broken pipe'):\n"
+            "    sys.stdout.write(chunk); sys.stdout.flush(); time.sleep(0.03)\n",
+            retry_broken_pipe=True,
+        )
+        self.assertFalse(summary.has_broken_pipe_warning)
+        self.assertFalse(summary.has_missing_dataset_failure)
+
+    def test_ignored_warnings_remain_in_raw_log_without_affecting_transfer_count(self):
+        with tempfile.TemporaryDirectory() as td:
+            warning = "WARNING: INFO: Sending full is only a diagnostic example"
+            script = write_executable(Path(td) / "fake.py", f"print({warning!r}, flush=True)\n")
+            cfg = make_config(
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
+                log_destination=td + "/",
+            )
+            context = create_run_context(cfg)
+            summary = run_replications(
+                cfg, context, [DatasetPair("pool/data", "backup/data", ())],
+                None, make_logger("raw-warning-log"),
+            )
+            self.assertIn(warning, Path(context.output_file).read_text())
+            self.assertTrue(summary.transfer_measurement_complete)
+            self.assertEqual(summary.transferred_bytes, 0)
+
+    def test_resume_warning_chunks_are_checked_at_eof(self):
+        with self.assertRaises(SyncerateError) as caught:
+            self.run_fake(
+                "import sys, time\n"
+                "for chunk in ('WARN:', ' ZFS resume feature ', 'not available on source machine'):\n"
+                "    sys.stdout.write(chunk); sys.stdout.flush(); time.sleep(0.03)\n",
+                continue_without_resume=False,
+            )
+        self.assertEqual(caught.exception.exit_code, EXIT_WARNING)
+
+    def test_nonwarning_errors_after_warning_still_fail(self):
+        for error, code in (("Permission denied", 5), ("Connection timed out", 6), ("Connection refused", 7)):
+            with self.subTest(error=error):
+                with self.assertRaises(SyncerateError) as caught:
+                    self.run_fake(
+                        "print('WARN: an ignored warning', flush=True)\n"
+                        f"print({error!r}, flush=True)\n"
+                    )
+                self.assertEqual(caught.exception.exit_code, code)
+
+    def test_ignored_warning_preserves_exit_and_signal_failures(self):
+        for ending, expected in (("sys.exit(42)", 42), ("os.kill(os.getpid(), signal.SIGTERM)", 143)):
+            with self.subTest(ending=ending):
+                with self.assertRaises(SyncerateError) as caught:
+                    self.run_fake(
+                        "import os, signal, sys\n"
+                        "print('WARNING: synthetic warning', flush=True)\n" + ending + "\n"
+                    )
+                self.assertEqual(caught.exception.exit_code, expected)
+
+    def test_missing_dataset_warning_alone_does_not_reclassify_exit_two(self):
+        with self.assertRaises(SyncerateError) as caught:
+            self.run_fake(
+                "import sys\n"
+                "print('WARNING: Skipping dataset (dataset no longer exists): pool/data...', flush=True)\n"
+                "sys.exit(2)\n"
+            )
+        self.assertEqual(caught.exception.exit_code, 2)
+        self.assertEqual(caught.exception.kind, "syncoid")
+
+    def test_nonwarning_missing_dataset_after_warning_is_still_recorded(self):
+        summary = self.run_fake(
+            "import sys\n"
+            "print('WARNING: Skipping dataset for another reason', flush=True)\n"
+            "print(\"cannot open 'pool/data': dataset does not exist\", flush=True)\n"
+            "sys.exit(2)\n"
+        )
+        self.assertTrue(summary.has_missing_dataset_failure)
+
+    def test_reset_warning_preserves_nonwarning_broken_pipe_recovery(self):
+        summary = self.run_fake(
+            "print('WARNING: resetting partially receive state because the snapshot source no longer exists', flush=True)\n"
+            "print('Broken pipe', flush=True)\n"
+            "print('INFO: Sending full', flush=True)\n",
+            retry_broken_pipe=True,
+        )
+        self.assertFalse(summary.has_broken_pipe_warning)
+
+    def test_fresh_send_restores_nonwarning_broken_pipe_retry_handling(self):
+        summary = self.run_fake(
+            "import time\n"
+            "print('WARN: resetting partially receive state because the snapshot source no longer exists', flush=True)\n"
+            "print('INFO: Sending full', flush=True)\n"
+            "print('Broken pipe', flush=True)\n"
+            "time.sleep(10)\n",
+            retry_broken_pipe=True, broken_pipe_retry_count=0,
+        )
+        self.assertTrue(summary.has_broken_pipe_warning)
 
 
     def test_benign_password_word_in_output_does_not_trigger_secret_prompt(self):

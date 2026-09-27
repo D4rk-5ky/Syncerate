@@ -16,6 +16,18 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.34
+
+Previous version: `0.4.33`.
+
+- Replaced special-case warning failures and warning exceptions in `ssh_command()` with one complete-line warning handler. Syncoid `WARN`/`WARNING` lines are ignored for failure detection, including skipped-dataset warnings. Ordinary warnings remain in raw `.out` capture but are not separately registered as application warnings or missing-data failures.
+- Added `read_warning_line()` to consume each warning through CR, LF, or EOF. Error-looking words inside a warning cannot trigger authentication, connection, password/host-key prompts, missing-data, or Broken Pipe handling, including when output arrives in chunks. Warning text is excluded from transfer accounting.
+- Added optional strict Boolean `ContinueWithoutResume`, default true to preserve existing behavior. The resume-unavailable warning is always logged; true continues and checks the eventual process result, while false stops the run with exit code 4 and the existing error-notification path. Added the field to `AppConfig`, validated it in the config loader, and passed it to every attempt.
+- Removed the dedicated known-host warning matcher, fatal generic-warning handler, and warning-based skipped-dataset failure paths. A warning-only missing-dataset skip followed by a non-zero exit retains that actual exit code instead of being converted into a deferred missing-data failure.
+- Kept non-warning authentication, connection, missing dataset/pool, stale-source, Broken Pipe, repeated-prompt, process-exit, and signal handling. Retained silent receive-reset bookkeeping so ignoring the reset warning does not change how a following non-warning recovery-related Broken Pipe is handled. Preserved success/error notification controls and all original project files.
+- Updated fake-process regression tests for ignored warnings, streaming/EOF handling, resume policies and Boolean validation, raw logging/transfer accounting, preserved non-warning failures/signals, and stale recovery. Added optional logger injection to the shared fake-run test method for reliable log assertions.
+- Updated README for current behavior, all-options config example, function/test map, version metadata, standalone build-version expectation, and packaging test.
+
 ## 0.4.33
 
 Previous version: `0.4.32`.

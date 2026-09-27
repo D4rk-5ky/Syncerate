@@ -20,7 +20,6 @@ from .config import validate_syncoid_command_template
 from .errors import (
     EXIT_CONNECTION_REFUSED,
     EXIT_CONNECTION_TIMEOUT,
-    EXIT_DATASET_MISSING,
     EXIT_LIST_ERROR,
     EXIT_OK,
     EXIT_PASSWORD_DENIED,
@@ -751,6 +750,18 @@ def effective_user_name() -> str:
     except (KeyError, OSError):
         return f"UID {os.geteuid()}"
 
+def read_warning_line(child: Any, prefix: str) -> str:
+    """Consume a warning through its line ending or EOF before classifying it.
+
+    Reading the complete line prevents error-like words inside a warning from
+    reaching the error/prompt matchers, including when output arrives in chunks.
+    Pexpect still writes the raw output to the configured child logfile.
+    """
+
+    child.expect([r"[\r\n]", pexpect.EOF])
+    return prefix + safe_text(child.before)
+
+
 def ssh_command(
     syncoid_command: list[str],
     password: Optional[str],
@@ -758,6 +769,7 @@ def ssh_command(
     logger: logging.Logger,
     retry_broken_pipe: bool = False,
     process_env: Optional[dict[str, str]] = None,
+    continue_without_resume: bool = True,
 ) -> SyncoidAttemptResult:
     """Start and monitor one Syncoid process and return explicit flags."""
 
@@ -804,26 +816,24 @@ def ssh_command(
         output_handle = open(run_context.output_file, "a", encoding="utf-8")
         child.logfile = output_handle
 
-    PATTERN_HOSTKEY = 0
-    PATTERN_NO_DESTROY_SNAP = 1
-    PATTERN_PERMISSION_DENIED = 2
-    PATTERN_TIMEOUT = 3
-    PATTERN_REFUSED = 4
-    PATTERN_PASSPHRASE = 5
-    PATTERN_EOF = 6
-    PATTERN_MISSING_DATASET_SKIP = 7
-    PATTERN_WARN_SKIPPING = 8
-    PATTERN_STALE_RESUME_SOURCE = 9
-    PATTERN_RESUME_RESET = 10
-    PATTERN_FRESH_SEND = 11
-    PATTERN_RESUME_UNAVAILABLE = 12
-    PATTERN_BROKEN_PIPE = 13
-    PATTERN_SSH_KNOWN_HOST = 14
-    PATTERN_ZFS_MISSING_DATASET_OR_POOL = 15
-    PATTERN_GENERIC_WARN = 16
-    PATTERN_PASSWORD = 17
+    PATTERN_WARNING = 0
+    PATTERN_HOSTKEY = 1
+    PATTERN_NO_DESTROY_SNAP = 2
+    PATTERN_PERMISSION_DENIED = 3
+    PATTERN_TIMEOUT = 4
+    PATTERN_REFUSED = 5
+    PATTERN_PASSPHRASE = 6
+    PATTERN_EOF = 7
+    PATTERN_STALE_RESUME_SOURCE = 8
+    PATTERN_FRESH_SEND = 9
+    PATTERN_BROKEN_PIPE = 10
+    PATTERN_ZFS_MISSING_DATASET_OR_POOL = 11
+    PATTERN_PASSWORD = 12
 
+    # Match a warning prefix before any prompt/error on the same line, then
+    # consume that entire line. Warnings cannot be mistaken for nested errors.
     patterns = [
+        r"(?im)(?:^|[\r\n])[ \t]*(?:WARN|WARNING)(?=[ \t:\r\n]):?",
         "Are you sure you want to continue connecting",
         "could not find any snapshots to destroy; check snapshot names.",
         "Permission denied",
@@ -831,16 +841,10 @@ def ssh_command(
         "Connection refused",
         r"(?im)(?:^|[\r\n])[^\r\n]*\benter passphrase for [^\r\n]*:\s*",
         pexpect.EOF,
-        r"(?im)(?:^|[\r\n])(?:WARN(?:ING)?(?::)?[ \t]+)Skipping dataset \(dataset no longer exists\):[^\r\n]*",
-        r"(?im)(?:^|[\r\n])(?:WARN(?:ING)?(?::)?[ \t]+)Skipping dataset",
         r"(?i)used in the initial send no longer exists",
-        r"(?i)(?:WARN|WARNING): resetting partially receive state because the snapshot source no longer exists",
         r"(?i)INFO: Sending (?:incremental|full)",
-        r"WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.",
         r"(?i)broken pipe",
-        r"(?im)(?:^|[\r\n])Warning: Permanently added '[^'\r\n]+' \([^\)\r\n]+\) to the list of known hosts\.[ \t]*",
         r"(?im)(?:^|[\r\n])(?:CRITICAL ERROR:[ \t]*)?(?:cannot open|cannot import) '[^'\r\n]+': (?:dataset does not exist|no such pool(?: available)?)[ \t]*",
-        r"(?im)(?:^|[\r\n])(?:WARN|WARNING)(?:\b|:)",
         r"(?im)(?:^|[\r\n])[^\r\n]*\bpassword:\s*$",
     ]
 
@@ -856,7 +860,7 @@ def ssh_command(
         index = child.expect(patterns)
 
         transfer_counter.feed(safe_text(child.before))
-        if isinstance(child.after, str):
+        if index != PATTERN_WARNING and isinstance(child.after, str):
             transfer_counter.feed(child.after)
 
         if index in repeat_guarded_patterns:
@@ -876,7 +880,39 @@ def ssh_command(
             repeated_pattern = True
             break
 
-        if index == PATTERN_HOSTKEY:
+        if index == PATTERN_WARNING:
+            warning_text = read_warning_line(child, safe_text(child.after)).strip()
+            # Preserve the boundary of preceding progress output without
+            # interpreting warning text as a transfer heading or pv counter.
+            transfer_counter.feed("\n")
+            if re.search(
+                r"(?i)^WARN(?:ING)?[ \t]*:?[ \t]*ZFS resume feature not available\b",
+                warning_text,
+            ):
+                logger.warning("%s", warning_text)
+                if not continue_without_resume:
+                    die(
+                        child,
+                        "ERROR! Syncoid resume support is unavailable and "
+                        "ContinueWithoutResume is disabled.\n" + warning_text,
+                        EXIT_WARNING,
+                        logger=logger,
+                    )
+                logger.warning(
+                    "ContinueWithoutResume is enabled; waiting for Syncoid's real exit status."
+                )
+            elif re.search(
+                r"(?i)^WARN(?:ING)?[ \t]*:?[ \t]*resetting partially receive state because the snapshot source no longer exists",
+                warning_text,
+            ):
+                # Silent recovery bookkeeping only: this warning never becomes
+                # a failure or a separately logged warning. Keep the existing
+                # treatment of a subsequent non-warning Broken Pipe during reset.
+                stale_resume_recovery_active = True
+                stale_resume_reset_announced = True
+            continue
+
+        elif index == PATTERN_HOSTKEY:
             child.sendline("yes")
 
         elif index == PATTERN_NO_DESTROY_SNAP:
@@ -945,25 +981,6 @@ def ssh_command(
                 missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
             )
 
-        elif index == PATTERN_MISSING_DATASET_SKIP:
-            missing_dataset_or_pool_detected = True
-            message = safe_text(child.after).strip()
-            if message and message not in missing_dataset_or_pool_messages:
-                missing_dataset_or_pool_messages.append(message)
-            logger.error("")
-            logger.error("Syncoid reported that a source dataset disappeared or does not exist.")
-            logger.error("Recording this dataset pair as failed and allowing Syncoid to finish before continuing the list.")
-            logger.error("")
-            continue
-
-        elif index == PATTERN_WARN_SKIPPING:
-            die(
-                child,
-                "ERROR! Syncoid skipped a dataset. Check source/destination datasets.",
-                EXIT_DATASET_MISSING,
-                logger=logger,
-            )
-
         elif index == PATTERN_STALE_RESUME_SOURCE:
             stale_resume_recovery_active = True
             stale_resume_reset_announced = False
@@ -983,21 +1000,6 @@ def ssh_command(
             logger.warning("")
             continue
 
-        elif index == PATTERN_RESUME_RESET:
-            stale_resume_recovery_active = True
-            stale_resume_reset_announced = True
-
-            logger.warning("")
-            logger.warning("Syncoid is resetting the stale partially received ZFS stream.")
-            logger.warning(
-                "The old resumable receive token points to a source snapshot that no longer exists."
-            )
-            logger.warning(
-                "Waiting for Syncoid to clear the receive state and start a fresh valid send."
-            )
-            logger.warning("")
-            continue
-
         elif index == PATTERN_FRESH_SEND:
             if stale_resume_recovery_active:
                 logger.info("")
@@ -1007,17 +1009,6 @@ def ssh_command(
                 logger.info("")
                 stale_resume_recovery_active = False
                 stale_resume_reset_announced = False
-            continue
-
-        elif index == PATTERN_RESUME_UNAVAILABLE:
-            logger.warning("")
-            logger.warning(
-                "Syncoid reported that resumable receive is unavailable for this transfer."
-            )
-            logger.warning(
-                "Syncoid explicitly continues without resume support, so Syncerate will wait for its real exit status."
-            )
-            logger.warning("")
             continue
 
         elif index == PATTERN_BROKEN_PIPE:
@@ -1076,12 +1067,6 @@ def ssh_command(
                 missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
             )
 
-        elif index == PATTERN_SSH_KNOWN_HOST:
-            logger.info("")
-            logger.info("OpenSSH added the remote host key to known_hosts; continuing Syncoid.")
-            logger.info("")
-            continue
-
         elif index == PATTERN_ZFS_MISSING_DATASET_OR_POOL:
             missing_dataset_or_pool_detected = True
             message = safe_text(child.after).strip()
@@ -1092,29 +1077,6 @@ def ssh_command(
             logger.error("Recording this dataset pair as failed and allowing Syncoid to finish before continuing the list.")
             logger.error("")
             continue
-
-        elif index == PATTERN_GENERIC_WARN:
-            warning_text = safe_text(child.after) + safe_text(child.buffer)
-
-            if (
-                ignored_missing_destroy_snapshot
-                and "zfs destroy" in warning_text
-                and "failed: 256" in warning_text
-            ):
-                logger.info("")
-                logger.info("Syncoid produced the known non-fatal destroy warning.")
-                logger.info(
-                    "Continuing because ignored_missing_destroy_snapshot is True."
-                )
-                logger.info("")
-                continue
-
-            die(
-                child,
-                "ERROR! Syncoid produced a warning.",
-                EXIT_WARNING,
-                logger=logger,
-            )
 
         elif index == PATTERN_PASSWORD:
             if password is None:
@@ -1197,6 +1159,7 @@ def run_replications(
                 run_context,
                 logger,
                 retry_broken_pipe=app_config.retry_broken_pipe,
+                continue_without_resume=app_config.continue_without_resume,
                 process_env=(
                     ssh_agent_session.environment
                     if ssh_agent_session is not None

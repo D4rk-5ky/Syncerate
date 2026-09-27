@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.33`
+Current version: `0.4.34`
 
 ## Disclaimer and liability notice
 
@@ -121,7 +121,7 @@ Syncerate has three application flags. `--conf`/`-c` is required for a normal re
 | --- | --- | --- |
 | `-c FILE`, `--conf FILE` | Yes for a normal run | Selects the required Syncerate INI configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. The selected file must contain the `[Syncerate Config]` section. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.33` and exits. The program name reflects the entry point used, for example `Syncerate.py 0.4.33` from the Python script or `Syncerate 0.4.33` from `dist/Syncerate`. It does not start a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.34` and exits. The program name reflects the entry point used, for example `Syncerate.py 0.4.34` from the Python script or `Syncerate 0.4.34` from `dist/Syncerate`. It does not start a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -272,6 +272,7 @@ DateTime = %Y-%m-%d_%H_%M_%S
 LogDestination = No
 SystemAction = No
 
+ContinueWithoutResume = True
 RetryBrokenPipe = No
 BrokenPipeRetryCount = 1
 BrokenPipeRetryWaitSeconds = 10
@@ -309,6 +310,7 @@ mqtt_json_topic = homeassistant/syncerate/status
 | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
 | `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out` files, or `No` for terminal-only logging. |
 | `SystemAction` | Yes | Trusted shell command executed after a successful run, or `No` to disable it. |
+| `ContinueWithoutResume` | No | Boolean; defaults to `True`. Logs Syncoid’s resume-unavailable warning and continues when true. `False` stops the run with exit code `4` and uses the normal error-notification path. Other warnings do not cause failures. |
 | `RetryBrokenPipe` | No | Enables dataset-level Broken Pipe retry handling. Each dataset receives its own retry allowance. When that allowance is exhausted, only that dataset is skipped, the remaining list continues, and the completed run records a successful warning. Missing or disabled values preserve normal Syncoid failure handling. |
 | `BrokenPipeRetryCount` | No | Number of retries allowed for each individual dataset after its initial attempt. Defaults to `1` when omitted. The count resets for every dataset pair. Use `0` to skip an affected dataset immediately after its first Broken Pipe. Negative values and non-integers are rejected. |
 | `BrokenPipeRetryWaitSeconds` | No | Whole number of seconds to wait before each Broken Pipe retry. Defaults to `10` when omitted. Use `0` to retry immediately. Negative values and non-integers are rejected as configuration errors. |
@@ -325,7 +327,7 @@ mqtt_json_topic = homeassistant/syncerate/status
 | `MQTT_JSON_Status` | No | Independently enables structured success/failure JSON status. It may run together with the old MQTT/HA outputs or by itself while `Use_MQTT = No`. JSON is always non-retained. |
 | `mqtt_json_topic` | When `MQTT_JSON_Status = Yes` | Dedicated JSON-only topic. It must differ from an enabled `mqtt_topic` and `HomeAssistant_Available`; every JSON publish hard-codes `retain = false`. |
 
-Boolean options (`UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`) accept `Yes`/`No`, `True`/`False`, `1`/`0`, or `On`/`Off` case-insensitively. Other spellings are rejected at startup instead of being silently treated as disabled. `SendMailOnSuccess` and `SendMQTTOnSuccess` are the only Boolean options that default to enabled when omitted.
+Boolean options (`UseSSHAgent`, `ContinueWithoutResume`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`) accept `Yes`/`No`, `True`/`False`, `1`/`0`, or `On`/`Off` case-insensitively. Other spellings are rejected at startup instead of being silently treated as disabled. `SendMailOnSuccess`, `SendMQTTOnSuccess`, and `ContinueWithoutResume` default to enabled when omitted. Other Boolean options default to disabled.
 
 When MQTT is enabled, the broker address, valid port, and the topics required by the enabled channel are validated before replication starts. Although some integrations are disabled with `No`, the required keys should remain in the configuration so startup validation succeeds. Required text options may not be empty; use the documented `No` value to disable mail, logging, or the system action.
 
@@ -521,19 +523,35 @@ Syncerate Succsful - WARNING BROKEN PIPE
 
 The email body lists the skipped source and destination dataset pairs.
 
+## Syncoid warnings and resume support
+
+Syncoid `WARN` and `WARNING` lines are ignored for failure detection, including skipped-dataset, missing-snapshot cleanup, and known-host warnings. Matching is case-insensitive and accepts leading indentation. Ordinary warnings are not separately logged or added to the failure summary; their original text remains in `.out` when file logging is enabled.
+
+A warning alone does not make the run fail. Syncoid's real exit status remains authoritative: a warning followed by exit `0` is successful; a non-zero exit still fails. Warning text containing words such as `Permission denied` or `Broken pipe` is treated as part of that warning. A separate non-warning error line still receives its normal handling.
+
+The exception is Syncoid's `ZFS resume feature not available` warning:
+
+```ini
+ContinueWithoutResume = True
+```
+
+This optional Boolean defaults to `True` and accepts the same true/false spellings as the other Boolean settings. Syncerate logs the resume-unavailable warning and waits for Syncoid to finish. A later error or non-zero exit still fails.
+
+To require resume support:
+
+```ini
+ContinueWithoutResume = False
+```
+
+Syncerate stops the current child process and returns exit code `4` when that warning is observed. The remaining dataset pairs and successful-run actions are not started. Enabled error notifications are attempted, even when success notifications are disabled. This reacts to Syncoid's output; it does not perform a separate capability check before Syncoid starts.
+
 ## Interrupted receive recovery
 
-Syncerate lets Syncoid own ZFS resumable-receive recovery. If Syncoid reports that the source snapshot used by an interrupted `zfs receive -s` no longer exists, Syncerate does **not** stop the Syncoid process and does not modify the command to bypass resume handling.
+Syncoid owns resumable-receive recovery. When the source snapshot for an interrupted receive no longer exists, Syncerate lets Syncoid reset the stale receive state and start a replacement send without modifying the configured command.
 
-During this recovery Syncerate logs the stages explicitly:
+Syncerate retains internal recovery tracking for the non-warning stale-source message and the receive-reset announcement. The reset warning itself is ignored without separate warning logging; it only supplies context so a following non-warning Broken Pipe during that reset does not consume the ordinary retry allowance. A new `INFO: Sending incremental` or `INFO: Sending full` clears that recovery state.
 
-1. the resume source snapshot is no longer available;
-2. Syncoid is being allowed to run its built-in stale receive-state recovery;
-3. when Syncoid reports `resetting partially receive state because the snapshot source no longer exists`, Syncerate logs that Syncoid is resetting the stale partially received stream;
-4. a `Broken pipe` produced by the failed resume pipeline is treated as part of that recovery and does not trigger the normal Broken Pipe retry policy;
-5. when Syncoid reports a new `INFO: Sending incremental` or `INFO: Sending full`, Syncerate logs that recovery completed and restores normal Broken Pipe handling for the replacement transfer.
-
-This keeps ownership of the receive token and reset operation inside Syncoid instead of duplicating ZFS receive-state manipulation in Syncerate. If Syncoid cannot recover and exits nonzero, Syncerate preserves the real Syncoid failure handling. Likewise, the recognized “snapshot to destroy no longer exists” condition is non-fatal only when Syncoid ultimately exits successfully; it does not mask an unrelated later non-zero Syncoid exit status.
+`ContinueWithoutResume` controls unavailable resume support, not stale-state recovery. Real process failures still fail, including a non-zero exit after a missing destroy-snapshot message.
 
 ## Optional Broken Pipe retry
 
@@ -564,7 +582,7 @@ When enabled, Syncerate watches Syncoid output case-insensitively for the text `
 5. After the remaining list finishes, Syncerate returns exit code `0` when no other fatal error occurred.
 6. Logs and the success email identify every dataset pair skipped after exhausting its retries.
 
-The retry count is never shared between datasets. This option does not retry authentication failures, missing datasets, generic warnings, connection failures, or other nonzero Syncoid exits. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
+The retry count is never shared between datasets. This option does not retry authentication failures, non-warning missing-dataset errors, connection failures, or other nonzero Syncoid exits. Warning lines do not trigger retries. When the option is disabled or omitted, Broken Pipe is not given special retry handling; Syncerate waits for Syncoid's real exit status and applies the normal failure behavior.
 
 ## MQTT notifications
 
@@ -780,30 +798,22 @@ sudo zfs list -t snapshot
 
 ## Runtime safety behavior
 
-Syncerate monitors Syncoid and SSH output for:
+Syncerate keeps these checks for non-warning output and process results:
 
-- first-time SSH host-key confirmation;
-- the normal OpenSSH `Warning: Permanently added 'host' (KEYTYPE) to the list of known hosts.` message after accepting a new host key;
-- password and key-passphrase prompts;
-- authentication or permission failure;
-- connection timeout;
-- connection refusal;
-- Syncoid's specific `WARNING: Skipping dataset (dataset no longer exists): ...` condition (and the older/unprefixed `WARN` spelling);
-- OpenZFS missing-dataset/pool output such as `cannot open 'pool/dataset': dataset does not exist`, `cannot open 'pool': no such pool`, and `cannot import 'pool': no such pool available`, including Syncoid's `CRITICAL ERROR: ` prefix when it relays the captured ZFS error;
-- other skipped-dataset warnings, which remain fatal;
-- an interrupted receive whose original resume snapshot no longer exists, allowing Syncoid to reset the stale receive state and start a valid replacement send;
-- unavailable ZFS resume support where Syncoid continues without it;
-- an interactive host-key, password, or passphrase prompt repeating too many times;
-- optional per-dataset retries, up to `BrokenPipeRetryCount`, after the configured `BrokenPipeRetryWaitSeconds`, when `Broken pipe` appears;
-- retry exhaustion that skips only the affected dataset, resets the counter, and continues the list;
-- generic warnings;
-- the recognized missing destroy-snapshot condition.
+- source/destination list validation before replication;
+- SSH host-key and password/passphrase prompt handling, including the repeated-prompt limit;
+- authentication/permission failures, connection timeouts, and connection refusals;
+- missing dataset/pool errors, including `cannot open '...': dataset does not exist`, `cannot open '...': no such pool`, and `cannot import '...': no such pool available`, optionally prefixed by `CRITICAL ERROR:`;
+- stale interrupted-receive recovery and configured Broken Pipe retry handling;
+- the actual Syncoid exit code and terminating signal.
 
-When SSH presents the standard first-connection host-key confirmation prompt, Syncerate automatically answers `yes`, preserving existing behavior. OpenSSH normally follows that with a line like `Warning: Permanently added '10.0.0.135' (ED25519) to the list of known hosts.` Syncerate recognizes that exact warning shape as informational and continues Syncoid instead of treating it as a generic fatal warning. This is convenient but weaker than pre-verifying host keys. For important systems, populate `known_hosts` ahead of time or enforce your preferred `StrictHostKeyChecking` policy through normal SSH configuration/Syncoid options so an unexpected host key is rejected instead of accepted interactively.
+When SSH presents its standard first-connection host-key confirmation prompt, Syncerate automatically answers `yes`. The following known-hosts warning is ignored under the general warning policy. For important systems, populate `known_hosts` ahead of time or enforce the desired `StrictHostKeyChecking` policy through SSH/Syncoid configuration.
 
-Missing ZFS data is handled as **continue-but-fail**. When the monitored output matches the established OpenZFS/Syncoid missing signatures, Syncerate lets that Syncoid process finish. Syncoid exit `0` is accepted for its specific recursive `dataset no longer exists` skip case and exit `2` is accepted for the normal initial missing source/pool case. The affected pair is recorded as failed, then Syncerate proceeds to the next configured pair. After the full list is processed, Syncerate returns exit code `8`, does not run success-only MQTT/system-action handling, and reports all recorded failures through the configured JSON MQTT failure event and/or failure email. If the same missing text is followed by another Syncoid exit code, that real exit code remains fatal immediately so an unrelated later error is not masked.
+Recognized **non-warning** missing dataset/pool errors retain the continue-but-fail behavior. If Syncoid finishes that pair with exit `0` or `2`, Syncerate records it as failed and processes the remaining pairs. The overall result is exit code `8`, with configured error notifications and no successful-run system action. Any other non-zero exit fails immediately with Syncoid's actual code.
 
-Generic warning **lines** remain fatal except for the explicitly recognized first-contact `Permanently added ... known hosts` message, Syncoid's missing-dataset continuation case, the stale-receive reset warning, and the exact unavailable-resume message. Warning matching is anchored to warning-line shapes so benign words such as `WARNINGS` do not become fatal accidentally. Normal repeated `INFO: Sending ...` progress is not subject to the interactive-prompt repetition guard. During stale receive recovery, Syncerate waits for Syncoid to reset the receive state and suppresses only the Broken Pipe associated with that failed resume pipeline. The exact unavailable-resume message is logged while Syncerate waits for Syncoid's real final status because the transfer continues without resumable receive support. Ordinary Broken Pipe retry behavior is used only when `RetryBrokenPipe` is enabled.
+A `WARNING: Skipping dataset ...` line alone is ignored and is not recorded as a missing-data failure. If Syncoid then exits non-zero, that exit still fails the run. This distinction also applies when warning text contains error-like phrases.
+
+Normal repeated transfer progress and ignored warnings do not trigger the interactive-prompt repetition guard. `ContinueWithoutResume = False` is the only policy that turns a recognized Syncoid warning into a failure.
 
 ## Exit codes
 
@@ -812,7 +822,7 @@ Generic warning **lines** remain fatal except for the explicitly recognized firs
 | `0` | The dataset list completed and no fatal handled error was returned. This also includes runs where one or more datasets were skipped after exhausting their per-dataset Broken Pipe retries while `RetryBrokenPipe` was enabled. Mail-command and system-action failures are currently logged rather than changing this code. |
 | `1` | Source/destination list validation failed. |
 | `2` | Syncerate encountered a script or configuration error. |
-| `4` | A fatal Syncoid warning was detected. |
+| `4` | Syncoid reported unavailable resume support while `ContinueWithoutResume = False`. Other warning lines do not cause this exit. |
 | `5` | Password, authentication, or permission failure. |
 | `6` | Connection timed out. |
 | `7` | Connection was refused. |
@@ -820,3 +830,5 @@ Generic warning **lines** remain fatal except for the explicitly recognized firs
 | `9` | The same monitored output pattern repeated too many times. |
 | `10` | MQTT dependency or publishing failure. |
 | `11` | Reserved for system-action failures; the current system-action runner logs failures without returning this code. |
+
+Non-zero Syncoid exit codes not handled by a specific rule are returned unchanged and may overlap the application codes above. Signal termination is reported as `128 + signal number`.

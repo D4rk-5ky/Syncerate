@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.33`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.34`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -84,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.33"
+VERSION = "0.4.34"
 __version__ = VERSION
 ```
 
@@ -99,7 +99,7 @@ This module contains shared exit codes and the application exception. Keeping th
 - `EXIT_OK = 0`: successful run.
 - `EXIT_LIST_ERROR = 1`: source/destination parsing or validation failed.
 - `EXIT_SCRIPT_ERROR = 2`: unexpected application/Python failure.
-- `EXIT_WARNING = 4`: a Syncoid warning remains fatal.
+- `EXIT_WARNING = 4`: resume support is unavailable and `ContinueWithoutResume` is false.
 - `EXIT_PASSWORD_DENIED = 5`: password, SSH permission, or ZFS permission failure.
 - `EXIT_CONNECTION_TIMEOUT = 6`: remote connection timed out.
 - `EXIT_CONNECTION_REFUSED = 7`: remote connection was refused.
@@ -143,6 +143,7 @@ Immutable configuration state loaded from one INI file. It replaces former runti
 - `SyncoidCommand`;
 - `UseSSHAgent`;
 - `SSHAgentKeyLifetimeSeconds`;
+- `ContinueWithoutResume`;
 - `RetryBrokenPipe`;
 - `BrokenPipeRetryCount`;
 - `BrokenPipeRetryWaitSeconds`.
@@ -166,6 +167,7 @@ Fields:
 - `syncoid_command`: command template;
 - `use_ssh_agent`: normalized Boolean enabling the isolated per-run agent path;
 - `ssh_agent_key_lifetime_seconds`: positive lifetime for the loaded private-agent identity, defaulting to `3600`;
+- `continue_without_resume`: normalized Boolean, default true, permitting continuation after the resume-unavailable warning; false stops the run with code 4;
 - `retry_broken_pipe`: normalized Boolean controlling optional per-dataset retries;
 - `broken_pipe_retry_count`: validated retries available to each individual dataset, defaulting to `1`;
 - `broken_pipe_retry_wait_seconds`: validated whole seconds to wait before each retry, defaulting to `10`.
@@ -273,7 +275,7 @@ Legacy compatibility helper that returns true only for `YES`, `TRUE`, `1`, or `O
 
 ### `parse_boolean_option(raw_config, option_name, *, fallback="No")`
 
-Reads one documented Boolean and accepts exactly the enabled/disabled spellings `Yes/No`, `True/False`, `1/0`, and `On/Off` case-insensitively. Any other nonempty spelling raises `ValueError` before replication begins. This is used for `UseSSHAgent`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`. Most callers use the default fallback `No`; the two success-notification controls deliberately pass `fallback="Yes"` so existing configurations keep their default success notification behavior when those new keys are omitted.
+Reads one documented Boolean and accepts exactly the enabled/disabled spellings `Yes/No`, `True/False`, `1/0`, and `On/Off` case-insensitively. Any other nonempty spelling raises `ValueError` before replication begins. This is used for `UseSSHAgent`, `ContinueWithoutResume`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`. Most callers use the default fallback `No`; the two success-notification controls and `ContinueWithoutResume` deliberately pass `fallback="Yes"` so omitted keys preserve successful notifications and continuation without resume support.
 
 ### `validate_syncoid_command_template(command_template)`
 
@@ -285,7 +287,7 @@ Private startup helper that reads a required option, strips surrounding whitespa
 
 ### `load_app_config(config_path)`
 
-Reads and validates the selected INI file, then returns immutable `AppConfig`. It verifies the file and section, validates all required nonempty text, strictly parses supported Booleans, validates the Syncoid template before any dataset is touched, validates positive/non-negative numeric retry/agent settings, normalizes `LogDestination = No` to `None`, and validates enabled MQTT channels before replication. `SendMailOnSuccess` and `SendMQTTOnSuccess` are optional strict Booleans with `Yes` defaults so older configs continue sending success notifications until the user explicitly disables them.
+Reads and validates the selected INI file, then returns immutable `AppConfig`. It verifies the file and section, validates all required nonempty text, strictly parses supported Booleans, validates the Syncoid template before any dataset is touched, validates positive/non-negative numeric retry/agent settings, normalizes `LogDestination = No` to `None`, and validates enabled MQTT channels before replication. `SendMailOnSuccess`, `SendMQTTOnSuccess`, and `ContinueWithoutResume` are optional strict Booleans with `Yes` defaults so omitted options preserve successful notifications and continuation without resume support. Invalid values fail at startup; the parsed resume policy is stored on `AppConfig` and passed to every Syncoid attempt.
 
 For MQTT it requires a broker address, port `1..65535`, the legacy topic/message when `Use_MQTT` is enabled, the HA availability topic when that legacy integration is enabled, and a dedicated JSON topic when `MQTT_JSON_Status` is enabled. Conflicting retained/non-retained topics are rejected. Broker credentials, payload text, and topic values stay in `raw_config`; validated feature switches are stored as typed fields in `AppConfig`.
 
@@ -666,41 +668,34 @@ The counter measures bytes actually sent through Syncoid's stream pipeline. Repe
 
 Finalizes the attempt's `TransferByteCounter` and constructs one `SyncoidAttemptResult` with process/error flags, recognized missing-data evidence, and measured byte fields. Centralizing this return path ensures EOF, Broken Pipe, and repetition-stop exits cannot forget to finalize accounting.
 
-### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False, process_env=None)`
+### `read_warning_line(child, prefix)`
 
-Starts one process with:
+Consumes the remainder of a matched warning up to CR, LF, or EOF and returns the complete text, including the prefix already matched by `ssh_command()`. This prevents words inside a warning from reaching password, connection, missing-dataset, or Broken Pipe handlers when output is delivered in several chunks. Pexpect continues writing raw output to the configured `.out` logfile. A final unterminated warning is processed at EOF.
 
-```python
-pexpect.spawn(command[0], command[1:], timeout=None, encoding="utf-8", env=process_env)
-```
+### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False, process_env=None, continue_without_resume=True)`
 
-Using an argv list avoids shell re-parsing. `process_env` is normally `None`; private-agent mode passes the isolated agent environment to the **same Syncoid command**, so Syncoid and the SSH processes it creates inherit `SSH_AUTH_SOCK`. Pexpect still owns Syncoid, not SSH or mbuffer directly. All observed child output is also fed to `TransferByteCounter`; `--quiet` marks byte measurement unavailable up front, and a started transfer with no parseable `pv` counter makes that attempt's measurement incomplete rather than guessing a size.
+Starts Syncoid under Pexpect using an argv list and optional private-agent environment. The monitor processes warnings as complete lines before considering error/prompt matches on the same line. Labels `WARN` and `WARNING` are matched case-insensitively at a line boundary, with optional indentation. A following delimiter is required so an ordinary word such as `WARNINGS` is not mistaken for a warning.
 
-It monitors these conditions:
+Warning behavior:
 
-1. **SSH host-key confirmation** — answers `yes`.
-2. **Missing destroy snapshot** — records the known nonfatal shared-dataset condition.
-3. **Permission denied** — exits through code `5`.
-4. **Connection timeout** — code `6`.
-5. **Connection refused** — code `7`.
-6. **Passphrase prompt** — uses prompt-shaped matching and the shared secret helper with `wait_for_noecho=False`, preserving the established nested-Syncoid direct-send behavior while guaranteeing logfile restoration.
-7. **EOF** — returns the real child and current result flags.
-8. **Syncoid missing-dataset skip** — specifically recognizes Syncoid's current `WARNING: Skipping dataset (dataset no longer exists): ...` output plus the older `WARN` spelling, records the condition, and waits for Syncoid to finish instead of aborting the whole list. Other `WARN`/`WARNING` skipping-dataset forms remain fatal code `8`.
-9. **Missing stale-resume source snapshot** — marks Syncoid stale-receive recovery active and keeps the same process running.
-10. **Syncoid receive-state reset warning** — recognizes the specific stale-state reset warning as nonfatal.
-11. **Fresh replacement send** — marks stale recovery complete.
-12. **Resume feature unavailable** — logs the exact nonfatal message and waits for Syncoid's real exit status.
-13. **Broken Pipe** — preserves the established recovery/retry behavior.
-14. **OpenSSH known-hosts addition warning** — recognizes the exact first-contact `Warning: Permanently added 'host' (KEYTYPE) to the list of known hosts.` shape as informational and continues.
-15. **OpenZFS/Syncoid missing dataset/pool output** — recognizes `cannot open '...': dataset does not exist`, `cannot open '...': no such pool`, and `cannot import '...': no such pool available`, with or without Syncoid's `CRITICAL ERROR: ` prefix, records the matched text, and lets Syncoid reach its real exit status.
-16. **Generic warning** — remains fatal with code `4` except the explicitly recognized nonfatal warning shapes above.
-17. **Password prompt** — recognizes real prompt-shaped lines including typical `user@host's password:` output and uses the shared nested-prompt secret path.
+1. Read the whole line through `read_warning_line()` before classifying its contents.
+2. If the warning body begins `ZFS resume feature not available`, log it. Continue when `continue_without_resume` is true; otherwise terminate the child through `die()` with code 4. The normal application error boundary then handles error notifications.
+3. Ignore all other warning lines for failure detection, including missing-dataset skip, cleanup, and known-host warnings. They do not enter failure summaries or receive separate application warning logs.
+4. Retain silent bookkeeping for Syncoid's stale receive-state reset announcement. This preserves the existing handling of a subsequent non-warning Broken Pipe during recovery; the warning itself never fails the run.
+5. Exclude warning text from transfer accounting while preserving the preceding line boundary, so words resembling transfer headings cannot change the byte total. Raw `.out` capture remains intact.
 
-Generic warning recognition is anchored to warning-line shapes, preventing ordinary words such as `WARNINGS` from becoming fatal. Credential expressions likewise require prompt shapes, so dataset/path text containing `password` is not answered with a secret.
+Non-warning behavior remains:
 
-Only automatically answered interactive host-key/password/passphrase patterns are limited to five matches. Normal repeatable progress such as multiple `INFO: Sending ...` lines is deliberately exempt, avoiding false code-9 failures on legitimate multi-send output.
+- SSH host-key confirmation is answered with `yes`.
+- Real password/passphrase prompts use `send_secret()`; no configured password yields code 5.
+- Permission denied, connection timeout, and connection refusal use codes 5, 6, and 7.
+- The known missing destroy-snapshot message is remembered without masking a later non-zero exit.
+- Missing stale-resume source output marks recovery active. Fresh `INFO: Sending incremental/full` output clears it.
+- A non-warning Broken Pipe follows the existing recovery and optional retry policy.
+- Non-warning `cannot open/import` missing dataset/pool signatures, with optional `CRITICAL ERROR:` prefix, record deferred missing-data evidence.
+- EOF returns the actual child and attempt summary; `run_replications()` checks its exit status or signal.
 
-The exact unavailable-resume regular expression accepts source, target, or both machines while requiring Syncoid's explicit “will continue without resume support” wording. Missing-data matches are intentionally narrow; they are not a blanket ignore for all `cannot open`, `WARN`, or Syncoid failures.
+Only automatically answered interactive host-key/password/passphrase patterns are limited to five matches. Warnings and normal transfer progress have no repetition limit. Error-looking text within a warning is ignored, but a following separate non-warning error is handled normally.
 
 ### `run_replications(app_config, run_context, dataset_pairs, password, logger, ssh_agent_session=None)`
 
@@ -711,13 +706,13 @@ For each pair it:
 1. builds the command exactly from `SyncoidCommand`, the dataset pair, and per-destination arguments;
 2. when private-agent mode is active, verifies/reloads the one agent identity but **does not modify the Syncoid argv**;
 3. logs extra arguments and argv details;
-4. starts `ssh_command()` with Pexpect controlling Syncoid in both agent and non-agent modes; agent mode only adds the isolated `SSH_AUTH_SOCK` environment and still passes `PassWord` to the original nested-prompt handler;
+4. passes `app_config.continue_without_resume` to `ssh_command()` for every attempt, with Pexpect controlling Syncoid in both agent and non-agent modes; agent mode only adds the isolated `SSH_AUTH_SOCK` environment and still passes `PassWord` to the original nested-prompt handler;
 5. leaves stale interrupted-receive recovery inside the same Syncoid process instead of constructing a second resume-bypass command;
 6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every ordinary Broken Pipe retry;
 7. records and skips only that pair after its configured ordinary Broken Pipe retry allowance is exhausted;
 8. closes the child;
 9. converts signal termination to `128 + signal`;
-10. when a recognized missing dataset/pool signature was observed, accepts only Syncoid exit `0` (its recursive disappeared-dataset case) or exit `2` (its normal missing source/pool failure), records a `MissingDatasetFailure`, and continues to the next configured pair;
+10. when a recognized non-warning missing dataset/pool signature was observed, keeps the existing acceptance of Syncoid exit `0` or `2`, records a `MissingDatasetFailure`, and continues to the next pair; a warning-only skip does not create missing-data evidence;
 11. preserves any other real Syncoid exit code immediately, including a non-`0`/`2` exit after earlier missing-data text, so a later unrelated failure is not masked;
 12. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any other exit remains authoritative;
 13. adds each attempt's actual measured bytes to the run-level `ReplicationSummary` and ANDs its completeness flag into the run-level measurement status.
@@ -822,7 +817,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
 - Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
 - Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.33`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.34`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -850,7 +845,7 @@ Covers blank/comment filtering, quoted `: ` inside extra arguments, malformed qu
 
 ### `tests/test_syncoid_runner.py` — `SyncoidRunnerTests`
 
-`run_fake()` executes temporary fake Syncoid processes under the real Pexpect monitor. Tests cover command construction, private-agent-disabled behavior, secret no-echo refusal, missing-destroy status preservation, generic vs exact nonfatal warnings, benign `password`/`WARNINGS` text, real passphrase and OpenSSH password prompts, repeated normal send progress, Broken Pipe disabled/retry/exhaustion behavior, and repeated host-key prompts.
+`run_fake()` executes temporary fake Syncoid processes under the real Pexpect monitor. Tests cover command construction, private-agent-disabled behavior, secret no-echo refusal, missing-destroy status preservation, ignored warning lines, configurable resume-unavailable handling, streamed/unterminated warnings, preserved non-warning errors and signals, benign `password`/`WARNINGS` text, real passphrase and OpenSSH password prompts, repeated normal send progress, Broken Pipe disabled/retry/exhaustion behavior, and repeated host-key prompts.
 
 ### `tests/test_notifications.py` — `NotificationTests`
 
@@ -980,16 +975,15 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_extract_ssh_key_path_supports_both_forms_and_last_value()`: regression check that extract ssh key path supports both forms and last value.
 - `test_private_agent_disabled_yields_none()`: regression check that private agent disabled yields none.
 - `run_fake()`: runs a temporary fake Syncoid executable through the real Pexpect replication path.
-- `test_openssh_permanently_added_known_host_warning_is_nonfatal()`: verifies OpenSSH's normal first-contact known-hosts warning no longer trips generic warning failure handling.
+- `test_openssh_permanently_added_known_host_warning_is_nonfatal()`: verifies the general ignore policy includes OpenSSH known-hosts warnings.
 - `test_missing_dataset_exit_two_is_recorded_and_list_continues()`: verifies documented `dataset does not exist` output with Syncoid exit `2` records the failed pair and still executes the next configured pair.
 - `test_missing_pool_exit_two_is_recorded()`: verifies `cannot open 'pool': no such pool` uses the same deferred failure path.
 - `test_missing_pool_import_message_is_recorded()`: verifies OpenZFS's `cannot import 'pool': no such pool available` form is recognized by the same missing-pool path.
-- `test_other_syncoid_skipping_dataset_warning_remains_fatal_code_8()`: verifies unrelated `WARNING: Skipping dataset` messages keep the old immediate fatal code-`8` behavior.
-- `test_syncoid_missing_dataset_skip_warning_is_recorded_even_on_zero_exit()`: verifies Syncoid's recursive `dataset no longer exists` skip is recorded even when Syncoid itself exits `0`.
+- `test_skipping_dataset_warnings_are_ignored()`: verifies both ordinary and missing-dataset skip warnings leave the missing-data summary empty when Syncoid exits zero.
 - `test_missing_dataset_text_does_not_mask_unrelated_exit_code()`: verifies a later unrelated Syncoid exit code remains immediately fatal instead of being converted to deferred code `8`.
 - `test_missing_destroy_message_does_not_mask_unrelated_nonzero_exit()`: regression check that missing destroy message does not mask unrelated nonzero exit.
 - `test_missing_destroy_message_is_nonfatal_when_syncoid_exits_zero()`: regression check that missing destroy message is nonfatal when syncoid exits zero.
-- `test_generic_warning_remains_fatal()`: regression check that generic warning remains fatal.
+- `test_generic_warnings_are_ignored()`: verifies supported warning labels, case, and indentation do not cause failure.
 - `test_repeated_normal_sending_progress_is_not_mistaken_for_a_loop()`: regression check that repeated normal sending progress is not mistaken for a loop.
 - `test_run_replications_collects_actual_pv_bytes_across_streams()`: verifies the run-level summary accumulates actual byte counters from multiple Syncoid streams.
 - `test_exact_resume_unavailable_warning_remains_nonfatal()`: regression check that exact resume unavailable warning remains nonfatal.
@@ -1038,3 +1032,24 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_main_failure_still_sends_mail_when_error_mqtt_fails()`: runs the application error boundary with mocked replication and broker failures. Confirms one attempted MQTT error report, subsequent error email despite both success switches being false, and preservation of the original replication exit code.
 
 The `tests/test_config.py` Boolean checks exercise both success switches with true/false, yes/no, on/off, numeric, and mixed-case spellings; invalid values for either switch must fail startup validation.
+
+
+### Warning/resume regression checks
+
+- `test_continue_without_resume_defaults_true_and_validates_booleans()`: verifies default continuation, each supported Boolean spelling, and rejection of invalid configuration values before runtime.
+- `test_resume_unavailable_can_stop_or_continue()`: checks source, target, and combined-machine warnings with both policies; verifies the warning is registered and the stop policy raises code 4.
+- `test_continue_without_resume_preserves_real_nonzero_exit()`: proves allowing missing resume support does not hide a later non-zero Syncoid exit.
+- `test_warning_error_words_do_not_trigger_error_or_prompt_handlers()`: verifies warning bodies cannot trigger credential input, host-key answers, connection failures, missing-data recording, or Broken Pipe retries; ordinary warnings also produce no separate application warning logs.
+- `test_warning_chunks_and_unterminated_warning_are_consumed()`: verifies a warning arriving in several writes remains ignored through EOF without a newline.
+- `test_ignored_warnings_remain_in_raw_log_without_affecting_transfer_count()`: verifies raw `.out` retains warnings while a transfer-like warning does not create a false transfer or incomplete measurement.
+- `test_resume_warning_chunks_are_checked_at_eof()`: verifies unavailable resume support is still detected when its warning arrives in chunks and ends at EOF.
+- `test_nonwarning_errors_after_warning_still_fail()`: checks authentication and connection error codes after an ignored warning line.
+- `test_ignored_warning_preserves_exit_and_signal_failures()`: verifies actual non-zero and signal-derived exit codes remain failures after a warning.
+- `test_missing_dataset_warning_alone_does_not_reclassify_exit_two()`: verifies a warning-only skip followed by exit 2 stays a Syncoid failure with code 2 instead of becoming a deferred code-8 missing-data result.
+- `test_nonwarning_missing_dataset_after_warning_is_still_recorded()`: verifies a separate missing-data error retains deferred failure handling after a warning.
+- `test_reset_warning_preserves_nonwarning_broken_pipe_recovery()`: verifies silent reset bookkeeping protects Syncoid's recovery-related Broken Pipe from ordinary retry handling.
+- `test_fresh_send_restores_nonwarning_broken_pipe_retry_handling()`: verifies a fresh send clears recovery state so a later Broken Pipe follows the configured retry/skip policy.
+
+`SyncoidRunnerTests.run_fake()` accepts an optional logger so log-capture assertions retain their handlers while fake processes exercise the real Pexpect monitor.
+
+- `test_resume_required_stops_list_and_uses_error_notifications()`: runs a fake two-pair job through `main()` with continuation disabled. Verifies code 4, termination before the child/later pair writes its marker, no successful-run actions, and dispatch through both error-notification handlers despite disabled success switches.

@@ -153,6 +153,9 @@ def load_app_config(config_path: str) -> AppConfig:
     use_home_assistant = parse_boolean_option(raw_config, "Use_HomeAssistant")
     use_ssh_agent = parse_boolean_option(raw_config, "UseSSHAgent")
     retry_broken_pipe = parse_boolean_option(raw_config, "RetryBrokenPipe")
+    continue_without_resume = parse_boolean_option(
+        raw_config, "ContinueWithoutResume", fallback="Yes"
+    )
 
     # The legacy MQTT/HA outputs and the JSON status output are independent.
     # Validate every enabled channel before replication begins so a typo or a
@@ -259,6 +262,7 @@ def load_app_config(config_path: str) -> AppConfig:
         use_ssh_agent=use_ssh_agent,
         ssh_agent_key_lifetime_seconds=ssh_agent_key_lifetime_seconds,
         retry_broken_pipe=retry_broken_pipe,
+        continue_without_resume=continue_without_resume,
         broken_pipe_retry_count=broken_pipe_retry_count,
         broken_pipe_retry_wait_seconds=broken_pipe_retry_wait_seconds,
     )

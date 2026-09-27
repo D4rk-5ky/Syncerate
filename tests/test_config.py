@@ -51,6 +51,17 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(cfg.mqtt_json_status)
         self.assertIsNone(cfg.log_destination)
 
+    def test_continue_without_resume_defaults_true_and_validates_booleans(self):
+        self.assertTrue(self.load_text(BASE).continue_without_resume)
+        for value, expected in (("True", True), ("Yes", True), ("1", True),
+                                ("On", True), ("False", False), ("No", False),
+                                ("0", False), ("Off", False)):
+            with self.subTest(value=value):
+                cfg = self.load_text(BASE + f"ContinueWithoutResume = {value}\n")
+                self.assertEqual(cfg.continue_without_resume, expected)
+        with self.assertRaisesRegex(ValueError, "ContinueWithoutResume"):
+            self.load_text(BASE + "ContinueWithoutResume = maybe\n")
+
 
     def test_success_notification_switches_default_to_enabled_when_omitted(self):
         cfg = self.load_text(BASE)

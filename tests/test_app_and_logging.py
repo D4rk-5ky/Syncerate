@@ -303,6 +303,33 @@ class AppAndLoggingTests(unittest.TestCase):
             )
             self.assertEqual(main(["--conf", str(config)]), 0)
 
+    @mock.patch("syncerate.app.successfull_run")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_resume_required_stops_list_and_uses_error_notifications(self, mqtt, mail, success):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "later-pair-ran"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                "import pathlib, sys, time\n"
+                "if sys.argv[1] == 'pool/a':\n"
+                "    print('WARN: ZFS resume feature not available on target machine', flush=True)\n"
+                "    time.sleep(10)\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n",
+            )
+            config = self.write_config(
+                directory, script, "pool/a\npool/b\n", "backup/a\nbackup/b\n",
+                "ContinueWithoutResume = False\nSendMailOnSuccess = False\nSendMQTTOnSuccess = False",
+            )
+            self.assertEqual(main(["--conf", str(config)]), 4)
+            self.assertFalse(marker.exists())
+            success.assert_not_called()
+            mqtt.assert_called_once()
+            mail.assert_called_once()
+            self.assertEqual(mqtt.call_args.args[0].exit_code, 4)
+            self.assertEqual(mail.call_args.args[0].exit_code, 4)
+
 
     @mock.patch("syncerate.app.successfull_run")
     @mock.patch("syncerate.app.send_error_mail")

@@ -48,6 +48,7 @@ def make_config(**overrides: Any) -> AppConfig:
         "use_ssh_agent": False,
         "ssh_agent_key_lifetime_seconds": 3600,
         "retry_broken_pipe": False,
+        "continue_without_resume": True,
         "broken_pipe_retry_count": 1,
         "broken_pipe_retry_wait_seconds": 0,
     }
