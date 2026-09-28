@@ -208,7 +208,6 @@ class SyncoidRunnerTests(unittest.TestCase):
     def test_skipping_dataset_warnings_are_ignored(self):
         for warning in (
             "WARNING: Skipping dataset for another reason",
-            "WARNING: Skipping dataset (dataset no longer exists): pool/data...",
         ):
             with self.subTest(warning=warning):
                 summary = self.run_fake(f"print({warning!r}, flush=True)\n")
@@ -354,15 +353,99 @@ class SyncoidRunnerTests(unittest.TestCase):
                     )
                 self.assertEqual(caught.exception.exit_code, expected)
 
-    def test_missing_dataset_warning_alone_does_not_reclassify_exit_two(self):
-        with self.assertRaises(SyncerateError) as caught:
-            self.run_fake(
-                "import sys\n"
-                "print('WARNING: Skipping dataset (dataset no longer exists): pool/data...', flush=True)\n"
-                "sys.exit(2)\n"
-            )
-        self.assertEqual(caught.exception.exit_code, 2)
-        self.assertEqual(caught.exception.kind, "syncoid")
+    def test_runtime_missing_dataset_warning_records_failure_on_zero_or_two(self):
+        for code in (0, 2):
+            with self.subTest(code=code):
+                summary = self.run_fake(
+                    "import sys\n"
+                    "print('WARNING: Skipping dataset (dataset no longer exists): pool/data...', flush=True)\n"
+                    f"sys.exit({code})\n"
+                )
+                self.assertTrue(summary.has_missing_dataset_failure)
+
+    def test_upstream_missing_data_messages_continue_to_next_pair(self):
+        cases = [
+            ("CRITICAL ERROR: cannot open 'pool/missing': dataset does not exist", 2),
+            ("cannot open 'missingpool': no such pool", 2),
+            ("cannot open 'missingpool': no such pool or dataset", 2),
+            ("cannot import 'missingpool': no such pool available", 2),
+            ("CRITICAL ERROR: getzfsvalue pool/missing -p used: cannot open 'pool/missing': dataset does not exist", 2),
+            ("cannot create 'backup/missing': parent does not exist", 2),
+            ("cannot create 'missingpool/data': no such pool 'missingpool'", 2),
+            ("cannot receive incremental stream: destination 'backup/missing' does not exist", 1),
+            ("cannot receive new filesystem stream: destination 'missingpool' does not exist", 2),
+            ("WARNING: Skipping dataset (dataset no longer exists): pool/missing...", 0),
+            ("WARN: Skipping dataset (dataset no longer exists): pool/missing...", 2),
+        ]
+        for message, code in cases:
+            with self.subTest(message=message):
+                with tempfile.TemporaryDirectory() as td:
+                    marker = Path(td) / "later-ran"
+                    script = write_executable(
+                        Path(td) / "fake.py",
+                        "import pathlib, sys\n"
+                        "if sys.argv[1] == 'pool/missing':\n"
+                        f"    print({message!r}, flush=True)\n"
+                        f"    sys.exit({code})\n"
+                        f"pathlib.Path({str(marker)!r}).write_text('yes')\n",
+                    )
+                    pairs = [DatasetPair("pool/missing", "backup/missing", ()),
+                             DatasetPair("pool/later", "backup/later", ())]
+                    summary = run_replications(
+                        make_config(syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet"),
+                        no_logging_context(), pairs, None, make_logger(),
+                    )
+                    self.assertTrue(marker.exists())
+                    self.assertEqual(len(summary.missing_dataset_failures), 1)
+                    self.assertEqual(summary.missing_dataset_failures[0].messages, (message,))
+
+    def test_only_specific_missing_data_messages_allow_continuation(self):
+        for message in (
+            "CRITICAL ERROR: no datasets found",
+            "WARNING: Skipping dataset for another reason",
+            "cannot open 'pool/data@snapshot': dataset does not exist",
+            "cannot open 'pool/data#bookmark': dataset does not exist",
+            "cannot receive incremental stream: most recent snapshot does not match incremental source",
+            "cannot open 'pool/data': dataset does not exist in this explanatory text",
+            "DEBUG: cannot open 'pool/data': dataset does not exist",
+            "WARNING: cannot open 'pool/data': dataset does not exist",
+        ):
+            with self.subTest(message=message):
+                with self.assertRaises(SyncerateError) as caught:
+                    self.run_fake(f"import sys\nprint({message!r}, flush=True)\nsys.exit(2)\n")
+                self.assertEqual(caught.exception.exit_code, 2)
+                self.assertEqual(caught.exception.kind, "syncoid")
+
+    def test_missing_data_message_is_complete_across_chunks_and_eof(self):
+        summary = self.run_fake(
+            "import sys, time\n"
+            "for part in (\"CRITICAL ERROR: cannot open 'pool/data': \", 'dataset does not ', 'exist'):\n"
+            "    sys.stdout.write(part); sys.stdout.flush(); time.sleep(0.03)\n"
+            "sys.exit(2)\n"
+        )
+        self.assertEqual(summary.missing_dataset_failures[0].messages, (
+            "CRITICAL ERROR: cannot open 'pool/data': dataset does not exist",
+        ))
+
+    def test_missing_data_does_not_hide_authentication_or_unrelated_exit(self):
+        for tail, code in (("print('Permission denied', flush=True)", 5), ("sys.exit(42)", 42)):
+            with self.subTest(tail=tail):
+                with self.assertRaises(SyncerateError) as caught:
+                    self.run_fake(
+                        "import sys\n"
+                        "print(\"cannot open 'pool/data': dataset does not exist\", flush=True)\n"
+                        + tail + "\n"
+                    )
+                self.assertEqual(caught.exception.exit_code, code)
+
+    def test_missing_data_precedes_secondary_broken_pipe(self):
+        summary = self.run_fake(
+            "import sys\n"
+            "print(\"cannot open 'pool/data': dataset does not exist\", flush=True)\n"
+            "print('Broken pipe', flush=True)\n"
+            "sys.exit(2)\n", retry_broken_pipe=True,
+        )
+        self.assertTrue(summary.has_missing_dataset_failure)
 
     def test_nonwarning_missing_dataset_after_warning_is_still_recorded(self):
         summary = self.run_fake(
@@ -383,15 +466,16 @@ class SyncoidRunnerTests(unittest.TestCase):
         self.assertFalse(summary.has_broken_pipe_warning)
 
     def test_fresh_send_restores_nonwarning_broken_pipe_retry_handling(self):
-        summary = self.run_fake(
-            "import time\n"
-            "print('WARN: resetting partially receive state because the snapshot source no longer exists', flush=True)\n"
-            "print('INFO: Sending full', flush=True)\n"
-            "print('Broken pipe', flush=True)\n"
-            "time.sleep(10)\n",
-            retry_broken_pipe=True, broken_pipe_retry_count=0,
-        )
-        self.assertTrue(summary.has_broken_pipe_warning)
+        with self.assertRaises(SyncerateError) as caught:
+            self.run_fake(
+                "import time\n"
+                "print('WARN: resetting partially receive state because the snapshot source no longer exists', flush=True)\n"
+                "print('INFO: Sending full', flush=True)\n"
+                "print('Broken pipe', flush=True)\n"
+                "time.sleep(10)\n",
+                retry_broken_pipe=True, broken_pipe_retry_count=0,
+            )
+        self.assertEqual(caught.exception.exit_code, 2)
 
 
     def test_benign_password_word_in_output_does_not_trigger_secret_prompt(self):
@@ -437,7 +521,7 @@ class SyncoidRunnerTests(unittest.TestCase):
             )
         self.assertEqual(cm.exception.exit_code, 23)
 
-    def test_broken_pipe_retry_count_is_per_dataset_and_exhaustion_is_warning_success(self):
+    def test_broken_pipe_exhaustion_stops_list_after_configured_retries(self):
         with tempfile.TemporaryDirectory() as td:
             counter = Path(td) / "counter"
             script = write_executable(
@@ -460,15 +544,16 @@ class SyncoidRunnerTests(unittest.TestCase):
                 broken_pipe_retry_wait_seconds=0,
             )
             pair = DatasetPair("pool/data", "backup/data", ())
-            summary = run_replications(
-                cfg,
-                no_logging_context(),
-                [pair],
-                None,
-                make_logger("broken-pipe-retry"),
-            )
-            self.assertTrue(summary.has_broken_pipe_warning)
-            self.assertEqual(summary.broken_pipe_failed_datasets, [pair])
+            with self.assertRaises(SyncerateError) as caught:
+                run_replications(
+                    cfg,
+                    no_logging_context(),
+                    [pair, DatasetPair("pool/later", "backup/later", ())],
+                    None,
+                    make_logger("broken-pipe-retry"),
+                )
+            self.assertEqual(caught.exception.exit_code, 2)
+            self.assertIn("Broken Pipe retries exhausted", caught.exception.message)
             self.assertEqual(counter.read_text(), "2")
 
     def test_repeated_host_key_prompt_fails_code_9(self):

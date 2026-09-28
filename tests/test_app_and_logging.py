@@ -303,6 +303,33 @@ class AppAndLoggingTests(unittest.TestCase):
             )
             self.assertEqual(main(["--conf", str(config)]), 0)
 
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.resolve_password")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_preflight_mismatch_stops_before_any_replication(self, mqtt, mail, password, replicate):
+        for sources, destinations in (
+            ("pool/good\npool/a\n", "backup/good\nbackup/b\n"),
+            ("pool/a\npool/b\n", "backup/a\n"),
+            ("pool/a/\n", "backup/a/\n"),
+        ):
+            with self.subTest(sources=sources, destinations=destinations):
+                mqtt.reset_mock(); mail.reset_mock()
+                with tempfile.TemporaryDirectory() as td:
+                    directory = Path(td)
+                    marker = directory / "must-not-run"
+                    script = write_executable(
+                        directory / "fake.py",
+                        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+                    )
+                    config = self.write_config(directory, script, sources, destinations)
+                    self.assertEqual(main(["--conf", str(config)]), 1)
+                    self.assertFalse(marker.exists())
+                    replicate.assert_not_called()
+                    password.assert_not_called()
+                    self.assertEqual(mqtt.call_args.args[0].exit_code, 1)
+                    self.assertEqual(mail.call_args.args[0].exit_code, 1)
+
     @mock.patch("syncerate.app.successfull_run")
     @mock.patch("syncerate.app.send_error_mail")
     @mock.patch("syncerate.app.send_mqtt_failure_status")

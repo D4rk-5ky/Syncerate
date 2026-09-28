@@ -16,6 +16,19 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.35
+
+Previous version: `0.4.34`.
+
+- Preserved preflight validation unchanged: all dataset-pair final names and list lengths must match, and empty lists/trailing slashes are rejected before any Syncoid process or credential work. Added application-level checks proving even a mismatch after a valid pair blocks the entire run.
+- Restored the narrowly matched Syncoid disappeared-dataset warning as runtime missing-data evidence. Other warnings remain ignored, subject to the existing resume-unavailable policy.
+- Verified exact English diagnostics and error flow against pinned upstream Syncoid/OpenZFS source; documented source links. Added complete-line matching for missing source/pool, missing destination parent/pool, receive-destination errors, and Syncoid's property-query error wrapper. Excluded snapshot/bookmark names, generic no-datasets/skip messages, debug echoes, and message-prefix false positives.
+- Required matching runtime missing-data evidence before accepting Syncoid exits 0, 1, or 2 as deferred failures. Exit 1 covers upstream incremental-transfer failure paths; codes alone never grant continuation. Authentication/connection failures, signals, and other exit codes keep their fatal behavior.
+- Added EOF handling for complete unterminated missing-data diagnostics. Preserved complete reasons for email/MQTT summaries. A Broken Pipe following confirmed missing-data evidence waits for Syncoid's final status rather than starting an unrelated retry.
+- Changed exhausted ordinary Broken Pipe retries to stop the whole run with exit 2, as requested. Zero retries stops on the first ordinary Broken Pipe. Successful retries can still continue normally. Retained existing summary/notification compatibility fields and functions, but normal execution no longer emits Broken Pipe warning-success results.
+- Reused the existing deferred-failure summary and application error boundary: after the remaining list runs, any recorded missing-data pair produces exit 8 and enabled error mail/MQTT, even with success switches false. Successful system actions are not run. Added a full application test checking actual constructed mail content and MQTT payloads after two missing-data failures and a later successful pair.
+- Updated current-use README, all-options configuration comments, function/command map, version metadata, build-version expectation, and regression tests. All original files and existing disclaimer preserved.
+
 ## 0.4.34
 
 Previous version: `0.4.33`.

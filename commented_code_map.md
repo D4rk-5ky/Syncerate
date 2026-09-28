@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.34`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.35`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -84,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.34"
+VERSION = "0.4.35"
 __version__ = VERSION
 ```
 
@@ -98,7 +98,7 @@ This module contains shared exit codes and the application exception. Keeping th
 
 - `EXIT_OK = 0`: successful run.
 - `EXIT_LIST_ERROR = 1`: source/destination parsing or validation failed.
-- `EXIT_SCRIPT_ERROR = 2`: unexpected application/Python failure.
+- `EXIT_SCRIPT_ERROR = 2`: application/configuration failure or exhausted ordinary Broken Pipe retries.
 - `EXIT_WARNING = 4`: resume support is unavailable and `ContinueWithoutResume` is false.
 - `EXIT_PASSWORD_DENIED = 5`: password, SSH permission, or ZFS permission failure.
 - `EXIT_CONNECTION_TIMEOUT = 6`: remote connection timed out.
@@ -212,11 +212,11 @@ Immutable record for one configured `DatasetPair` that encountered a recognized 
 
 ### `ReplicationSummary`
 
-Carries aggregate state for the processed dataset list. Its `broken_pipe_failed_datasets` list contains every `DatasetPair` skipped after exhausting its independently configured Broken Pipe retries, while `missing_dataset_failures` contains `MissingDatasetFailure` records for pairs that hit the continue-but-fail missing-data path. `has_broken_pipe_warning` identifies the existing warning-success case; `has_missing_dataset_failure` identifies a completed-list failure that must return exit code `8`. `transferred_bytes` accumulates actual Syncoid/`pv` bytes across attempts, and `transfer_measurement_complete` remains true only when every started Syncoid send stream supplied a usable byte counter.
+Carries aggregate state for the processed dataset list. Its `broken_pipe_failed_datasets` list is retained for compatibility with callers constructing summaries; current execution stops on retry exhaustion and does not populate that list, while `missing_dataset_failures` contains `MissingDatasetFailure` records for pairs that hit the continue-but-fail missing-data path. `has_broken_pipe_warning` identifies that compatibility case for externally constructed summaries; `has_missing_dataset_failure` identifies a completed-list failure that must return exit code `8`. `transferred_bytes` accumulates actual Syncoid/`pv` bytes across attempts, and `transfer_measurement_complete` remains true only when every started Syncoid send stream supplied a usable byte counter.
 
 #### `has_broken_pipe_warning`
 
-Returns true when at least one pair exhausted Broken Pipe retries and was skipped under the existing warning-success policy.
+Returns whether the compatibility `broken_pipe_failed_datasets` list is nonempty. Current runtime does not populate it; notification helpers still accept externally constructed summaries.
 
 #### `has_missing_dataset_failure`
 
@@ -423,7 +423,7 @@ This module contains all optional email, MQTT, and Home Assistant behavior.
 
 ### `BROKEN_PIPE_SUCCESS_SUBJECT`
 
-Stores the exact requested warning-success email subject: `Syncerate Succsful - WARNING BROKEN PIPE`. Keeping it in one constant prevents the logged/body wording and mail subject from drifting apart.
+Retains the compatibility email subject for callers supplying a Broken Pipe warning summary: `Syncerate Succsful - WARNING BROKEN PIPE`. Keeping it in one constant prevents the logged/body wording and mail subject from drifting apart.
 
 ### `backup_header_text(app_config)`
 
@@ -431,7 +431,7 @@ Builds the legacy optional backup-title/comment email prefix. It remains public 
 
 ### `run_summary_header_text(app_config, runtime_seconds, replication_summary=None)`
 
-Builds the email header from the shared `format_final_run_summary()` formatter whenever a runtime is supplied, followed by the normal separator. Success/warning-success callers pass their completed `ReplicationSummary`, so email gets the same title/blank-line/comment/blank-line/transfer-total/runtime layout already written to terminal and `.log`. Failure callers omit the replication summary because an interrupted run cannot claim a complete total. If a legacy/manual caller supplies no runtime, it falls back to `backup_header_text()` rather than dropping the old metadata.
+Builds the email header from the shared `format_final_run_summary()` formatter whenever a runtime is supplied, followed by the normal separator. Success callers (including compatibility warning-summary callers) pass their completed `ReplicationSummary`, so email gets the same title/blank-line/comment/blank-line/transfer-total/runtime layout already written to terminal and `.log`. Failure callers omit the replication summary because an interrupted run cannot claim a complete total. If a legacy/manual caller supplies no runtime, it falls back to `backup_header_text()` rather than dropping the old metadata.
 
 ### `send_mail(subject, body, recipient, attachment_files=None)`
 
@@ -452,13 +452,13 @@ Logs whether the local mail program accepted the message. It keeps the existing 
 Builds the current success and failure message variants:
 
 - successful run;
-- successful run with skipped datasets after exhausting their Broken Pipe retry allowance;
+- a Broken Pipe warning summary supplied by a compatibility caller (current execution stops on retry exhaustion);
 - missing ZFS dataset/pool failure after the remaining list has completed;
 - script error;
 - Syncoid error;
 - MQTT error.
 
-When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. Successful/warning-success calls pass `ReplicationSummaryData`, and the special missing-data failure also passes it because the list has deliberately finished. That missing-data mail uses an explicit subject, reports exit code `8`, lists every affected source/destination pair plus its matched ZFS/Syncoid reason, and can include the completed transfer total. Other interrupted error variants omit the summary so they do not present a possibly incomplete total. When a completed run carries a Broken Pipe warning, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
+When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. Successful calls pass `ReplicationSummaryData`, and the special missing-data failure also passes it because the list has deliberately finished. That missing-data mail uses an explicit subject, reports exit code `8`, lists every affected source/destination pair plus its matched ZFS/Syncoid reason, and can include the completed transfer total. Other interrupted error variants omit the summary so they do not present a possibly incomplete total. For compatibility callers supplying a Broken Pipe warning summary, the subject is exactly `Syncerate Succsful - WARNING BROKEN PIPE`. The body reports the configured per-dataset retry count and wait time, then lists each skipped dataset pair. When logging is enabled it attaches available `.log`, `.err`, and `.out` files. When logging is disabled it sends a text-only message. It does not call `sys.exit()`.
 
 ### `mqtt_error_output(error, max_chars=4000)`
 
@@ -480,7 +480,7 @@ Builds the structured Home Assistant status JSON. The payload contains:
 - `skipped_datasets`;
 - `failed_datasets`.
 
-The configured `SyncoidCommand` is deliberately excluded from MQTT JSON so connection endpoints, key paths, and command options are not exposed to MQTT subscribers. Broken Pipe warning-success runs are still successful, while the warning flag and skipped dataset list preserve the nonfatal detail. Missing dataset/pool runs publish `status: failure`, exit code `8`, and structured source/destination/reason objects in `failed_datasets`. `json.dumps()` is used instead of hand-built JSON so quotes, newlines, and non-ASCII text are escaped correctly.
+The configured `SyncoidCommand` is deliberately excluded from MQTT JSON so connection endpoints, key paths, and command options are not exposed to MQTT subscribers. For compatibility callers supplying a Broken Pipe warning summary, the payload retains the success status, warning flag, and skipped dataset list. Current execution stops with code `2` on retry exhaustion and publishes a failure. Missing dataset/pool runs publish `status: failure`, exit code `8`, and structured source/destination/reason objects in `failed_datasets`. `json.dumps()` is used instead of hand-built JSON so quotes, newlines, and non-ASCII text are escaped correctly.
 
 ### `send_mqtt_messages(app_config, logger, *, success=True, exit_code=0, error_message="", stderr_text="", replication_summary=None)`
 
@@ -494,7 +494,7 @@ Important behavior:
 4. On that same legacy path, validated `app_config.use_home_assistant` additionally publishes retained payload `online` to `HomeAssistant_Available`, preserving historical behavior without reparsing the raw Boolean.
 5. `MQTT_JSON_Status = Yes` independently publishes structured success/failure JSON to `mqtt_json_topic` with `retain=False` hard-coded. JSON never replaces or shares the old retained topic.
 6. When `Use_MQTT` is enabled without `MQTT_JSON_Status`, failures use the same JSON payload on the exact `mqtt_topic` plus `/error`. The derived subtopic keeps retained success/HA consumers separate. When JSON status is enabled, its dedicated topic takes precedence and no duplicate error is published.
-7. `app.successfull_run()` calls this function for successful/warning-success runs only when `send_mqtt_on_success` is true. The notification function itself still accepts `success=False` for the independent failure path.
+7. `app.successfull_run()` calls this function for successful runs only when `send_mqtt_on_success` is true. The notification function itself still accepts `success=False` for the independent failure path.
 8. Fatal failure calls produce only JSON status; the old success-only MQTT and HA availability signals are not emitted for a failed run.
 9. Publish/dependency failures still raise `SyncerateError` with exit code `10`.
 
@@ -680,7 +680,7 @@ Warning behavior:
 
 1. Read the whole line through `read_warning_line()` before classifying its contents.
 2. If the warning body begins `ZFS resume feature not available`, log it. Continue when `continue_without_resume` is true; otherwise terminate the child through `die()` with code 4. The normal application error boundary then handles error notifications.
-3. Ignore all other warning lines for failure detection, including missing-dataset skip, cleanup, and known-host warnings. They do not enter failure summaries or receive separate application warning logs.
+3. Recognize only the exact disappeared-dataset skip warning as missing-data evidence, record its full text, and wait for the real child status. Ignore other ordinary warning lines, including generic skips, cleanup, and known-host warnings.
 4. Retain silent bookkeeping for Syncoid's stale receive-state reset announcement. This preserves the existing handling of a subsequent non-warning Broken Pipe during recovery; the warning itself never fails the run.
 5. Exclude warning text from transfer accounting while preserving the preceding line boundary, so words resembling transfer headings cannot change the byte total. Raw `.out` capture remains intact.
 
@@ -691,11 +691,11 @@ Non-warning behavior remains:
 - Permission denied, connection timeout, and connection refusal use codes 5, 6, and 7.
 - The known missing destroy-snapshot message is remembered without masking a later non-zero exit.
 - Missing stale-resume source output marks recovery active. Fresh `INFO: Sending incremental/full` output clears it.
-- A non-warning Broken Pipe follows the existing recovery and optional retry policy.
-- Non-warning `cannot open/import` missing dataset/pool signatures, with optional `CRITICAL ERROR:` prefix, record deferred missing-data evidence.
+- A non-warning Broken Pipe follows recovery and optional retry handling. When missing-data evidence is already recorded, wait for the actual child status instead of treating its secondary Broken Pipe as a separate retry condition.
+- Complete non-warning missing dataset/pool and destination-parent/receive errors matching `_ZFS_MISSING_DATASET_OR_POOL_TEXT` record deferred failure evidence. EOF checks the remaining unterminated lines using the same expression. Generic no-datasets messages and missing snapshots/bookmarks do not qualify.
 - EOF returns the actual child and attempt summary; `run_replications()` checks its exit status or signal.
 
-Only automatically answered interactive host-key/password/passphrase patterns are limited to five matches. Warnings and normal transfer progress have no repetition limit. Error-looking text within a warning is ignored, but a following separate non-warning error is handled normally.
+Only automatically answered interactive host-key/password/passphrase patterns are limited to five matches. Warnings and normal transfer progress have no repetition limit. Error-looking text within an ordinary warning is ignored, but a following separate non-warning error is handled normally.
 
 ### `run_replications(app_config, run_context, dataset_pairs, password, logger, ssh_agent_session=None)`
 
@@ -709,11 +709,11 @@ For each pair it:
 4. passes `app_config.continue_without_resume` to `ssh_command()` for every attempt, with Pexpect controlling Syncoid in both agent and non-agent modes; agent mode only adds the isolated `SSH_AUTH_SOCK` environment and still passes `PassWord` to the original nested-prompt handler;
 5. leaves stale interrupted-receive recovery inside the same Syncoid process instead of constructing a second resume-bypass command;
 6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every ordinary Broken Pipe retry;
-7. records and skips only that pair after its configured ordinary Broken Pipe retry allowance is exhausted;
+7. raises a script error with code `2` when ordinary Broken Pipe retries are exhausted, stopping the whole list; zero retries fails on the first ordinary Broken Pipe;
 8. closes the child;
 9. converts signal termination to `128 + signal`;
-10. when a recognized non-warning missing dataset/pool signature was observed, keeps the existing acceptance of Syncoid exit `0` or `2`, records a `MissingDatasetFailure`, and continues to the next pair; a warning-only skip does not create missing-data evidence;
-11. preserves any other real Syncoid exit code immediately, including a non-`0`/`2` exit after earlier missing-data text, so a later unrelated failure is not masked;
+10. only when a recognized runtime missing-data error or the exact disappeared-dataset warning was observed, accepts Syncoid exit `0`, `1`, or `2`, records a `MissingDatasetFailure`, and continues to the next pair; exit codes alone never permit continuation;
+11. preserves any other real Syncoid exit code immediately, including an exit outside `0`/`1`/`2` after earlier missing-data text, so a later unrelated failure is not masked;
 12. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any other exit remains authoritative;
 13. adds each attempt's actual measured bytes to the run-level `ReplicationSummary` and ANDs its completeness flag into the run-level measurement status.
 
@@ -735,7 +735,7 @@ List validation already writes its detailed message in `datasets.py`, so it is n
 
 ### `successfull_run(app_config, run_context, logger, replication_summary=None, runtime_seconds=None)`
 
-Runs the post-transfer order and uses `ReplicationSummary` to select normal success or warning-success logging and notifications:
+Runs the post-transfer order after successful replication. For compatibility, callers can also supply a Broken Pipe warning summary to select warning text; current `main()` stops on retry exhaustion before reaching this function:
 
 1. append successful-run text to `.out` when enabled;
 2. when `send_mqtt_on_success` is true, publish original retained MQTT/optional HA success signals when `Use_MQTT` is enabled plus independent non-retained JSON success status when `MQTT_JSON_Status` is enabled; when false, skip every successful-run MQTT publish without changing the configured failure path;
@@ -817,7 +817,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
 - Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
 - Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.34`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.35`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -845,11 +845,11 @@ Covers blank/comment filtering, quoted `: ` inside extra arguments, malformed qu
 
 ### `tests/test_syncoid_runner.py` — `SyncoidRunnerTests`
 
-`run_fake()` executes temporary fake Syncoid processes under the real Pexpect monitor. Tests cover command construction, private-agent-disabled behavior, secret no-echo refusal, missing-destroy status preservation, ignored warning lines, configurable resume-unavailable handling, streamed/unterminated warnings, preserved non-warning errors and signals, benign `password`/`WARNINGS` text, real passphrase and OpenSSH password prompts, repeated normal send progress, Broken Pipe disabled/retry/exhaustion behavior, and repeated host-key prompts.
+`run_fake()` executes temporary fake Syncoid processes under the real Pexpect monitor. Tests cover command construction, private-agent-disabled behavior, secret no-echo refusal, missing-destroy status preservation, ignored warning lines, configurable resume-unavailable handling, streamed/unterminated warnings, preserved non-warning errors and signals, benign `password`/`WARNINGS` text, real passphrase and OpenSSH password prompts, repeated normal send progress, Broken Pipe retry and fatal exhaustion behavior, and repeated host-key prompts.
 
 ### `tests/test_notifications.py` — `NotificationTests`
 
-Covers the runtime-aware email summary header, JSON warning-success/skipped-pair payloads, failure payload contents, bounded MQTT stderr extraction, actual publish arguments for each MQTT mode, independent success switches, disabled channels, and verifies that `SendMailOnSuccess`/`SendMQTTOnSuccess` never suppress their corresponding configured error-notification paths.
+Covers the runtime-aware email summary header, compatibility JSON warning-summary/skipped-pair payloads, failure payload contents, bounded MQTT stderr extraction, actual publish arguments for each MQTT mode, independent success switches, disabled channels, and verifies that `SendMailOnSuccess`/`SendMQTTOnSuccess` never suppress their corresponding configured error-notification paths.
 
 ### `tests/test_packaging.py` — `PackagingTests`
 
@@ -979,7 +979,7 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_missing_dataset_exit_two_is_recorded_and_list_continues()`: verifies documented `dataset does not exist` output with Syncoid exit `2` records the failed pair and still executes the next configured pair.
 - `test_missing_pool_exit_two_is_recorded()`: verifies `cannot open 'pool': no such pool` uses the same deferred failure path.
 - `test_missing_pool_import_message_is_recorded()`: verifies OpenZFS's `cannot import 'pool': no such pool available` form is recognized by the same missing-pool path.
-- `test_skipping_dataset_warnings_are_ignored()`: verifies both ordinary and missing-dataset skip warnings leave the missing-data summary empty when Syncoid exits zero.
+- `test_skipping_dataset_warnings_are_ignored()`: verifies a generic skip warning is ignored; only the exact disappeared-dataset report is deferred as missing data.
 - `test_missing_dataset_text_does_not_mask_unrelated_exit_code()`: verifies a later unrelated Syncoid exit code remains immediately fatal instead of being converted to deferred code `8`.
 - `test_missing_destroy_message_does_not_mask_unrelated_nonzero_exit()`: regression check that missing destroy message does not mask unrelated nonzero exit.
 - `test_missing_destroy_message_is_nonfatal_when_syncoid_exits_zero()`: regression check that missing destroy message is nonfatal when syncoid exits zero.
@@ -993,7 +993,7 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_typical_openssh_password_prompt_with_password_disabled_fails_code_5()`: regression check that typical openssh password prompt with password disabled fails code 5.
 - `test_password_prompt_with_password_disabled_fails_code_5()`: regression check that password prompt with password disabled fails code 5.
 - `test_broken_pipe_disabled_preserves_real_nonzero_exit()`: regression check that broken pipe disabled preserves real nonzero exit.
-- `test_broken_pipe_retry_count_is_per_dataset_and_exhaustion_is_warning_success()`: regression check that broken pipe retry count is per dataset and exhaustion is warning success.
+- `test_broken_pipe_exhaustion_stops_list_after_configured_retries()`: verifies the configured retry count is honored and exhaustion raises code 2 before later pairs start.
 - `test_repeated_host_key_prompt_fails_code_9()`: regression check that repeated host key prompt fails code 9.
 
 - `test_main_missing_dataset_continues_list_then_reports_failure_code_8()`: end-to-end check that `main()` continues later pairs, skips the success stage, forwards the completed missing-data summary to MQTT/mail failure handling, and returns exit code `8`.
@@ -1025,7 +1025,7 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `NotificationTests.setUp()`: installs a temporary in-memory Paho module with a mocked `publish.multiple` and registers cleanup. This lets tests inspect the real publisher's payload, routing, and retain settings without network access or the optional MQTT dependency.
 - `NotificationTests.mqtt_config(**overrides)`: builds valid broker/topic settings around the shared `make_config()` helper so tests exercise realistic routing without duplicating application configuration logic.
 - `test_error_publish_routing_ignores_success_switch()`: checks both switch values across legacy-only, JSON-only, and combined MQTT. Confirms exactly one failure event, the expected topic, error details, QoS 0, and retain disabled.
-- `test_success_switches_are_independent_for_success_and_warning()`: checks every mail/MQTT success-switch combination for ordinary success and Broken Pipe warning-success. Verifies existing retained success/HA payloads and non-retained JSON behavior.
+- `test_success_switches_are_independent_for_success_and_warning()`: checks every mail/MQTT success-switch combination for ordinary success and an externally supplied compatibility Broken Pipe warning summary. Verifies existing retained success/HA payloads and non-retained JSON behavior.
 - `test_default_success_switches_send_enabled_channels()`: confirms enabled mail/MQTT send success messages when switch fields retain their default true values.
 - `test_disabled_channels_remain_silent_on_success_and_failure()`: confirms true success switches do not activate disabled master channels or error reporting.
 - `test_mqtt_errors_and_unavailable_config_do_not_republish()`: verifies the existing no-config and MQTT-recursion guards.
@@ -1045,11 +1045,32 @@ The `tests/test_config.py` Boolean checks exercise both success switches with tr
 - `test_resume_warning_chunks_are_checked_at_eof()`: verifies unavailable resume support is still detected when its warning arrives in chunks and ends at EOF.
 - `test_nonwarning_errors_after_warning_still_fail()`: checks authentication and connection error codes after an ignored warning line.
 - `test_ignored_warning_preserves_exit_and_signal_failures()`: verifies actual non-zero and signal-derived exit codes remain failures after a warning.
-- `test_missing_dataset_warning_alone_does_not_reclassify_exit_two()`: verifies a warning-only skip followed by exit 2 stays a Syncoid failure with code 2 instead of becoming a deferred code-8 missing-data result.
+- `test_runtime_missing_dataset_warning_records_failure_on_zero_or_two()`: verifies the exact runtime disappeared-dataset warning creates a deferred failure even when Syncoid exits zero.
 - `test_nonwarning_missing_dataset_after_warning_is_still_recorded()`: verifies a separate missing-data error retains deferred failure handling after a warning.
 - `test_reset_warning_preserves_nonwarning_broken_pipe_recovery()`: verifies silent reset bookkeeping protects Syncoid's recovery-related Broken Pipe from ordinary retry handling.
-- `test_fresh_send_restores_nonwarning_broken_pipe_retry_handling()`: verifies a fresh send clears recovery state so a later Broken Pipe follows the configured retry/skip policy.
+- `test_fresh_send_restores_nonwarning_broken_pipe_retry_handling()`: verifies a fresh send clears recovery state so a later Broken Pipe follows retry/fatal-exhaustion handling.
 
 `SyncoidRunnerTests.run_fake()` accepts an optional logger so log-capture assertions retain their handlers while fake processes exercise the real Pexpect monitor.
 
 - `test_resume_required_stops_list_and_uses_error_notifications()`: runs a fake two-pair job through `main()` with continuation disabled. Verifies code 4, termination before the child/later pair writes its marker, no successful-run actions, and dispatch through both error-notification handlers despite disabled success switches.
+
+
+### Runtime missing-data classification and source evidence
+
+- `_SYNCOID_MISSING_DATASET_EXIT_CODES`: permits deferred handling for exits 0, 1, and 2 only when the attempt also contains recognized missing-data evidence. Syncoid's recursive disappeared-source path can leave exit zero; initial/property-query and transfer paths use 1 or 2. Every other exit and terminating signal remains fatal.
+- `_ZFS_NAME`: matches a quoted dataset/pool name, excluding `@` and `#` so missing snapshots/bookmarks cannot activate the dataset/pool exception.
+- `_ZFS_MISSING_DATASET_OR_POOL_TEXT`: defines bounded complete English diagnostic shapes, including optional Syncoid critical/property-query wrappers. It recognizes missing datasets/pools on open/import, missing parents/pools on create, and explicit missing receive destinations. It intentionally excludes generic “no datasets found”, debug output, and arbitrary missing-text fragments.
+- `_ZFS_MISSING_DATASET_OR_POOL_RE`: applies the same expression to complete lines remaining at EOF; the live Pexpect matcher requires a physical line ending to avoid accepting an unfinished prefix of a different message.
+- `_SYNCOID_MISSING_DATASET_WARNING_RE`: full-matches the exact disappeared-dataset skip report, accepting current `WARNING` and compatible `WARN` labels. It is the narrowly scoped missing-data exception to ignoring ordinary warnings.
+
+Verified against [Syncoid revision d39b51a](https://github.com/jimsalterjrs/sanoid/blob/d39b51a013081e86bb26a6859866c34d98c39ea3/syncoid) (`syncdataset`, `getzfsvalue`, `writelog`, and transfer result handling), plus [OpenZFS dataset operations](https://github.com/openzfs/zfs/blob/1f380a4f34da6068d22960807f53cda68a356add/lib/libzfs/libzfs_dataset.c), [pool operations](https://github.com/openzfs/zfs/blob/1f380a4f34da6068d22960807f53cda68a356add/lib/libzfs/libzfs_pool.c), [error descriptions](https://github.com/openzfs/zfs/blob/1f380a4f34da6068d22960807f53cda68a356add/lib/libzfs/libzfs_util.c), and [receive operations](https://github.com/openzfs/zfs/blob/1f380a4f34da6068d22960807f53cda68a356add/lib/libzfs/libzfs_sendrecv.c). Source matching is based on English diagnostics; unrecognized/localized output falls back to normal process-exit handling.
+
+### Preflight/runtime boundary regression checks
+
+- `test_preflight_mismatch_stops_before_any_replication()`: checks mismatching final names after an initially valid pair, unequal list lengths, and trailing slashes. Confirms code 1 before credential resolution or replication and dispatch to the error-notification boundary.
+- `test_upstream_missing_data_messages_continue_to_next_pair()`: exercises source/pool, property wrapper, destination parent, incremental/new-filesystem receive, and disappeared-child reports using local fake processes. Verifies the next pair actually executes and the complete reason is recorded.
+- `test_only_specific_missing_data_messages_allow_continuation()`: rejects generic skips/no-datasets reports, snapshot/bookmark names, unrelated receive failures, debug echoes, arbitrary warning bodies, and extended text that only begins like a matching diagnostic.
+- `test_missing_data_message_is_complete_across_chunks_and_eof()`: verifies complete capture and classification of a split, unterminated error line.
+- `test_missing_data_does_not_hide_authentication_or_unrelated_exit()`: verifies authentication failures and exit 42 remain fatal after a missing-data report.
+- `test_missing_data_precedes_secondary_broken_pipe()`: verifies a Broken Pipe after confirmed missing-data evidence waits for final status instead of activating retries.
+- `test_completed_missing_data_run_sends_actual_error_mail_and_mqtt()`: executes three fake pairs through the real app/runner, including two missing-data failures and a later success. Captures actual generated email and MQTT JSON, verifying exit 8, both failed pairs, error delivery with success switches false, and no system action.

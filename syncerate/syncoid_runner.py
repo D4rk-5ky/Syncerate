@@ -50,7 +50,32 @@ _TRANSFER_START_RE = re.compile(
     r")"
 )
 
-_SYNCOID_MISSING_DATASET_EXIT_CODES = {0, 2}
+# Syncoid uses 0 for a disappeared recursive child, 1 for some incremental
+# failures, and 2 for initial/property-query failures. Never classify by exit
+# code alone; matching missing-data output is also required.
+_SYNCOID_MISSING_DATASET_EXIT_CODES = {0, 1, 2}
+
+# Full English OpenZFS error lines, optionally wrapped by Syncoid. Exclude
+# snapshot/bookmark names: a missing snapshot is not a missing dataset/pool.
+_ZFS_NAME = r"'[^'@#\r\n]+'"
+_ZFS_MISSING_DATASET_OR_POOL_TEXT = (
+    r"[ \t]*(?:CRITICAL ERROR:[ \t]*(?:getzfsvalue[ \t]+[^\r\n]*?:[ \t]*)?)?"
+    r"(?:"
+    r"cannot (?:open|import) " + _ZFS_NAME
+    + r": (?:dataset does not exist|no such pool(?: available| or dataset)?)"
+    r"|cannot create " + _ZFS_NAME
+    + r": (?:parent does not exist|no such pool " + _ZFS_NAME + r")"
+    r"|cannot receive (?:new filesystem|incremental|resume) stream: "
+    r"(?:destination " + _ZFS_NAME + r" does not exist|parent does not exist|no such pool " + _ZFS_NAME + r")"
+    r")[ \t]*"
+)
+_ZFS_MISSING_DATASET_OR_POOL_RE = re.compile(
+    _ZFS_MISSING_DATASET_OR_POOL_TEXT, re.IGNORECASE
+)
+_SYNCOID_MISSING_DATASET_WARNING_RE = re.compile(
+    r"WARN(?:ING)?[ \t]*:?[ \t]+Skipping dataset \(dataset no longer exists\):"
+    r"[ \t]+[^@#\r\n]+\.\.\.[ \t]*", re.IGNORECASE
+)
 
 
 _PV_PROGRESS_RE = re.compile(
@@ -844,7 +869,7 @@ def ssh_command(
         r"(?i)used in the initial send no longer exists",
         r"(?i)INFO: Sending (?:incremental|full)",
         r"(?i)broken pipe",
-        r"(?im)(?:^|[\r\n])(?:CRITICAL ERROR:[ \t]*)?(?:cannot open|cannot import) '[^'\r\n]+': (?:dataset does not exist|no such pool(?: available)?)[ \t]*",
+        r"(?im)(?:^|[\r\n])" + _ZFS_MISSING_DATASET_OR_POOL_TEXT + r"(?=[\r\n])",
         r"(?im)(?:^|[\r\n])[^\r\n]*\bpassword:\s*$",
     ]
 
@@ -885,7 +910,13 @@ def ssh_command(
             # Preserve the boundary of preceding progress output without
             # interpreting warning text as a transfer heading or pv counter.
             transfer_counter.feed("\n")
-            if re.search(
+            if _SYNCOID_MISSING_DATASET_WARNING_RE.fullmatch(warning_text):
+                missing_dataset_or_pool_detected = True
+                if warning_text not in missing_dataset_or_pool_messages:
+                    missing_dataset_or_pool_messages.append(warning_text)
+                logger.error("Syncoid reported a disappeared dataset: %s", warning_text)
+                logger.error("Recording this pair as failed; waiting for Syncoid to finish before continuing the list.")
+            elif re.search(
                 r"(?i)^WARN(?:ING)?[ \t]*:?[ \t]*ZFS resume feature not available\b",
                 warning_text,
             ):
@@ -970,6 +1001,14 @@ def ssh_command(
             )
 
         elif index == PATTERN_EOF:
+            # A final diagnostic need not have a newline. Match the entire
+            # remaining line, using the same narrow rules as the live matcher.
+            for line in safe_text(child.before).splitlines():
+                if _ZFS_MISSING_DATASET_OR_POOL_RE.fullmatch(line):
+                    missing_dataset_or_pool_detected = True
+                    message = line.strip()
+                    if message not in missing_dataset_or_pool_messages:
+                        missing_dataset_or_pool_messages.append(message)
             close_child_logfile(child, logger)
             return build_attempt_result(
                 child,
@@ -1012,6 +1051,9 @@ def ssh_command(
             continue
 
         elif index == PATTERN_BROKEN_PIPE:
+            if missing_dataset_or_pool_detected:
+                logger.info("Broken Pipe followed a missing dataset/pool error; waiting for Syncoid's final status.")
+                continue
             if stale_resume_recovery_active:
                 logger.warning("")
                 logger.warning(
@@ -1198,25 +1240,13 @@ def run_replications(
                     time.sleep(app_config.broken_pipe_retry_wait_seconds)
                     continue
 
-                summary.broken_pipe_failed_datasets.append(dataset_pair)
-
-                logger.warning("")
-                logger.warning("----------")
-                logger.warning("")
-                logger.warning(
-                    "Broken Pipe persisted for %s -> %s.",
-                    dataset_pair.source,
-                    dataset_pair.destination,
+                raise SyncerateError(
+                    "Broken Pipe retries exhausted for "
+                    f"{dataset_pair.source} -> {dataset_pair.destination} "
+                    f"after {app_config.broken_pipe_retry_count} retries; stopping the run.",
+                    EXIT_SCRIPT_ERROR,
+                    kind="script",
                 )
-                logger.warning(
-                    "The configured retry count of %s has been exhausted; skipping this dataset and continuing the list.",
-                    app_config.broken_pipe_retry_count,
-                )
-                logger.warning(
-                    "The final run remains successful but will carry a Broken Pipe warning."
-                )
-                logger.warning("")
-                break
 
 
             child.close()

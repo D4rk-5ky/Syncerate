@@ -1,6 +1,9 @@
 import json
 import configparser
 import types
+import tempfile
+import shlex
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -15,7 +18,7 @@ from syncerate.notifications import (
     send_error_mail,
     send_mqtt_failure_status,
 )
-from tests.helpers import make_config, make_logger, no_logging_context
+from tests.helpers import make_config, make_logger, no_logging_context, write_executable
 
 
 class NotificationTests(unittest.TestCase):
@@ -44,6 +47,51 @@ class NotificationTests(unittest.TestCase):
             "HomeAssistant_Available": "syncerate/available",
         }})
         return make_config(raw_config=raw, **overrides)
+
+    @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
+    @mock.patch("syncerate.app.SystemAction")
+    def test_completed_missing_data_run_sends_actual_error_mail_and_mqtt(self, action, mail):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            visited = directory / "visited"
+            source = directory / "sources"; dest = directory / "destinations"
+            source.write_text("pool/missing\npool/nopool\npool/good\n")
+            dest.write_text("backup/missing\nbackup/nopool\nbackup/good\n")
+            script = write_executable(
+                directory / "fake.py",
+                "import pathlib, sys\n"
+                f"with pathlib.Path({str(visited)!r}).open('a') as f: f.write(sys.argv[1] + '\\n')\n"
+                "if sys.argv[1] == 'pool/missing':\n"
+                "    print('WARNING: Skipping dataset (dataset no longer exists): pool/missing...', flush=True)\n"
+                "elif sys.argv[1] == 'pool/nopool':\n"
+                "    print(\"cannot open 'offlinepool': no such pool\", flush=True)\n"
+                "    sys.exit(2)\n",
+            )
+            cfg = self.mqtt_config(
+                source_list_path=str(source), destination_list_path=str(dest),
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
+                mail_option="user@example.test", use_mqtt=True,
+                send_mail_on_success=False, send_mqtt_on_success=False,
+                system_option="must-not-run",
+            )
+            with mock.patch("syncerate.app.load_app_config", return_value=cfg):
+                self.assertEqual(main(["-c", "mocked.cfg"]), 8)
+            self.assertEqual(visited.read_text().splitlines(), ["pool/missing", "pool/nopool", "pool/good"])
+            action.assert_not_called()
+            self.publish.assert_called_once()
+            messages = self.publish.call_args.args[0]
+            self.assertEqual(len(messages), 1)
+            self.assertFalse(messages[0]["retain"])
+            payload = json.loads(messages[0]["payload"])
+            self.assertEqual(payload["status"], "failure")
+            self.assertEqual(payload["exit_code"], 8)
+            self.assertEqual(len(payload["failed_datasets"]), 2)
+            mail.assert_called_once()
+            subject, body = mail.call_args.args[:2]
+            self.assertIn("Missing ZFS dataset or pool", subject)
+            self.assertIn("pool/missing -> backup/missing", body)
+            self.assertIn("pool/nopool -> backup/nopool", body)
+            self.assertIn("exit code 8", body)
 
     def test_error_publish_routing_ignores_success_switch(self):
         error = SyncerateError("connection refused", 7, child_warning="SSH detail")
