@@ -2,13 +2,32 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.35`
+Current version: `0.4.37`
 
-## Disclaimer and liability notice
+## ⚠️ Disclaimer / Liability
 
-> **AI-assisted / vibe-coded experimental hobby software. Use at your own risk.**
+**Use this script at your own risk.**
 
-Syncerate is provided **“as is”**, without warranty of any kind. It has not been professionally audited and may contain bugs, unsafe behavior, data-loss risks, security problems, or incorrect assumptions.
+The author takes **no responsibility or liability** for any data loss, service disruption, misconfiguration, service outage, missed backups, credential exposure, or other damage that may occur from using this script.
+
+Before running it in production, you **must**:
+
+- Read the entire source code
+- Understand exactly what it does (and what it does *not* do)
+- Review and adapt it to your own environment
+- Test it carefully in a non-production setup
+
+By using this script, **you accept full responsibility** for its effects.
+
+⚠️ AI-assisted / vibe-coded experimental software. Use at your own risk.
+
+## Disclaimer
+
+This project is AI-assisted / vibe-coded software created as a hobby project. It has not been professionally audited and may contain bugs, unsafe behavior, data-loss issues, security problems, or incorrect assumptions.
+
+You are responsible for reviewing the code, testing it in a safe environment, making backups, and understanding what it does before using it on real data. The author is not responsible for damage, data loss, broken systems, security issues, or other problems caused by using this software.
+
+---
 
 ### Data-loss warning
 
@@ -74,6 +93,8 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
+**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.37 source release. Rebuild with `build_pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
+
 PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
 
 Run the packaged executable exactly like the Python entry point:
@@ -121,7 +142,7 @@ Syncerate has three application flags. `--conf`/`-c` is required for a normal re
 | --- | --- | --- |
 | `-c FILE`, `--conf FILE` | Yes for a normal run | Selects the required Syncerate INI configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. The selected file must contain the `[Syncerate Config]` section. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.35` and exits. The program name reflects the entry point used, for example `Syncerate.py 0.4.35` from the Python script or `Syncerate 0.4.35` from `dist/Syncerate`. It does not start a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.37` for the 0.4.37 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.37. The flag exits without starting a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -152,10 +173,11 @@ Use this to see the executable's current syntax and examples. No `--conf` argume
 
 ```bash
 ./Syncerate.py --version
+# After rebuilding the standalone executable for this release:
 ./dist/Syncerate --version
 ```
 
-No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename.
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.37 build.
 
 Run the packaged regression suite after installation or modification with:
 
@@ -466,8 +488,8 @@ Syncerate-<timestamp>.out
 ```
 
 - `.log` contains normal application messages.
-- `.err` contains ERROR-level application messages.
-- `.out` contains Syncoid process output.
+- `.err` contains ERROR-level application messages. For handled Syncoid/ZFS failures, Syncerate also copies a bounded tail of the relevant raw child output into `.err`, so the failure reason and nearby `mbuffer`/Syncoid/ZFS diagnostics are visible without opening `.out`.
+- `.out` contains the complete raw Syncoid process output captured by Pexpect.
 
 The timestamp is generated from `DateTime`, for example:
 
@@ -795,16 +817,16 @@ sudo zfs list -t snapshot
 | Stage/result | Behavior |
 | --- | --- |
 | Preflight list length/name mismatch, empty list, or trailing slash | Stop with exit `1` before any Syncoid command starts. |
-| Syncoid reports a specifically recognized missing dataset/pool during execution | Record that pair, wait for its final status, and continue to the next configured pair for recognized Syncoid exits `0`, `1`, or `2`. |
+| Syncoid reports a specifically recognized missing dataset/pool during execution | Record that pair and its raw failure context. For a definitive non-warning ZFS missing-data error, give Syncoid up to 5 seconds to unwind; if it remains stuck, stop only that already-failed attempt and continue the configured list. If it exits normally, exits `0`, `1`, or `2` remain the recognized continuation statuses. |
 | List completes with any recorded missing-data failures | Return exit `8`, attempt enabled error mail/MQTT with failed pairs and reasons, and skip successful-run system actions. |
 | Authentication, connection, other recognized fatal errors, or unrelated nonzero exits | Stop the list; retain their error handling. |
 | Ordinary Broken Pipe retries are exhausted | Stop with exit `2`; attempt enabled error notifications. |
 
 The missing-data exception requires specific runtime evidence. It recognizes complete English OpenZFS missing dataset/pool diagnostics from open/import operations, missing destination parents/pools during create operations, and explicit missing destinations reported by receive operations. Syncoid's `CRITICAL ERROR:` and property-query wrappers are supported. It also recognizes the exact disappeared-dataset skip warning, because Syncoid can emit that message without setting a nonzero exit code.
 
-Generic “no datasets found” text, generic skip warnings, missing snapshots/bookmarks, and arbitrary text containing “does not exist” do **not** qualify. A recognized missing-data message does not suppress later authentication/connection errors, terminating signals, or unrelated exits outside `0`, `1`, and `2`. Unknown/localized messages retain normal process-exit handling instead of being guessed as missing data.
+Generic “no datasets found” text, generic skip warnings, missing snapshots/bookmarks, and arbitrary text containing “does not exist” do **not** qualify. A recognized missing-data message does not suppress later authentication/connection errors or unrelated exits outside `0`, `1`, and `2` while Syncoid is still exiting normally. The one exception is the deliberate 5-second cleanup guard after a definitive non-warning missing-data diagnostic: if that already-failed Syncoid process does not exit, Syncerate terminates only that attempt so it cannot block every later dataset. Unknown/localized messages retain normal process-exit handling instead of being guessed as missing data.
 
-The final error notifications use the existing controls: error email requires `Mail` to contain a recipient; MQTT errors require `Use_MQTT` or `MQTT_JSON_Status`. `SendMailOnSuccess` and `SendMQTTOnSuccess` do not suppress errors. MQTT lists the affected pairs in `failed_datasets`; error email lists the pairs and captured reasons.
+The final error notifications use the existing controls: error email requires `Mail` to contain a recipient; MQTT errors require `Use_MQTT` or `MQTT_JSON_Status`. `SendMailOnSuccess` and `SendMQTTOnSuccess` do not suppress errors. MQTT lists the affected pairs in `failed_datasets`; error email lists the pairs and captured reasons. With file logging enabled, the `.err` attachment also contains bounded raw Syncoid/ZFS/mbuffer context around handled missing-data failures, while `.out` remains the complete raw stream.
 
 SSH prompt handling, repeated-prompt limits, stale receive recovery, and signal-derived exit codes remain active. First-contact host-key confirmation is automatically answered `yes`; prepopulate `known_hosts` or configure `StrictHostKeyChecking` when preverified keys are required.
 

@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.35`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.37`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -84,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.35"
+VERSION = "0.4.37"
 __version__ = VERSION
 ```
 
@@ -233,6 +233,7 @@ Returned by one monitored Syncoid attempt. It contains:
 - whether this attempt stopped after detecting an ordinary Broken Pipe;
 - whether recognized missing dataset/pool output was observed;
 - the matched missing dataset/pool messages for later per-pair reporting;
+- whether Syncerate had to force-stop an otherwise stuck Syncoid process after the bounded missing-data cleanup window;
 - the actual `pv` bytes observed during this attempt;
 - whether transfer measurement was complete for every started stream in this attempt.
 
@@ -664,9 +665,13 @@ Processes any final partial buffered line, commits the last stream, and returns 
 
 The counter measures bytes actually sent through Syncoid's stream pipeline. Repeated progress updates are not double-counted, while a Broken Pipe retry is a new attempt and therefore its actually retransmitted bytes are intentionally included in the run total.
 
-### `build_attempt_result(child, modified_command, transfer_counter, *, repeated_pattern, ignored_missing_destroy_snapshot, broken_pipe_detected=False, missing_dataset_or_pool_detected=False, missing_dataset_or_pool_messages=())`
+### `build_attempt_result(child, modified_command, transfer_counter, *, repeated_pattern, ignored_missing_destroy_snapshot, broken_pipe_detected=False, missing_dataset_or_pool_detected=False, missing_dataset_or_pool_messages=(), missing_dataset_cleanup_forced=False)`
 
-Finalizes the attempt's `TransferByteCounter` and constructs one `SyncoidAttemptResult` with process/error flags, recognized missing-data evidence, and measured byte fields. Centralizing this return path ensures EOF, Broken Pipe, and repetition-stop exits cannot forget to finalize accounting.
+Finalizes the attempt's `TransferByteCounter` and constructs one `SyncoidAttemptResult` with process/error flags, recognized missing-data evidence, forced-cleanup state, and measured byte fields. Centralizing this return path ensures EOF, Broken Pipe, missing-data timeout, and repetition-stop exits cannot forget to finalize accounting.
+
+### `log_failure_output_lines(logger, text, *, heading, max_lines=40)`
+
+Splits raw Pexpect child text on CR/LF boundaries, drops blank records, keeps only a bounded tail, and logs those lines at ERROR level. This deliberately duplicates useful Syncoid/ZFS/mbuffer failure context into `.err` while the complete raw stream remains in `.out`; the bound prevents a long progress stream from making `.err` unreasonably large.
 
 ### `read_warning_line(child, prefix)`
 
@@ -692,7 +697,8 @@ Non-warning behavior remains:
 - The known missing destroy-snapshot message is remembered without masking a later non-zero exit.
 - Missing stale-resume source output marks recovery active. Fresh `INFO: Sending incremental/full` output clears it.
 - A non-warning Broken Pipe follows recovery and optional retry handling. When missing-data evidence is already recorded, wait for the actual child status instead of treating its secondary Broken Pipe as a separate retry condition.
-- Complete non-warning missing dataset/pool and destination-parent/receive errors matching `_ZFS_MISSING_DATASET_OR_POOL_TEXT` record deferred failure evidence. EOF checks the remaining unterminated lines using the same expression. Generic no-datasets messages and missing snapshots/bookmarks do not qualify.
+- Complete non-warning missing dataset/pool and destination-parent/receive errors matching `_ZFS_MISSING_DATASET_OR_POOL_TEXT` record deferred failure evidence. The monitor immediately copies bounded preceding raw child context plus the exact matched line into ERROR logging, starts one fixed 5-second cleanup deadline, and does not extend that deadline if more missing-data lines arrive. EOF copies any trailing failure output (for example a receive failure) into `.err`. Generic no-datasets messages and missing snapshots/bookmarks do not qualify.
+- During that fixed cleanup window, ordinary authentication/connection/fatal pattern handling remains active. A secondary Broken Pipe remains part of the already-recognized missing-data failure. If Syncoid reaches EOF, its real exit status is preserved. If it does not exit before the deadline, Pexpect's timeout path force-terminates only that already-failed attempt and returns explicit `missing_dataset_cleanup_forced` state so the outer list cannot hang forever.
 - EOF returns the actual child and attempt summary; `run_replications()` checks its exit status or signal.
 
 Only automatically answered interactive host-key/password/passphrase patterns are limited to five matches. Warnings and normal transfer progress have no repetition limit. Error-looking text within an ordinary warning is ignored, but a following separate non-warning error is handled normally.
@@ -711,11 +717,12 @@ For each pair it:
 6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every ordinary Broken Pipe retry;
 7. raises a script error with code `2` when ordinary Broken Pipe retries are exhausted, stopping the whole list; zero retries fails on the first ordinary Broken Pipe;
 8. closes the child;
-9. converts signal termination to `128 + signal`;
-10. only when a recognized runtime missing-data error or the exact disappeared-dataset warning was observed, accepts Syncoid exit `0`, `1`, or `2`, records a `MissingDatasetFailure`, and continues to the next pair; exit codes alone never permit continuation;
-11. preserves any other real Syncoid exit code immediately, including an exit outside `0`/`1`/`2` after earlier missing-data text, so a later unrelated failure is not masked;
-12. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any other exit remains authoritative;
-13. adds each attempt's actual measured bytes to the run-level `ReplicationSummary` and ANDs its completeness flag into the run-level measurement status.
+9. when `ssh_command()` force-stopped a process that failed to exit within the fixed missing-data cleanup window, records that already-confirmed pair as `MissingDatasetFailure` and continues instead of converting the deliberate termination signal into a run-wide fatal error;
+10. otherwise, only when recognized runtime missing-data evidence was observed, accepts Syncoid exit `0`, `1`, or `2`, records a `MissingDatasetFailure`, and continues to the next pair; exit codes alone never permit continuation;
+11. converts other signal termination to `128 + signal`;
+12. preserves any other real Syncoid exit code immediately, including an exit outside `0`/`1`/`2` after earlier missing-data text, so a later unrelated failure is not masked;
+13. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any other exit remains authoritative;
+14. adds each attempt's actual measured bytes to the run-level `ReplicationSummary` and ANDs its completeness flag into the run-level measurement status.
 
 The function returns `ReplicationSummary`, including any accumulated missing-data failures, instead of raising code `8` immediately. This allows the remaining configured pairs to run before `app.main()` marks the overall run failed. `broken_pipe_retries_used` is initialized inside the dataset loop, so every dataset pair receives the full configured retry count independently. Bytes transferred by failed Broken Pipe attempts remain part of the total because those bytes really crossed the send pipeline before the retry; the replacement attempt contributes its own bytes separately. No transfer is started in parallel, preserving sequential behavior.
 
@@ -817,7 +824,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
 - Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
 - Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.35`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.37`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -873,12 +880,12 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
 - `Syncerate.spec`, `build_pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
-- `dist/Syncerate`: release artifact when a PyInstaller build has been produced; it is platform-specific and is intentionally not imported by source-mode tests.
+- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.37 executable and is not imported by source-mode tests; rebuild it with `build_pyinstaller.sh` for this release.
 - `config/example-Syncerate.cfg`: complete option example kept synchronized with the loader.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
 - Home Assistant YAML examples: legacy availability and JSON-status consumption examples.
 - `_layouts/default.html` / `_config.yaml`: GitHub Pages presentation files. Version 0.4.23 removed the unused jQuery 1.12.4 include because no project code uses it.
-- `config/destlist-bck` and the two PNGs are preserved original reference/example assets even though the Python runtime does not import them.
+- The two Home Assistant PNG screenshots are preserved reference/example assets even though the Python runtime does not import them.
 
 ## Exact test symbol index
 
@@ -1057,7 +1064,8 @@ The `tests/test_config.py` Boolean checks exercise both success switches with tr
 
 ### Runtime missing-data classification and source evidence
 
-- `_SYNCOID_MISSING_DATASET_EXIT_CODES`: permits deferred handling for exits 0, 1, and 2 only when the attempt also contains recognized missing-data evidence. Syncoid's recursive disappeared-source path can leave exit zero; initial/property-query and transfer paths use 1 or 2. Every other exit and terminating signal remains fatal.
+- `_SYNCOID_MISSING_DATASET_EXIT_CODES`: permits deferred handling for exits 0, 1, and 2 only when the attempt also contains recognized missing-data evidence. Syncoid's recursive disappeared-source path can leave exit zero; initial/property-query and transfer paths use 1 or 2. Other real exits/signals remain fatal unless Syncerate itself deliberately terminated an already-confirmed missing-data attempt after the cleanup deadline.
+- `_MISSING_DATASET_FINISH_TIMEOUT_SECONDS = 5.0`: fixed safety deadline after a definitive non-warning missing dataset/pool diagnostic. It gives Syncoid time to unwind normally but prevents a stuck zfs send/receive, mbuffer, or SSH pipeline from blocking all later pairs. It is deliberately internal rather than a user config option so the continue-on-missing-data safety rule is deterministic.
 - `_ZFS_NAME`: matches a quoted dataset/pool name, excluding `@` and `#` so missing snapshots/bookmarks cannot activate the dataset/pool exception.
 - `_ZFS_MISSING_DATASET_OR_POOL_TEXT`: defines bounded complete English diagnostic shapes, including optional Syncoid critical/property-query wrappers. It recognizes missing datasets/pools on open/import, missing parents/pools on create, and explicit missing receive destinations. It intentionally excludes generic “no datasets found”, debug output, and arbitrary missing-text fragments.
 - `_ZFS_MISSING_DATASET_OR_POOL_RE`: applies the same expression to complete lines remaining at EOF; the live Pexpect matcher requires a physical line ending to avoid accepting an unfinished prefix of a different message.
@@ -1069,6 +1077,8 @@ Verified against [Syncoid revision d39b51a](https://github.com/jimsalterjrs/sano
 
 - `test_preflight_mismatch_stops_before_any_replication()`: checks mismatching final names after an initially valid pair, unequal list lengths, and trailing slashes. Confirms code 1 before credential resolution or replication and dispatch to the error-notification boundary.
 - `test_upstream_missing_data_messages_continue_to_next_pair()`: exercises source/pool, property wrapper, destination parent, incremental/new-filesystem receive, and disappeared-child reports using local fake processes. Verifies the next pair actually executes and the complete reason is recorded.
+- `test_real_receive_missing_parent_output_is_copied_to_err_and_list_continues()`: reproduces the real-world receive failure shape with a transfer heading, `mbuffer` warning, CR-updated progress, missing destination parent, and receive failure. Verifies all useful diagnostics are copied into `.err` and the later pair executes.
+- `test_stuck_missing_dataset_attempt_is_stopped_then_list_continues()`: reproduces a child that prints a definitive missing-dataset error and then hangs. Patches the internal timeout short for the test, verifies only that child is terminated, and proves the next dataset still runs.
 - `test_only_specific_missing_data_messages_allow_continuation()`: rejects generic skips/no-datasets reports, snapshot/bookmark names, unrelated receive failures, debug echoes, arbitrary warning bodies, and extended text that only begins like a matching diagnostic.
 - `test_missing_data_message_is_complete_across_chunks_and_eof()`: verifies complete capture and classification of a split, unterminated error line.
 - `test_missing_data_does_not_hide_authentication_or_unrelated_exit()`: verifies authentication failures and exit 42 remain fatal after a missing-data report.

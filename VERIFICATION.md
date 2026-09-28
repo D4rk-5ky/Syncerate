@@ -1,46 +1,47 @@
-# Syncerate 0.4.30 verification
+# Syncerate 0.4.37 verification
 
-## Change and operation
+## Release scope
 
-The supplied log reports `cannot receive incremental stream: out of space`. The original monitor used an unlimited Pexpect wait without matching this diagnostic, so a stalled Syncoid pipeline never reached the existing error handler.
+The immediate baseline for this release is Syncerate `0.4.36`. This release increments exactly one patch step to `0.4.37`.
 
-The source release recognizes explicit space/quota diagnostics, stops the owned local process group, logs the failure, attempts enabled error notifications, skips later datasets/system actions, and returns **12**. Storage errors never become Broken Pipe warning-success. Existing intended snapshot-recovery exceptions remain supported; generic warning precedence was corrected to preserve those exceptions.
+This release fixes the missing-dataset/pool runtime path reported from a real Syncoid receive. Dataset-list preflight, normal successful replication, Broken Pipe retry policy, SSH credential handling, notification routing, and normal fatal-error handling remain unchanged.
 
-Error MQTT requires `MQTT_JSON_Status = Yes` and a dedicated `mqtt_json_topic`. `Use_MQTT` remains success-only. Email uses the configured `Mail` recipient. Each mail attempt/MQTT batch defaults to a 30-second deadline via optional positive-integer `NotificationTimeoutSeconds`; cleanup can add a few seconds. Existing configurations work without adding this option.
+The reported run validated all configured source/destination suffixes, then Syncoid reported a missing destination parent dataset. Syncerate recognized the missing-data failure but only wrote its generic interpretation to the `.err` log and could wait indefinitely for the already-failed Syncoid/mbuffer/SSH pipeline to finish before the outer dataset loop regained control.
+
+Version 0.4.37 therefore makes two narrow changes:
+
+- relevant raw Syncoid/ZFS/mbuffer output around a recognized missing-data failure is copied into normal ERROR logging, so it is present in the `.err` log as well as the complete raw `.out` stream;
+- after a definitive non-warning missing dataset/pool diagnostic, Syncoid receives a fixed 5-second cleanup window. If the failed child remains stuck, Syncerate stops only that failed attempt, records the pair as failed, and continues to the next configured pair. Authentication, connection, permission, and unrelated failures retain their fatal behavior.
+
+No user configuration option or CLI flag was added or renamed.
 
 ## Checks completed
 
-- 86 regression tests passed: the existing 70 tests plus 16 new storage-failure/notification cases. Real temporary PTY child processes exercise stuck receives, split messages, absent final newline, quota variants, storage-failure precedence, and a stubborn pipeline helper after its leader exits.
-- Failure-path integration verifies exit 12, error details in email with logs enabled/disabled, non-retained JSON failure, no next dataset, and no success-only system action.
-- The real source CLI and spawned notification workers delivered a failure packet to a local MQTT broker stub and invoked a fake local mail command with the correct recipient/body. No production notifications were sent.
-- Timeout tests cover a sleeping fake mail process and a local TCP listener that never answers MQTT CONNECT. Secondary MQTT failure preserves the original storage error and leaves the mail path available.
-- Compiled all 23 Python files without generating distributable bytecode. Bash syntax check passed for the build wrapper.
-- CLI checks passed: `--version` reports 0.4.30, `--help` exits 0, missing/unknown arguments exit 2, and a missing config exits 2.
-- Importing the compatibility entry point is silent and does not start application work.
-- All 27 available configuration options appear in the complete example and README. Every Python class/function name appears in the commented code map; the map explains the runtime functions, subprocess commands, and new test cases.
-- All original Python function/class names remain present. Previous VERSIONING entries remain unchanged.
-- The final package preserves all 40 original regular-file paths: 26 unchanged and 14 updated. Five new files bring the package to 45 files. No original file was removed.
-- Zip CRC, per-file SHA-256, permissions, manifest comparison, and absence of bytecode/build/cache/temporary entries are checked during packaging. `PACKAGE_MANIFEST.json` contains the original and release inventories and changed/added classifications; it excludes its own hash to avoid recursion.
+- Confirmed the source CLI reports `Syncerate.py 0.4.37` with `--version`.
+- Confirmed `--help` exits successfully and documents `--conf`/`-c`, `--help`/`-h`, and `--version`.
+- Confirmed invocation without the required config, an unknown flag, and a missing config file each return exit code `2`.
+- Confirmed importing `Syncerate.py` is silent and does not start application work.
+- Compiled all 21 Python source/test files successfully with `compileall`.
+- `bash -n build_pyinstaller.sh` passed.
+- All 116 regression tests passed when run in bounded groups: 69 application/config/dataset/notification/packaging/system-action tests plus all 47 Syncoid-runner tests. One larger Syncoid batch exceeded the execution environment's per-command time ceiling while its last test was running; that test and the remaining tests were rerun in smaller groups and all passed.
+- Added a regression using the real failure shape: mbuffer warning, `cannot open ... dataset does not exist`, and `cannot receive new filesystem stream: unable to restore to destination`. It verifies the raw context is copied to `.err` and that a later pair runs.
+- Added a regression whose failed Syncoid child intentionally sleeps for 30 seconds after the missing-dataset line. With the cleanup timeout shortened only inside the test, Syncerate terminates that already-failed attempt and executes the next pair.
+- Confirmed the shipped example config still contains 29 unique configuration keys and every key is documented in the current README.
+- Confirmed the existing executable permissions are preserved for `Syncerate.py`, `build_pyinstaller.sh`, and `dist/Syncerate`.
+- The final release tree preserves the same 41 regular-file paths as 0.4.36; no baseline project file is removed and no new runtime file is required.
+- `PACKAGE_MANIFEST.json` is regenerated from the 0.4.36 baseline versus the final 0.4.37 tree using SHA-256 hashes and stored Unix modes, with the manifest's own release hash excluded to avoid self-reference.
+- Packaging cleanup removes `__pycache__`, `.pyc`, `.pyo`, build cache/output created during verification, and temporary files before the final ZIP is produced.
 
-## Environment and limits
+## Standalone executable limitation
 
-Tests ran on macOS using Python 3.9, Pexpect 4.9.0, and Paho MQTT 2.1.0. Python dependencies were installed only in an isolated workspace test environment and are not bundled in the source archive.
+The preserved `dist/Syncerate` executable still reports `Syncerate 0.4.29`. It is an original project file and is **not** a 0.4.37 executable.
 
-Live Linux ZFS pool exhaustion, quotas, remote SSH/Syncoid, real SMTP/local mail delivery, production MQTT/Home Assistant, and Linux PyInstaller builds could not be tested here. Some macOS sandbox cleanup attempts logged permission errors when signalling already-terminated notification groups; the timeout tests still completed and the separate stubborn-helper heartbeat test verified termination. Linux process behavior needs a test on your host.
+This verification environment does not contain PyInstaller or Paho MQTT, so the standalone executable cannot be rebuilt here without installing dependencies. Use the 0.4.37 Python source entry point, or rebuild `dist/Syncerate` on a compatible Linux host with `build_pyinstaller.sh` before treating the standalone executable as version 0.4.37.
 
-This is explicit diagnostic detection, not a general silent-hang watchdog. Local process-group cleanup does not guarantee termination of detached groups, remote processes, or uninterruptible kernel I/O. Syncerate performs no new snapshot deletion, rollback, or forced receive-abort operation.
+## What was not fully tested
 
-## Run the fixed version
+No live ZFS pool, real Syncoid replication, remote SSH host, production MQTT broker/Home Assistant instance, local mail delivery, or real post-success system action was exercised. Those paths are covered by the regression suite using controlled child processes and mocked/stubbed external integrations.
 
-Use the source entry point from the extracted project:
+The real uploaded log was used to reproduce the missing-parent output pattern, but the exact remote host/pool state from that production run was not modified or replayed.
 
-```bash
-python3 Syncerate.py --version
-python3 Syncerate.py --conf /path/to/Syncerate.cfg
-```
-
-Keep the adjacent `syncerate/` package with `Syncerate.py`; copying only the entry point is insufficient. The README documents dependencies and rebuilding.
-
-**The supplied `dist/Syncerate` Linux x86-64 executable is preserved unchanged and does not contain the fix.** It must be rebuilt on a compatible Linux host to run this release as a standalone binary. Do not use that preserved binary to test the fix.
-
-Original binary SHA-256: `03fb943defa8b5b3be04663f8131704be807f523bf4d197f85e07be2c3f934bb`.
+The PyInstaller build itself was not executed because its required modules are unavailable in this environment. Platform-specific behavior of a newly rebuilt frozen executable therefore remains to be verified on the target build host.

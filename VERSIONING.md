@@ -16,6 +16,32 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.37
+
+Previous version: `0.4.36`.
+
+- Investigated a real run where all 65 source/destination suffix checks passed, then the first Syncoid receive reported a missing destination parent dataset and no later pair appeared to run.
+- Added a fixed 5-second cleanup deadline after a definitive non-warning missing dataset/pool diagnostic. Syncerate still gives Syncoid time to exit normally, but if the failed child/pipeline remains stuck it force-stops only that already-failed attempt and continues to the next configured pair.
+- Preserved safety handling during that cleanup window: authentication, permission, connection, and unrelated real nonzero exits remain fatal; the forced continuation applies only after narrowly recognized missing-data evidence.
+- Added explicit `missing_dataset_cleanup_forced` state to `SyncoidAttemptResult` so `run_replications()` can distinguish Syncerate's deliberate cleanup signal from an unrelated terminating signal.
+- Added `log_failure_output_lines()` to duplicate a bounded tail of raw child output into ERROR logging. Missing-data `.err` files now include nearby Syncoid/ZFS/mbuffer diagnostics, the exact matched missing-data line, and trailing receive output when available; `.out` remains the complete raw stream.
+- Kept the existing end-of-run semantics: failed missing-data pairs are accumulated, later pairs continue, the final run returns exit code `8`, enabled error mail/MQTT still report all failed pairs, and successful system actions do not run.
+- Added regression coverage reproducing the observed missing-parent/mbuffer/receive output and a deliberately hung child after a missing-data error. Both tests verify that the next configured pair really executes.
+- Updated README current-use behavior, commented code map, version metadata, build-version expectation, example-config version marker, verification record, and package manifest. No user configuration key or CLI flag was added or renamed.
+
+## 0.4.36
+
+Previous version: `0.4.35`.
+
+- Performed a full project/release audit before editing; replication, SSH, Syncoid monitoring, dataset validation, retry behavior, notification routing, and system-action behavior are intentionally unchanged.
+- Updated the authoritative package version, standalone-build expected version, packaging regression expectation, example-config release marker, README version references, and commented code map to `0.4.36`.
+- Replaced the shortened README disclaimer with the requested full liability and AI-assisted/vibe-coded disclaimers while retaining the Syncerate-specific ZFS/Syncoid data-loss warning and current-use safety guidance.
+- Verified that the shipped example configuration contains all 29 configuration keys consumed across the application, and that every production class/function plus every test/helper function is represented in `commented_code_map.md`.
+- Corrected stale documentation metadata that referred to an absent `config/destlist-bck` asset; the code map now describes only assets actually present in this project.
+- Regenerated `VERIFICATION.md` for this release and regenerated `PACKAGE_MANIFEST.json` from the supplied 0.4.35 archive versus the final 0.4.36 tree, including added/modified/unchanged/removed classifications, hashes, and mode information.
+- Preserved the supplied `dist/Syncerate` file unchanged because build dependencies could not be installed in the offline verification environment. That binary identifies itself as 0.4.29 and is explicitly documented as unsuitable for the 0.4.36 release until rebuilt from source.
+- Kept README as current-use documentation only; release history remains in this file. No configuration option, command-line flag, dataset rule, exit-code mapping, or runtime safety policy was added, removed, or renamed.
+
 ## 0.4.35
 
 Previous version: `0.4.34`.

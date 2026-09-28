@@ -1,6 +1,8 @@
+import logging
 import shlex
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from syncerate.errors import (
@@ -398,6 +400,90 @@ class SyncoidRunnerTests(unittest.TestCase):
                     self.assertTrue(marker.exists())
                     self.assertEqual(len(summary.missing_dataset_failures), 1)
                     self.assertEqual(summary.missing_dataset_failures[0].messages, (message,))
+
+    def test_real_receive_missing_parent_output_is_copied_to_err_and_list_continues(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            marker_path = td_path / "later-ran"
+            script = write_executable(
+                td_path / "fake.py",
+                "import pathlib, sys\n"
+                "if sys.argv[1] == 'pool/missing':\n"
+                "    print('INFO: Sending oldest full snapshot pool/missing@snap to new target filesystem backup/missing (~ 13 KB):', flush=True)\n"
+                "    print('mbuffer: warning: HOME environment variable not set - unable to find defaults file', flush=True)\n"
+                "    sys.stdout.write(\"cannot open 'backup': dataset does not exist\\r% ETA 0:00:43\\n\")\n"
+                "    print('cannot receive new filesystem stream: unable to restore to destination', flush=True)\n"
+                "    sys.exit(2)\n"
+                f"pathlib.Path({str(marker_path)!r}).write_text('yes')\n",
+            )
+            cfg = make_config(
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
+                log_destination=td + "/",
+            )
+            context = create_run_context(cfg)
+            logger = make_logger("missing-parent-error-log")
+            error_handler = logging.FileHandler(
+                context.error_file, mode="w", encoding="utf-8"
+            )
+            error_handler.setLevel(logging.ERROR)
+            logger.addHandler(error_handler)
+            try:
+                summary = run_replications(
+                    cfg,
+                    context,
+                    [
+                        DatasetPair("pool/missing", "backup/missing", ()),
+                        DatasetPair("pool/later", "backup/later", ()),
+                    ],
+                    None,
+                    logger,
+                )
+            finally:
+                error_handler.close()
+                logger.removeHandler(error_handler)
+
+            self.assertTrue(marker_path.exists())
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
+            error_text = Path(context.error_file).read_text(encoding="utf-8")
+            self.assertIn("mbuffer: warning: HOME environment variable not set", error_text)
+            self.assertIn("cannot open 'backup': dataset does not exist", error_text)
+            self.assertIn(
+                "cannot receive new filesystem stream: unable to restore to destination",
+                error_text,
+            )
+            self.assertIn("Skipping failed dataset pair and continuing", error_text)
+
+    def test_stuck_missing_dataset_attempt_is_stopped_then_list_continues(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            marker_path = td_path / "later-ran"
+            script = write_executable(
+                td_path / "fake.py",
+                "import pathlib, sys, time\n"
+                "if sys.argv[1] == 'pool/missing':\n"
+                "    print(\"cannot open 'backup': dataset does not exist\", flush=True)\n"
+                "    time.sleep(30)\n"
+                "    sys.exit(2)\n"
+                f"pathlib.Path({str(marker_path)!r}).write_text('yes')\n",
+            )
+            cfg = make_config(
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet"
+            )
+            pairs = [
+                DatasetPair("pool/missing", "backup/missing", ()),
+                DatasetPair("pool/later", "backup/later", ()),
+            ]
+            with patch(
+                "syncerate.syncoid_runner._MISSING_DATASET_FINISH_TIMEOUT_SECONDS",
+                0.10,
+            ):
+                summary = run_replications(
+                    cfg, no_logging_context(), pairs, None, make_logger("missing-stuck")
+                )
+
+            self.assertTrue(marker_path.exists())
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
+            self.assertEqual(summary.missing_dataset_failures[0].dataset_pair, pairs[0])
 
     def test_only_specific_missing_data_messages_allow_continuation(self):
         for message in (

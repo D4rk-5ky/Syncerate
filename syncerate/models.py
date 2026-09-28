@@ -78,6 +78,7 @@ class SyncoidAttemptResult:
     broken_pipe_detected: bool = False
     missing_dataset_or_pool_detected: bool = False
     missing_dataset_or_pool_messages: tuple[str, ...] = ()
+    missing_dataset_cleanup_forced: bool = False
     transferred_bytes: int = 0
     transfer_measurement_complete: bool = True
 
