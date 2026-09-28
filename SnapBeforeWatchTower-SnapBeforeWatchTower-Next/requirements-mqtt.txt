@@ -1,2 +1,0 @@
-# Optional: install only when [mqtt].enabled=true for real (non-dry-run) publishing.
-paho-mqtt>=2.1,<3
