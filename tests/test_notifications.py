@@ -17,6 +17,7 @@ from syncerate.notifications import (
     run_summary_header_text,
     send_error_mail,
     send_mqtt_failure_status,
+    send_mqtt_messages,
 )
 from tests.helpers import make_config, make_logger, no_logging_context, write_executable
 
@@ -152,6 +153,67 @@ class NotificationTests(unittest.TestCase):
                             self.assertEqual(messages[0]["payload"], "online")
                             self.assertEqual(messages[1]["payload"], "ON")
                             self.assertEqual(json.loads(messages[2]["payload"])["warning"], warning)
+
+
+    def test_dry_run_mqtt_uses_nonretained_report_instead_of_real_success_signal(self):
+        pair = DatasetPair("pool/data", "backup/data", ())
+        for structured, expected_topic in (
+            (False, "syncerate/result/dry-run"),
+            (True, "syncerate/status"),
+        ):
+            with self.subTest(structured=structured):
+                self.publish.reset_mock()
+                cfg = self.mqtt_config(
+                    use_mqtt=True,
+                    mqtt_json_status=structured,
+                    use_home_assistant=True,
+                )
+                send_mqtt_messages(
+                    cfg,
+                    make_logger("dry-run-mqtt"),
+                    success=True,
+                    dry_run=True,
+                    dry_run_dataset_pairs=[pair],
+                )
+                self.publish.assert_called_once()
+                messages = self.publish.call_args.args[0]
+                self.assertEqual(len(messages), 1)
+                self.assertEqual(messages[0]["topic"], expected_topic)
+                self.assertFalse(messages[0]["retain"])
+                self.assertNotEqual(messages[0]["topic"], "syncerate/result")
+                self.assertNotEqual(messages[0]["topic"], "syncerate/available")
+                payload = json.loads(messages[0]["payload"])
+                self.assertTrue(payload["dry_run"])
+                self.assertTrue(payload["success"])
+                self.assertEqual(
+                    payload["planned_datasets"],
+                    [{"source": "pool/data", "destination": "backup/data"}],
+                )
+
+    @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
+    def test_dry_run_success_mail_is_clearly_marked_and_contains_report(self, send_mail_mock):
+        cfg = make_config(
+            mail_option="user@example.test",
+            backup_title="Nightly",
+        )
+        MailTo(
+            cfg,
+            no_logging_context(),
+            make_logger("dry-run-mail"),
+            Exit_Code=0,
+            RuntimeSeconds=2.5,
+            DryRun=True,
+            DryRunReportText="Dry run report\nNO REPLICATION WAS PERFORMED.",
+            DryRunDatasetCount=2,
+        )
+        send_mail_mock.assert_called_once()
+        subject, body, recipient = send_mail_mock.call_args.args[:3]
+        self.assertIn("DRY RUN", subject)
+        self.assertIn("No replication performed", subject)
+        self.assertIn("Run mode        :   DRY RUN", body)
+        self.assertIn("Dataset pairs planned :   2", body)
+        self.assertIn("NO REPLICATION WAS PERFORMED", body)
+        self.assertEqual(recipient, "user@example.test")
 
     @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
     def test_default_success_switches_send_enabled_channels(self, mail):
@@ -358,6 +420,48 @@ class NotificationTests(unittest.TestCase):
         send_mqtt_messages_mock.assert_called_once()
         self.assertFalse(send_mqtt_messages_mock.call_args.kwargs["success"])
         self.assertEqual(send_mqtt_messages_mock.call_args.kwargs["exit_code"], 7)
+
+    @mock.patch("syncerate.notifications.send_mqtt_messages")
+    def test_dry_run_failure_mqtt_is_marked_as_dry_run(
+        self, send_mqtt_messages_mock
+    ):
+        cfg = make_config(
+            mqtt_json_status=True,
+            send_mqtt_on_success=False,
+        )
+        error = SyncerateError("dry-run validation failed", 1, kind="config")
+
+        send_mqtt_failure_status(
+            error,
+            cfg,
+            make_logger("dry-run-mqtt-failure"),
+            dry_run=True,
+        )
+
+        send_mqtt_messages_mock.assert_called_once()
+        self.assertFalse(send_mqtt_messages_mock.call_args.kwargs["success"])
+        self.assertTrue(send_mqtt_messages_mock.call_args.kwargs["dry_run"])
+
+    @mock.patch("syncerate.notifications.MailTo")
+    def test_dry_run_failure_mail_is_marked_as_dry_run(self, mail_to_mock):
+        cfg = make_config(
+            mail_option="user@example.test",
+            send_mail_on_success=False,
+        )
+        error = SyncerateError("dry-run validation failed", 1, kind="config")
+
+        send_error_mail(
+            error,
+            cfg,
+            no_logging_context(),
+            make_logger("dry-run-mail-failure"),
+            dry_run=True,
+            dry_run_dataset_count=2,
+        )
+
+        mail_to_mock.assert_called_once()
+        self.assertTrue(mail_to_mock.call_args.kwargs["DryRun"])
+        self.assertEqual(mail_to_mock.call_args.kwargs["DryRunDatasetCount"], 2)
 
     def test_mqtt_error_output_is_bounded_from_the_end(self):
         error = SyncerateError(

@@ -16,7 +16,7 @@ from syncerate.logging_setup import (
     log_final_run_summary,
     log_startup_configuration,
 )
-from syncerate.models import ReplicationSummary
+from syncerate.models import DatasetPair, ReplicationSummary
 from tests.helpers import make_config, make_logger, no_logging_context, write_executable
 
 
@@ -32,6 +32,9 @@ class AppAndLoggingTests(unittest.TestCase):
         self.assertIn("--conf FILE", help_text)
         self.assertIn("-c FILE", help_text)
         self.assertIn("required Syncerate INI configuration file", help_text)
+        self.assertIn("--dry-run", help_text)
+        self.assertIn("planned Syncoid commands without starting", help_text)
+        self.assertIn("DryRun = False", help_text)
         self.assertIn("--version", help_text)
         self.assertIn("Show the installed Syncerate version and exit.", help_text)
         self.assertIn("Examples:", help_text)
@@ -287,6 +290,163 @@ class AppAndLoggingTests(unittest.TestCase):
             encoding="utf-8",
         )
         return config
+
+
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.private_ssh_agent")
+    @mock.patch("syncerate.app.resolve_password")
+    def test_config_dry_run_reports_plan_without_cli_flag(
+        self, resolve_password, private_agent, replications, system_action
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "must-not-run"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/data\n",
+                "backup/data\n",
+                "DryRun = True",
+            )
+
+            stream = io.StringIO()
+            with mock.patch("sys.stdout", stream):
+                self.assertEqual(main(["--conf", str(config)]), 0)
+
+            self.assertFalse(marker.exists())
+            resolve_password.assert_not_called()
+            private_agent.assert_not_called()
+            replications.assert_not_called()
+            system_action.assert_not_called()
+            self.assertIn("Run mode        :   DRY RUN", stream.getvalue())
+
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.private_ssh_agent")
+    @mock.patch("syncerate.app.resolve_password")
+    def test_dry_run_reports_plan_without_executing_replication_or_post_action(
+        self, resolve_password, private_agent, replications, system_action
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "must-not-run"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/data\n",
+                "backup/data: --no-sync-snap\n",
+            )
+            config_text = config.read_text(encoding="utf-8")
+            config_text = config_text.replace("PassWord = No", "PassWord = Ask")
+            config_text = config_text.replace(
+                "SystemAction = No", "SystemAction = echo must-not-run"
+            )
+            config.write_text(config_text, encoding="utf-8")
+
+            stream = io.StringIO()
+            with mock.patch("sys.stdout", stream):
+                self.assertEqual(main(["--conf", str(config), "--dry-run"]), 0)
+
+            self.assertFalse(marker.exists())
+            resolve_password.assert_not_called()
+            private_agent.assert_not_called()
+            replications.assert_not_called()
+            system_action.assert_not_called()
+            output = stream.getvalue()
+            self.assertIn("Dry run report", output)
+            self.assertIn("NO REPLICATION WAS PERFORMED", output)
+            self.assertIn("Dataset pairs planned :   1", output)
+            self.assertIn("pool/data -> backup/data", output)
+            self.assertIn("--no-sync-snap", output)
+            self.assertIn("Run mode        :   DRY RUN", output)
+
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.MailTo")
+    @mock.patch("syncerate.app.send_mqtt_messages")
+    def test_dry_run_success_notifications_use_normal_success_switches(
+        self, mqtt, mail, system_action
+    ):
+        pair = DatasetPair("pool/data", "backup/data", ())
+        cfg = make_config(
+            mail_option="user@example.test",
+            use_mqtt=True,
+            system_option="echo must-not-run",
+            send_mail_on_success=False,
+            send_mqtt_on_success=False,
+        )
+        successfull_run(
+            cfg,
+            no_logging_context(),
+            make_logger("dry-success-switches-off"),
+            runtime_seconds=1.0,
+            dry_run=True,
+            dry_run_report="Dry run report",
+            dry_run_dataset_pairs=[pair],
+        )
+        mail.assert_not_called()
+        mqtt.assert_not_called()
+        system_action.assert_not_called()
+
+        enabled_cfg = make_config(
+            mail_option="user@example.test",
+            use_mqtt=True,
+            system_option="echo must-not-run",
+            send_mail_on_success=True,
+            send_mqtt_on_success=True,
+        )
+        successfull_run(
+            enabled_cfg,
+            no_logging_context(),
+            make_logger("dry-success-switches-on"),
+            runtime_seconds=1.0,
+            dry_run=True,
+            dry_run_report="Dry run report",
+            dry_run_dataset_pairs=[pair],
+        )
+        mqtt.assert_called_once()
+        self.assertTrue(mqtt.call_args.kwargs["dry_run"])
+        mail.assert_called_once()
+        self.assertTrue(mail.call_args.kwargs["DryRun"])
+        system_action.assert_not_called()
+
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.resolve_password")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_dry_run_preflight_failure_still_uses_failure_notifications(
+        self, mqtt, mail, password, replicate
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            script = write_executable(
+                directory / "fake.py",
+                "raise SystemExit('must not run')\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/a\n",
+                "backup/b\n",
+                "SendMailOnSuccess = False\nSendMQTTOnSuccess = False",
+            )
+            self.assertEqual(main(["--conf", str(config), "--dry-run"]), 1)
+            password.assert_not_called()
+            replicate.assert_not_called()
+            mqtt.assert_called_once()
+            mail.assert_called_once()
+            self.assertEqual(mqtt.call_args.args[0].exit_code, 1)
+            self.assertTrue(mqtt.call_args.kwargs["dry_run"])
+            self.assertEqual(mail.call_args.args[0].exit_code, 1)
+            self.assertTrue(mail.call_args.kwargs["dry_run"])
 
     def test_main_success_path_with_fake_syncoid(self):
         with tempfile.TemporaryDirectory() as td:

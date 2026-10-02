@@ -20,6 +20,7 @@ SourceListPath = /tmp/source
 DestListPath = /tmp/dest
 PassWord = No
 SyncoidCommand = syncoid SourceDataSet DestDataSet
+DryRun = No
 UseSSHAgent = No
 RetryBrokenPipe = No
 Use_MQTT = No
@@ -40,6 +41,7 @@ class ConfigTests(unittest.TestCase):
         config = load_app_config(
             str(project_root / "config" / "example-Syncerate.cfg")
         )
+        self.assertFalse(config.dry_run)
         self.assertEqual(
             config.raw_config.get("Syncerate Config", "mqtt_json_topic"),
             "homeassistant/syncerate/status",
@@ -47,6 +49,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_valid_minimal_config_loads(self):
         cfg = self.load_text(BASE)
+        self.assertFalse(cfg.dry_run)
         self.assertFalse(cfg.use_mqtt)
         self.assertFalse(cfg.mqtt_json_status)
         self.assertIsNone(cfg.log_destination)
@@ -62,6 +65,18 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ContinueWithoutResume"):
             self.load_text(BASE + "ContinueWithoutResume = maybe\n")
 
+
+    def test_dry_run_defaults_false_and_validates_booleans(self):
+        without_dry_run = BASE.replace("DryRun = No\n", "")
+        self.assertFalse(self.load_text(without_dry_run).dry_run)
+        for value, expected in (("True", True), ("Yes", True), ("1", True),
+                                ("On", True), ("False", False), ("No", False),
+                                ("0", False), ("Off", False)):
+            with self.subTest(value=value):
+                cfg = self.load_text(BASE.replace("DryRun = No", f"DryRun = {value}"))
+                self.assertEqual(cfg.dry_run, expected)
+        with self.assertRaisesRegex(ValueError, "DryRun"):
+            self.load_text(BASE.replace("DryRun = No", "DryRun = maybe"))
 
     def test_success_notification_switches_default_to_enabled_when_omitted(self):
         cfg = self.load_text(BASE)
@@ -113,9 +128,11 @@ class ConfigTests(unittest.TestCase):
                 with self.subTest(value=value):
                     cfg = self.load_text(
                         BASE.replace("RetryBrokenPipe = No", f"RetryBrokenPipe = {value}")
+                        .replace("DryRun = No", f"DryRun = {value}")
                         + f"SendMailOnSuccess = {value}\nSendMQTTOnSuccess = {value}\n"
                     )
                     self.assertEqual(cfg.retry_broken_pipe, enabled)
+                    self.assertEqual(cfg.dry_run, enabled)
                     self.assertEqual(cfg.send_mail_on_success, enabled)
                     self.assertEqual(cfg.send_mqtt_on_success, enabled)
 

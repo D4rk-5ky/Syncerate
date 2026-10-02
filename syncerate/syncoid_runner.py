@@ -806,6 +806,53 @@ def build_syncoid_command(
     command_parts.extend(extra_args)
     return command_parts
 
+def format_dry_run_report(
+    app_config: AppConfig,
+    dataset_pairs: Sequence[DatasetPair],
+) -> str:
+    """Return the non-destructive execution plan shown for ``--dry-run``."""
+
+    success_mail = app_config.mail_enabled and app_config.send_mail_on_success
+    success_mqtt = (
+        (app_config.use_mqtt or app_config.mqtt_json_status)
+        and app_config.send_mqtt_on_success
+    )
+    failure_mail = app_config.mail_enabled
+    failure_mqtt = app_config.use_mqtt or app_config.mqtt_json_status
+
+    lines = [
+        "Dry run report",
+        "",
+        "NO REPLICATION WAS PERFORMED.",
+        "Syncoid was not started, credentials were not requested, a private ssh-agent was not started, and SystemAction was not executed.",
+        "",
+        f"Dataset pairs planned :   {len(dataset_pairs)}",
+        f"Success email        :   {'enabled' if success_mail else 'disabled'}",
+        f"Success MQTT report  :   {'enabled' if success_mqtt else 'disabled'}",
+        f"Failure email        :   {'enabled' if failure_mail else 'disabled'}",
+        f"Failure MQTT         :   {'enabled' if failure_mqtt else 'disabled'}",
+        "",
+        "Planned Syncoid commands:",
+    ]
+
+    for number, dataset_pair in enumerate(dataset_pairs, start=1):
+        command = build_syncoid_command(
+            app_config.syncoid_command,
+            dataset_pair.source,
+            dataset_pair.destination,
+            dataset_pair.extra_arguments,
+        )
+        lines.extend(
+            [
+                "",
+                f"{number}. {dataset_pair.source} -> {dataset_pair.destination}",
+                f"   {shlex.join(command)}",
+            ]
+        )
+
+    return "\n".join(lines)
+
+
 def effective_user_name() -> str:
     """Return the username belonging to Syncerate's effective local UID."""
 

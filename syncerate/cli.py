@@ -17,6 +17,7 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         epilog=(
             "Examples:\n"
             "  %(prog)s --conf /path/to/Syncerate.cfg\n"
+            "  %(prog)s --conf /path/to/Syncerate.cfg --dry-run\n"
             "  %(prog)s -c ./config/Syncerate.cfg\n"
             "  %(prog)s --version"
         ),
@@ -31,6 +32,18 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help=(
             "Path to the required Syncerate INI configuration file. "
             "Relative paths are resolved from the current working directory."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Validate configuration and dataset pairing, then print/log the exact "
+            "planned Syncoid commands without starting Syncoid, prompting for "
+            "credentials, starting a private ssh-agent, or running SystemAction. "
+            "This forces dry-run on even when DryRun = False in the config. "
+            "Configured success notifications follow SendMailOnSuccess and "
+            "SendMQTTOnSuccess; configured failures still notify normally."
         ),
     )
     parser.add_argument(

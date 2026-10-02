@@ -16,6 +16,32 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.39
+
+Previous version: `0.4.38`.
+
+- Added `DryRun` as a real `[Syncerate Config]` Boolean setting, defaulting to `False` when omitted. `DryRun = True` now activates the same safe planning/report mode that 0.4.38 exposed only through the CLI.
+- Kept `--dry-run` as a one-way convenience override: it can force dry-run on even when `DryRun = False`, but it cannot force a configured `DryRun = True` back to a real replication. This prevents an accidental command-line option from disabling the safety setting.
+- Preserved dry-run safety behavior: no password/passphrase resolution, private ssh-agent startup, Syncoid child process, ZFS transfer, or `SystemAction` execution.
+- Preserved success/failure notification policy in both real and dry-run modes. `SendMailOnSuccess` and `SendMQTTOnSuccess` suppress only their respective successful notifications; configured error mail/MQTT remains independent and is still attempted on failures.
+- Added `DryRun = False` with full comments to `config/example-Syncerate.cfg`, updated README/current-use documentation and CLI help, and documented the new typed `AppConfig.dry_run` field/config flow in `commented_code_map.md`.
+- Added regression coverage for config-driven dry-run without the CLI flag, strict `DryRun` Boolean parsing/defaults, CLI override behavior, and preservation of dry-run no-execution guarantees.
+- Updated authoritative version/build expectations to 0.4.39. The preserved `dist/Syncerate` remains the older 0.4.29 binary because the build dependencies are not available in the verification environment.
+
+## 0.4.38
+
+Previous version: `0.4.37`.
+
+- Added application-level `--dry-run` support. A dry run still loads and validates the selected configuration, reads/validates the source and destination lists, and builds the exact Syncoid argv for every pair, but it does not resolve/request credentials, start the private SSH agent, start Syncoid, transfer data, or execute `SystemAction`.
+- Added a dedicated dry-run report that prints/logs the planned pair count, notification state, each source/destination mapping, and the exact shell-style Syncoid command that a real run would use. The final summary explicitly identifies `DRY RUN (no replication performed)` and does not claim a transfer total.
+- Kept the existing independent `SendMailOnSuccess` and `SendMQTTOnSuccess` controls and made their dry-run behavior explicit. `SendMailOnSuccess = False` suppresses successful real-run and successful dry-run mail only; `SendMQTTOnSuccess = False` suppresses successful real-run and successful dry-run MQTT only. Both remain enabled by default when omitted.
+- Preserved failure reporting independently of the two success switches. Configured error email/MQTT is still attempted after handled failures even when the corresponding success switch is disabled, including failures occurring during `--dry-run`. Dry-run failure summaries/payloads are marked as dry run.
+- Added a safety-specific dry-run MQTT route: dry runs never publish the historical retained `mqtt_message` or retained Home Assistant `online` availability signal. A successful dry run publishes one non-retained JSON report on `mqtt_json_topic` when `MQTT_JSON_Status` is enabled, otherwise on `<mqtt_topic>/dry-run` for legacy-only MQTT.
+- Extended MQTT JSON status with `dry_run` and `planned_datasets`. Real runs emit `dry_run: false`; successful dry runs emit `dry_run: true` plus the planned source/destination pairs; dry-run failures retain `dry_run: true`.
+- Added clearly marked dry-run success email containing the dry-run final summary and planned-command report. When logging is enabled it attaches the available `.log`; no `.out` file is required because Syncoid never starts. Dry-run error mail is also marked `DRY RUN`.
+- Updated CLI help/examples, README current-use documentation, complete example configuration comments, commented code map, regression tests, authoritative version, PyInstaller expected-version check, verification record, and package manifest. No configuration key was added, removed, or renamed.
+- Preserved the supplied `dist/Syncerate` executable unchanged. It remains the older 0.4.29 build and must be rebuilt from the 0.4.38 source on a compatible system with the documented PyInstaller dependencies.
+
 ## 0.4.37
 
 Previous version: `0.4.36`.

@@ -173,6 +173,9 @@ def format_final_run_summary(
     app_config: Optional[AppConfig],
     elapsed_seconds: float,
     replication_summary: Optional[ReplicationSummary] = None,
+    *,
+    dry_run: bool = False,
+    planned_dataset_count: Optional[int] = None,
 ) -> str:
     """Return the final summary as plain text for logs and email bodies."""
 
@@ -207,7 +210,15 @@ def format_final_run_summary(
     if metadata_written:
         lines.append("")
 
-    if replication_summary is not None:
+    if dry_run:
+        lines.append("Run mode        :   DRY RUN (no replication performed)")
+        if planned_dataset_count is not None:
+            lines.append(
+                f"Dataset pairs planned :   {planned_dataset_count}"
+            )
+        lines.append("")
+
+    if replication_summary is not None and not dry_run:
         transfer_text = (
             format_transfer_size(replication_summary.transferred_bytes)
             if replication_summary.transfer_measurement_complete
@@ -225,6 +236,9 @@ def log_final_run_summary(
     elapsed_seconds: float,
     logger: logging.Logger,
     replication_summary: Optional[ReplicationSummary] = None,
+    *,
+    dry_run: bool = False,
+    planned_dataset_count: Optional[int] = None,
 ) -> None:
     """Log the shared final summary to terminal and the optional .log file."""
 
@@ -236,6 +250,8 @@ def log_final_run_summary(
         app_config,
         elapsed_seconds,
         replication_summary,
+        dry_run=dry_run,
+        planned_dataset_count=planned_dataset_count,
     ).splitlines():
         logger.info("%s", line)
 

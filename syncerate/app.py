@@ -17,14 +17,19 @@ from .logging_setup import (
     log_startup_configuration,
     log_final_run_summary,
 )
-from .models import AppConfig, ReplicationSummary, RunContext
+from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
 from .notifications import (
     MailTo,
     send_error_mail,
     send_mqtt_failure_status,
     send_mqtt_messages,
 )
-from .syncoid_runner import private_ssh_agent, resolve_password, run_replications
+from .syncoid_runner import (
+    format_dry_run_report,
+    private_ssh_agent,
+    resolve_password,
+    run_replications,
+)
 from .system_actions import SystemAction
 
 
@@ -100,6 +105,10 @@ def successfull_run(
     logger: logging.Logger,
     replication_summary: Optional[ReplicationSummary] = None,
     runtime_seconds: Optional[float] = None,
+    *,
+    dry_run: bool = False,
+    dry_run_report: str = "",
+    dry_run_dataset_pairs: Optional[list[DatasetPair]] = None,
 ) -> None:
     """Run success-stage notifications and the optional system action."""
 
@@ -109,7 +118,9 @@ def successfull_run(
     logger.info("")
     logger.info("----------")
     logger.info("")
-    if replication_summary.has_broken_pipe_warning:
+    if dry_run:
+        logger.info("The DRY RUN ended successfully - no replication was performed")
+    elif replication_summary.has_broken_pipe_warning:
         logger.warning("The Script ended successfully with Broken Pipe warnings")
         logger.warning(
             "%s dataset(s) were skipped after exhausting %s configured Broken Pipe retries per dataset.",
@@ -134,7 +145,7 @@ def successfull_run(
     )
     logger.info("")
 
-    if run_context.logging_enabled:
+    if run_context.logging_enabled and not dry_run:
         assert run_context.output_file is not None
         with open(run_context.output_file, "a", encoding="utf-8") as output_file:
             lines_of_text = [
@@ -183,7 +194,9 @@ def successfull_run(
             logger,
             success=True,
             exit_code=EXIT_OK,
-            replication_summary=replication_summary,
+            replication_summary=None if dry_run else replication_summary,
+            dry_run=dry_run,
+            dry_run_dataset_pairs=dry_run_dataset_pairs,
         )
     elif app_config.use_mqtt or app_config.mqtt_json_status:
         logger.info("MQTT success notifications are disabled by SendMQTTOnSuccess")
@@ -193,7 +206,11 @@ def successfull_run(
             app_config,
             runtime_seconds,
             logger,
-            replication_summary,
+            None if dry_run else replication_summary,
+            dry_run=dry_run,
+            planned_dataset_count=(
+                len(dry_run_dataset_pairs or []) if dry_run else None
+            ),
         )
 
     if app_config.mail_enabled and app_config.send_mail_on_success:
@@ -206,7 +223,12 @@ def successfull_run(
                 BrokenPipeWarning=replication_summary.has_broken_pipe_warning,
                 BrokenPipeDatasets=replication_summary.broken_pipe_failed_datasets,
                 RuntimeSeconds=runtime_seconds,
-                ReplicationSummaryData=replication_summary,
+                ReplicationSummaryData=None if dry_run else replication_summary,
+                DryRun=dry_run,
+                DryRunReportText=dry_run_report,
+                DryRunDatasetCount=(
+                    len(dry_run_dataset_pairs or []) if dry_run else None
+                ),
             )
         except Exception:
             logger.exception(
@@ -217,7 +239,12 @@ def successfull_run(
         logger.info("Success email is disabled by SendMailOnSuccess")
 
     if app_config.system_action_enabled:
-        SystemAction(app_config, logger)
+        if dry_run:
+            logger.info(
+                "SystemAction is configured but was skipped because this is a DRY RUN"
+            )
+        else:
+            SystemAction(app_config, logger)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -227,12 +254,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     run_context: Optional[RunContext] = None
     logger: Optional[logging.Logger] = None
     replication_summary: Optional[ReplicationSummary] = None
+    dataset_pairs: Optional[list[DatasetPair]] = None
+    dry_run = False
     started_at = time.monotonic()
 
     try:
         args = parse_arguments(argv)
+        dry_run = bool(args.dry_run)
         try:
             app_config = load_app_config(args.conf)
+            dry_run = bool(args.dry_run or app_config.dry_run)
         except (OSError, configparser.Error, ValueError) as exc:
             raise SyncerateError(
                 f"Configuration error: {exc}",
@@ -245,6 +276,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         log_startup_configuration(app_config, run_context, logger)
         dataset_pairs = load_dataset_pairs(app_config, logger)
+
+        if dry_run:
+            report_text = format_dry_run_report(app_config, dataset_pairs)
+            logger.info("")
+            logger.info("----------")
+            logger.info("")
+            for report_line in report_text.splitlines():
+                logger.info("%s", report_line)
+            logger.info("")
+            logger.info("----------")
+            logger.info("")
+
+            runtime_seconds = time.monotonic() - started_at
+            successfull_run(
+                app_config,
+                run_context,
+                logger,
+                ReplicationSummary(),
+                runtime_seconds=runtime_seconds,
+                dry_run=True,
+                dry_run_report=report_text,
+                dry_run_dataset_pairs=dataset_pairs,
+            )
+            return EXIT_OK
+
         password = resolve_password(app_config, logger)
 
         with private_ssh_agent(app_config, password, logger) as ssh_agent_session:
@@ -289,12 +345,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             runtime_seconds,
             logger,
             completed_failure_summary,
+            dry_run=dry_run,
+            planned_dataset_count=(
+                len(dataset_pairs) if dry_run and dataset_pairs is not None else None
+            ),
         )
         send_mqtt_failure_status(
             error,
             app_config,
             logger,
             replication_summary=completed_failure_summary,
+            dry_run=dry_run,
         )
         send_error_mail(
             error,
@@ -303,6 +364,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             logger,
             runtime_seconds=runtime_seconds,
             replication_summary=completed_failure_summary,
+            dry_run=dry_run,
+            dry_run_dataset_count=(
+                len(dataset_pairs) if dry_run and dataset_pairs is not None else None
+            ),
         )
         return error.exit_code
 
@@ -318,13 +383,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             kind="script",
         )
         runtime_seconds = time.monotonic() - started_at
-        log_final_run_summary(app_config, runtime_seconds, logger)
-        send_mqtt_failure_status(unexpected_error, app_config, logger)
+        log_final_run_summary(
+            app_config,
+            runtime_seconds,
+            logger,
+            dry_run=dry_run,
+            planned_dataset_count=(
+                len(dataset_pairs) if dry_run and dataset_pairs is not None else None
+            ),
+        )
+        send_mqtt_failure_status(
+            unexpected_error,
+            app_config,
+            logger,
+            dry_run=dry_run,
+        )
         send_error_mail(
             unexpected_error,
             app_config,
             run_context,
             logger,
             runtime_seconds=runtime_seconds,
+            dry_run=dry_run,
+            dry_run_dataset_count=(
+                len(dataset_pairs) if dry_run and dataset_pairs is not None else None
+            ),
         )
         return EXIT_SCRIPT_ERROR

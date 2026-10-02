@@ -138,6 +138,7 @@ def load_app_config(config_path: str) -> AppConfig:
             "BrokenPipeRetryWaitSeconds must be zero or a positive whole number"
         )
 
+    dry_run = parse_boolean_option(raw_config, "DryRun")
     use_mqtt = parse_boolean_option(raw_config, "Use_MQTT")
     send_mail_on_success = parse_boolean_option(
         raw_config,
@@ -255,6 +256,7 @@ def load_app_config(config_path: str) -> AppConfig:
         destination_list_path=destination_list_path,
         password_option=password_option,
         syncoid_command=syncoid_command,
+        dry_run=dry_run,
         send_mail_on_success=send_mail_on_success,
         send_mqtt_on_success=send_mqtt_on_success,
         mqtt_json_status=mqtt_json_status,
