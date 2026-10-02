@@ -1,56 +1,75 @@
-# Syncerate 0.4.39 verification
+# Syncerate 0.4.42 verification
 
-## Release scope
+Baseline used for this release: supplied `Syncerate-0.4.41.zip`.
 
-The supplied baseline archive for this change was Syncerate `0.4.38` (`Syncerate-0.4.38.zip`, SHA-256 `cb537768a474eb62cf28aeec3e849364da821933e538e0afc1071c8fdf91d845`). This release increments exactly one patch step to `0.4.39`.
+Baseline archive SHA-256:
 
-Version 0.4.39 makes dry-run a real settings-file option:
+```text
+76d3ce251c358536540e8add5fda1cffa0a2277087ef13794555438d6f995274
+```
 
-- `[Syncerate Config]` now supports strict Boolean `DryRun`.
-- `DryRun = False` is the default and performs a normal replication run.
-- `DryRun = True` activates the safe planning/report mode without requiring a CLI flag.
-- `--dry-run` remains available as a one-way override that can force dry-run on even when the config says `False`; it never disables `DryRun = True`.
-- Dry-run safety remains unchanged: no password/passphrase resolution, private ssh-agent startup, Syncoid child process, data transfer, or `SystemAction` execution.
-- `SendMailOnSuccess` and `SendMQTTOnSuccess` still control successful notifications for both real and dry runs. Configured failure notifications remain independent of those success switches.
+## Runtime-category move verified
 
-The shipped example configuration now contains `DryRun = False` with comments explaining both values and the CLI override.
+- `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` moved from `[syncoid]` to `[runtime]` in `CONFIG_OPTION_LOCATIONS`, `load_app_config()`, the shipped example, README, tests, and code map.
+- `[syncoid]` now owns only `SourceListPath`, `DestListPath`, and `SyncoidCommand`.
+- `[runtime]` now owns `DryRun`, `SystemAction`, `ContinueOnMissingDataset`, `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`.
+- The shipped `config/example-Syncerate.toml` uses the requested explicit values: `ContinueWithoutResume = false`, `RetryBrokenPipe = true`, `BrokenPipeRetryCount = 1`, and `BrokenPipeRetryWaitSeconds = 10`.
+- Fallback behavior when options are omitted is unchanged: `ContinueWithoutResume` defaults to `true`, `RetryBrokenPipe` defaults to `false`, retry count defaults to `1`, and retry wait defaults to `10`.
+- A migration guard rejects these four names when left under `[syncoid]` and reports that they moved to `[runtime]`, preventing old-category values from being silently ignored.
+- `ContinueOnMissingDataset` remains under `[runtime]`, still defaults to `false`, and retains its existing failure-reporting behavior.
 
-## Checks completed
+## Configuration/documentation audits
 
-- Confirmed `python3 Syncerate.py --version` reports `Syncerate.py 0.4.39`.
-- Confirmed `python3 Syncerate.py --help` exits successfully and documents `--conf`/`-c`, `--dry-run`, `--help`/`-h`, `--version`, and that `--dry-run` forces dry-run on even when `DryRun = False` in the config.
-- Confirmed invoking without the required `--conf`/`-c` remains an argparse error.
-- Confirmed `config/example-Syncerate.cfg` loads successfully, contains all 30 current configuration options, and resolves `DryRun = False` to `AppConfig.dry_run == False`.
-- Confirmed omitted `DryRun` defaults to false and every documented Boolean spelling (`Yes/No`, `True/False`, `1/0`, `On/Off`, case-insensitive) is accepted; typo values are rejected before replication.
-- Ran a source-mode config-driven dry-run with `DryRun = True`, `PassWord = Ask`, a configured `SystemAction`, and a fake Syncoid executable that would create a marker if started. The run returned `0`, printed `Dry run report`, printed `NO REPLICATION WAS PERFORMED`, printed the final `DRY RUN` summary, skipped `SystemAction`, and did not create the fake-child marker.
-- Verified the existing CLI `--dry-run` path still activates the same safe mode when the config setting is false or omitted.
-- Compiled `Syncerate.py`, all `syncerate/*.py`, and all tests successfully with `python3 -m compileall -q`.
+- The authoritative schema contains exactly 31 supported settings.
+- The shipped TOML example contains exactly the same 31 settings in the same assigned tables.
+- README mentions every supported configuration option name.
+- All 32 fenced TOML examples in README parse successfully with `tomllib`.
+- AST-to-code-map audit found 242 production/test class/function definitions and all 242 are represented in `commented_code_map.md`.
+
+## Functional checks
+
+- `python3 -m compileall -q Syncerate.py syncerate tests` passed.
 - `bash -n build_pyinstaller.sh` passed.
-- All 125 regression tests passed:
-  - 22 `test_app_and_logging` tests;
-  - 22 `test_config` tests;
-  - 8 `test_datasets` tests;
-  - 20 `test_notifications` tests;
-  - 3 `test_packaging` tests;
-  - 47 `test_syncoid_runner` tests;
-  - 3 `test_system_actions` tests.
-- The Syncoid suite was run in bounded groups because one long batch reached the environment command-time ceiling while a slow fake-child test was still running. The remaining tests were rerun separately and all passed; no assertion failure was observed.
-- Audited Python AST symbols against `commented_code_map.md`; all 231 production/test classes and functions are represented.
-- Confirmed the README documents all 30 options present in the shipped example configuration, including `DryRun`.
-- Confirmed executable modes remain preserved for `Syncerate.py`, `build_pyinstaller.sh`, and `dist/Syncerate`.
-- Packaging cleanup removes `__pycache__`, `.pyc`, `.pyo`, build caches, and temporary verification files before the final ZIP is produced.
-- `PACKAGE_MANIFEST.json` is regenerated against the supplied 0.4.38 baseline using SHA-256 hashes and stored Unix modes, with the manifest's own release hash excluded to avoid self-reference.
+- `python3 Syncerate.py --version` reports `Syncerate.py 0.4.42`.
+- `python3 Syncerate.py --help` works and continues to document `--conf/-c`, `--dry-run`, and `--version`.
+- Importing `Syncerate` and `syncerate` is silent and returns success.
+- Executable modes remain set on `Syncerate.py`, `build_pyinstaller.sh`, and `dist/Syncerate`.
+
+## Regression suite
+
+All **133/133** regression tests passed:
+
+- 23 `test_app_and_logging` tests;
+- 28 `test_config` tests;
+- 8 `test_datasets` tests;
+- 20 `test_notifications` tests;
+- 3 `test_packaging` tests;
+- 48 `test_syncoid_runner` tests;
+- 3 `test_system_actions` tests.
+
+The Syncoid process tests were run in bounded groups. The first two 16-test groups passed. The final 16-test group reached the execution-time ceiling after 13 tests had completed without failure; the final four tests were then rerun separately and all passed, overlapping one already-completed test so every test in the module was explicitly covered.
+
+## Package comparison and cleanup
+
+- Baseline regular project files (excluding generated bytecode/cache): 41.
+- Release regular project files (excluding generated bytecode/cache): 41.
+- No project file is intentionally added or removed for this release.
+- Required original assets remain preserved, including Home Assistant examples/screenshots and the existing standalone executable.
+- Generated `__pycache__`, `.pyc`, `.pyo`, build-cache, and temporary verification files are removed before packaging.
+- `PACKAGE_MANIFEST.json` is regenerated against the supplied 0.4.41 archive/tree using SHA-256 hashes and Unix modes; its own release hash is excluded to avoid self-reference.
 
 ## Standalone executable limitation
 
-The preserved `dist/Syncerate` executable still reports `Syncerate 0.4.29`. It is an original project file and is **not** a 0.4.39 executable.
+The preserved `dist/Syncerate` executable still reports:
 
-This verification environment has `pexpect 4.9.0`, but does not have PyInstaller or Paho MQTT installed. The standalone executable therefore cannot be rebuilt and honestly verified here. Use the 0.4.39 Python source entry point, or rebuild `dist/Syncerate` on a compatible Linux host with `build_pyinstaller.sh` before treating the standalone executable as version 0.4.39.
+```text
+Syncerate 0.4.29
+```
+
+It is an original project file and is **not** a 0.4.42 executable. In this verification environment, Pexpect is available, but PyInstaller and Paho MQTT are not installed. A truthful 0.4.42 standalone executable therefore could not be rebuilt here. Use the 0.4.42 Python source on Python 3.11+ or rebuild `dist/Syncerate` on a compatible Linux system using `build_pyinstaller.sh` and `requirements-build.txt`.
 
 ## What was not fully tested
 
 No live ZFS pool, real Syncoid replication, remote SSH host, production MQTT broker/Home Assistant instance, local mail server/delivery path, or real post-success `SystemAction` was exercised. Those paths are covered by regression tests using controlled fake child processes and mocked/stubbed external integrations.
 
-The dry-run implementation deliberately does not query live ZFS state, remote reachability, permissions, available destination space, or real Syncoid behavior; a successful dry run proves configuration/list/command planning, not that a later real replication will succeed.
-
-The PyInstaller build itself was not executed because required build/runtime modules are unavailable in this environment. Platform-specific behavior of a newly rebuilt frozen executable therefore remains to be verified on the target build host.
+The PyInstaller build itself was not run because required build modules are unavailable in this environment. Platform-specific behavior of a newly rebuilt frozen executable therefore remains to be verified on the target build host.

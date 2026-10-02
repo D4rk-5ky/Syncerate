@@ -161,7 +161,8 @@ class SyncoidRunnerTests(unittest.TestCase):
                 "marker.write_text('yes')\n",
             )
             cfg = make_config(
-                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet"
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
+                continue_on_missing_dataset=True,
             )
             pairs = [
                 DatasetPair("pool/missing", "backup/missing", ()),
@@ -181,6 +182,38 @@ class SyncoidRunnerTests(unittest.TestCase):
             failure = summary.missing_dataset_failures[0]
             self.assertEqual(failure.dataset_pair, pairs[0])
             self.assertIn("dataset does not exist", "\n".join(failure.messages))
+
+    def test_missing_dataset_stops_list_by_default_but_still_records_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td) / "good-ran"
+            script = write_executable(
+                Path(td) / "fake_syncoid.py",
+                "import pathlib, sys\n"
+                f"marker = pathlib.Path({str(marker)!r})\n"
+                "if sys.argv[1].endswith('/missing'):\n"
+                "    print(\"cannot open 'pool/missing': dataset does not exist\", flush=True)\n"
+                "    sys.exit(2)\n"
+                "marker.write_text('yes')\n",
+            )
+            cfg = make_config(
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet"
+            )
+            pairs = [
+                DatasetPair("pool/missing", "backup/missing", ()),
+                DatasetPair("pool/good", "backup/good", ()),
+            ]
+            summary = run_replications(
+                cfg,
+                no_logging_context(),
+                pairs,
+                None,
+                make_logger("missing-stop-default"),
+            )
+
+            self.assertFalse(marker.exists())
+            self.assertTrue(summary.has_missing_dataset_failure)
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
+            self.assertEqual(summary.missing_dataset_failures[0].dataset_pair, pairs[0])
 
     def test_missing_pool_exit_two_is_recorded(self):
         summary = self.run_fake(
@@ -315,6 +348,7 @@ class SyncoidRunnerTests(unittest.TestCase):
             cfg = make_config(
                 syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
                 log_destination=td + "/",
+                continue_on_missing_dataset=True,
             )
             context = create_run_context(cfg)
             summary = run_replications(
@@ -394,7 +428,10 @@ class SyncoidRunnerTests(unittest.TestCase):
                     pairs = [DatasetPair("pool/missing", "backup/missing", ()),
                              DatasetPair("pool/later", "backup/later", ())]
                     summary = run_replications(
-                        make_config(syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet"),
+                        make_config(
+                            syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
+                            continue_on_missing_dataset=True,
+                        ),
                         no_logging_context(), pairs, None, make_logger(),
                     )
                     self.assertTrue(marker.exists())
@@ -419,6 +456,7 @@ class SyncoidRunnerTests(unittest.TestCase):
             cfg = make_config(
                 syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
                 log_destination=td + "/",
+                continue_on_missing_dataset=True,
             )
             context = create_run_context(cfg)
             logger = make_logger("missing-parent-error-log")
@@ -467,7 +505,8 @@ class SyncoidRunnerTests(unittest.TestCase):
                 f"pathlib.Path({str(marker_path)!r}).write_text('yes')\n",
             )
             cfg = make_config(
-                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet"
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
+                continue_on_missing_dataset=True,
             )
             pairs = [
                 DatasetPair("pool/missing", "backup/missing", ()),

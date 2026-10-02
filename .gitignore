@@ -3,11 +3,12 @@
 *.conf
 config/sourcelist*
 config/destlist*
+config/*.toml
 
 # Keep example configurations
 !*.example.cfg
 !*.example.conf
-!config/example-Syncerate.cfg
+!config/example-Syncerate.toml
 
 # Runtime logs and output
 *.log

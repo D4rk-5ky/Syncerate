@@ -1,6 +1,5 @@
 """Dataclasses that carry configuration and per-run state explicitly."""
 
-import configparser
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -10,7 +9,7 @@ class AppConfig:
     """Validated application settings loaded from one configuration file."""
 
     config_path: str
-    raw_config: configparser.RawConfigParser
+    raw_config: dict[str, Any]
     mail_option: str
     system_option: str
     use_mqtt: bool
@@ -32,7 +31,16 @@ class AppConfig:
     retry_broken_pipe: bool = False
     broken_pipe_retry_count: int = 1
     broken_pipe_retry_wait_seconds: int = 10
+    continue_on_missing_dataset: bool = False
     continue_without_resume: bool = True
+    broker_address: str = ""
+    broker_port: int = 1883
+    mqtt_username: str = ""
+    mqtt_password: str = ""
+    mqtt_topic: str = ""
+    mqtt_message: str = ""
+    mqtt_json_topic: str = ""
+    home_assistant_available: str = ""
 
     @property
     def mail_enabled(self) -> bool:

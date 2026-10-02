@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.39`
+Current version: `0.4.42`
 
 ## ⚠️ Disclaimer / Liability
 
@@ -40,11 +40,11 @@ Syncerate starts Syncoid and ZFS-related operations that can affect source datas
 - delete target snapshots when destructive Syncoid options are configured;
 - execute the configured `SystemAction` as a shell command after a successful run.
 
-Syncerate provides an application-level dry-run mode controlled primarily by `DryRun = True` in the `[Syncerate Config]` settings file. The optional `--dry-run` command-line flag can temporarily force the same mode on. Dry run validates the configuration and dataset-list pairing, builds the exact Syncoid argv that would be used for every pair, and prints/logs a dry-run report. It **does not** start Syncoid, request credentials, start the private ssh-agent, transfer data, or execute `SystemAction`.
+Syncerate provides an application-level dry-run mode controlled primarily by `DryRun = true` in the `[runtime]` TOML table. The optional `--dry-run` command-line flag can temporarily force the same mode on. Dry run validates the configuration and dataset-list pairing, builds the exact Syncoid argv that would be used for every pair, and prints/logs a dry-run report. It **does not** start Syncoid, request credentials, start the private ssh-agent, transfer data, or execute `SystemAction`.
 
 A dry run is a planning/validation tool, not proof that a real replication will succeed. It cannot verify live ZFS dataset existence, remote SSH reachability, permissions, Syncoid/ZFS runtime behavior, available space, or destructive effects of the configured Syncoid options. Before using Syncerate with important data:
 
-- set `DryRun = True` and review every planned command before changing it back to `False` for a real run;
+- set `[runtime].DryRun = true` and review every planned command before changing it back to `false` for a real run;
 - read and understand the configured `SyncoidCommand`;
 - test first with non-critical datasets on a non-production system;
 - keep a separate, verified backup that Syncerate cannot modify;
@@ -57,7 +57,7 @@ By using this software, you accept responsibility for reviewing, configuring, te
 
 Required:
 
-- Python 3
+- Python 3.11 or newer (uses the standard-library `tomllib` TOML parser)
 - ZFS
 - Sanoid/Syncoid
 - Python `pexpect`
@@ -65,7 +65,7 @@ Required:
 
 Optional:
 
-- OpenSSH `ssh-agent` and `ssh-add` when `UseSSHAgent = Yes`
+- OpenSSH `ssh-agent` and `ssh-add` when `UseSSHAgent = true`
 - Python `paho-mqtt` when MQTT publishing is enabled
 - a configured local `mail` command when email is enabled
 - Home Assistant when using the supplied MQTT availability example
@@ -95,7 +95,7 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.39 source release. Rebuild with `build_pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
+**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.42 source release. Rebuild with `build_pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
 
 PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
 
@@ -104,7 +104,7 @@ Run the packaged executable exactly like the Python entry point:
 ```bash
 ./dist/Syncerate --version
 ./dist/Syncerate --help
-./dist/Syncerate --conf /path/to/Syncerate.cfg
+./dist/Syncerate --conf /path/to/Syncerate.toml
 ```
 
 ### Rebuilding the executable
@@ -131,10 +131,10 @@ chmod +x Syncerate.py
 Copy the example configuration:
 
 ```bash
-cp config/example-Syncerate.cfg config/Syncerate.cfg
+cp config/example-Syncerate.toml config/Syncerate.toml
 ```
 
-Create source and destination list files, then edit `config/Syncerate.cfg` with their paths and the Syncoid command to run.
+Create source and destination list files, then edit `config/Syncerate.toml` with their paths and the Syncoid command to run.
 
 ## Command-line options
 
@@ -142,60 +142,54 @@ Syncerate has four application flags. `--conf`/`-c` selects the required setting
 
 | Option | Required | What it does |
 | --- | --- | --- |
-| `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate INI configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. The selected file must contain the `[Syncerate Config]` section. |
-| `--dry-run` | No | Forces dry-run on even when `DryRun = False` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
+| `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate TOML configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. |
+| `--dry-run` | No | Forces dry-run on even when `[runtime].DryRun = false` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.39` for the 0.4.39 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.39. The flag exits without starting a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.42` for the 0.4.42 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.42. The flag exits without starting a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
 The long and short forms are identical. Supply exactly one configuration path for every normal run:
 
 ```bash
-./Syncerate.py --conf ./config/Syncerate.cfg
-./Syncerate.py -c ./config/Syncerate.cfg
+./Syncerate.py --conf ./config/Syncerate.toml
+./Syncerate.py -c ./config/Syncerate.toml
 ```
 
 An absolute path is also valid:
 
 ```bash
-./Syncerate.py --conf /etc/syncerate/Syncerate.cfg
+./Syncerate.py --conf /etc/syncerate/Syncerate.toml
 ```
 
-If the file cannot be read, its required section/options are missing, or a documented value fails validation, Syncerate reports a configuration error and returns exit code `2` before replication begins.
+If the file cannot be read, its required tables/options are missing, or a documented value fails validation, Syncerate reports a configuration error and returns exit code `2` before replication begins.
 
-### Dry run (`DryRun` setting)
+### Dry run (`[runtime].DryRun` setting)
 
-Dry-run is normally selected in the settings file:
+Dry-run is normally selected in the TOML settings file:
 
-```ini
-[Syncerate Config]
-DryRun = True
+```toml
+[runtime]
+DryRun = true
 ```
 
 Then start Syncerate with the normal command:
 
 ```bash
-./Syncerate.py --conf ./config/Syncerate.cfg
+./Syncerate.py --conf ./config/Syncerate.toml
 ```
 
-Set `DryRun = False` for a real replication run. As a convenience, `--dry-run` can temporarily force dry-run on even when the settings file says `False`:
+Set `DryRun = false` for a real replication run. As a convenience, `--dry-run` can temporarily force dry-run on even when the settings file says `false`:
 
 ```bash
-./Syncerate.py --conf ./config/Syncerate.cfg --dry-run
+./Syncerate.py --conf ./config/Syncerate.toml --dry-run
 ```
 
-There is deliberately no CLI option that forces `DryRun = True` back to a real run. This keeps the persistent safety setting authoritative.
+There is deliberately no CLI option that forces a configured `DryRun = true` back to a real run. This keeps the persistent safety setting authoritative.
 
-The dry-run report includes the number of planned pairs and the exact shell-style Syncoid command that would be built for each source/destination pair, including per-destination extra arguments. The mode stops after planning: it does **not** call `resolve_password()`, start the private ssh-agent, start Syncoid, transfer data, or execute `SystemAction`.
+The dry-run report includes the number of planned pairs and the exact shell-style Syncoid command that would be built for each source/destination pair. No credentials are requested, no private ssh-agent is started, Syncoid is never executed, no data is transferred, and `SystemAction` is skipped.
 
-A successful dry run follows the same two success switches as a real successful run:
-
-- `SendMailOnSuccess = False` suppresses successful dry-run email, but configured error email remains enabled.
-- `SendMQTTOnSuccess = False` suppresses successful dry-run MQTT, but configured error MQTT remains enabled.
-- When successful dry-run MQTT is enabled, Syncerate deliberately does **not** publish the normal retained `mqtt_message` or Home Assistant `online` availability signal. It publishes a non-retained JSON dry-run report instead: to `mqtt_json_topic` when `MQTT_JSON_Status = Yes`, otherwise to `<mqtt_topic>/dry-run` when only `Use_MQTT = Yes`.
-
-A successful dry-run email is clearly marked `DRY RUN`, states that no replication was performed, and contains the dry-run report. Configuration/list failures use the normal failure-notification path and are not suppressed by either success switch.
+Success notification behavior is identical to a real run: `[mail].SendMailOnSuccess` controls successful dry-run email and `[mqtt].SendMQTTOnSuccess` controls successful dry-run MQTT. Failure notifications are independent of those success switches. Successful dry-run MQTT never publishes the normal retained legacy success payload or Home Assistant `online` availability; it uses a non-retained JSON report instead.
 
 ### `--help` / `-h`
 
@@ -213,7 +207,7 @@ Use this to see the executable's current syntax and examples. No `--conf` argume
 ./dist/Syncerate --version
 ```
 
-No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.39 build.
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.42 build.
 
 Run the packaged regression suite after installation or modification with:
 
@@ -303,96 +297,123 @@ The text after the separator is parsed with `shlex` as command arguments and app
 
 ## Configuration file
 
-The file must contain this section:
+Syncerate uses TOML. The shipped complete example is:
 
-```ini
-[Syncerate Config]
+```text
+config/example-Syncerate.toml
 ```
 
-A complete example:
+Copy it and edit the copy:
 
-```ini
-[Syncerate Config]
+```bash
+cp config/example-Syncerate.toml config/Syncerate.toml
+```
 
-DryRun = False
+The configuration is divided by responsibility:
 
-BackupTitle = Main ZFS backup
-BackupComment = Replicate selected datasets to the backup pool
-    This is a second line in the same backup comment.
+- `[backup]` — descriptive metadata only.
+- `[syncoid]` — dataset-list paths and the Syncoid command template.
+- `[runtime]` — application safety/runtime controls including dry-run, post-success action, missing-dataset continuation, resume policy, and Broken Pipe retry policy.
+- `[ssh]` — password/passphrase handling and private ssh-agent settings.
+- `[mail]` — email recipient and email success-notification policy.
+- `[mqtt]` — broker, legacy MQTT, JSON MQTT, and MQTT success-notification policy.
+- `[home_assistant]` — legacy Home Assistant availability integration.
+- `[logging]` — log filename format and log destination.
 
-SourceListPath = /absolute/path/to/source-list
-DestListPath = /absolute/path/to/destination-list
+TOML Boolean values are native `true`/`false` values and must **not** be quoted. String-valued disable controls such as `Mail = "No"`, `PassWord = "No"`, `LogDestination = "No"`, and `SystemAction = "No"` remain strings because those options can also contain an address, passphrase, directory, or command.
 
-SyncoidCommand = syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --compress none --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation
+A compact example:
 
-PassWord = No
-UseSSHAgent = No
+```toml
+[backup]
+BackupTitle = "Main ZFS backup"
+BackupComment = "Replicate selected datasets to the backup pool"
+
+[syncoid]
+SourceListPath = "/absolute/path/to/source-list"
+DestListPath = "/absolute/path/to/destination-list"
+SyncoidCommand = "syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --compress none --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation"
+
+[ssh]
+PassWord = "No"
+UseSSHAgent = false
 SSHAgentKeyLifetimeSeconds = 3600
-Mail = No
-SendMailOnSuccess = True
-DateTime = %Y-%m-%d_%H_%M_%S
-LogDestination = No
-SystemAction = No
 
-ContinueWithoutResume = True
-RetryBrokenPipe = No
+[mail]
+Mail = "No"
+SendMailOnSuccess = true
+
+[mqtt]
+Use_MQTT = false
+SendMQTTOnSuccess = true
+broker_address = "mqtt.example.com"
+broker_port = 1883
+mqtt_username = ""
+mqtt_password = ""
+mqtt_topic = "home-assistant/syncerate/command"
+mqtt_message = "ON"
+MQTT_JSON_Status = false
+mqtt_json_topic = "homeassistant/syncerate/status"
+
+[home_assistant]
+Use_HomeAssistant = false
+HomeAssistant_Available = "home-assistant/syncerate/available"
+
+[logging]
+DateTime = "%Y-%m-%d_%H_%M_%S"
+LogDestination = "No"
+
+[runtime]
+DryRun = false
+SystemAction = "No"
+ContinueOnMissingDataset = false
+ContinueWithoutResume = false
+RetryBrokenPipe = true
 BrokenPipeRetryCount = 1
 BrokenPipeRetryWaitSeconds = 10
-
-Use_MQTT = No
-SendMQTTOnSuccess = True
-broker_address = mqtt.example.com
-broker_port = 1883
-mqtt_username =
-mqtt_password =
-mqtt_topic = home-assistant/syncerate/command
-mqtt_message = ON
-
-Use_HomeAssistant = No
-HomeAssistant_Available = home-assistant/syncerate/available
-
-MQTT_JSON_Status = No
-mqtt_json_topic = homeassistant/syncerate/status
 ```
 
 ## Configuration options
 
-| Option | Required | Accepted value or purpose |
-| --- | --- | --- |
-| `DryRun` | No | Boolean safety mode. Defaults to `False`. `True` validates configuration/dataset pairing, reports the exact planned Syncoid commands, and prevents credentials, ssh-agent, Syncoid, transfers, and `SystemAction` from running. The `--dry-run` CLI flag can force this on even when the setting is false. |
-| `BackupTitle` | No | Optional short name included in logs, email content, and JSON MQTT `title`/compatibility `name` fields. |
-| `BackupComment` | No | Optional description included in logs and email content. It may span multiple lines by indenting every continuation line in the INI file. |
-| `SourceListPath` | Yes | Path to the source dataset list. Relative paths are resolved from the current working directory. |
-| `DestListPath` | Yes | Path to the destination dataset list. Relative paths are resolved from the current working directory. |
-| `SyncoidCommand` | Yes | Non-empty Syncoid command template containing exactly one `SourceDataSet` placeholder and exactly one `DestDataSet` placeholder. The command must also be valid `shlex` syntax. |
-| `PassWord` | Yes | Non-empty value: `No`, `Ask`, or a literal SSH password/key passphrase. With private-agent mode, `Ask` is recommended for encrypted keys so the passphrase is not stored in the configuration. |
-| `UseSSHAgent` | No | Enables an isolated per-run OpenSSH agent with `Yes`, `True`, `1`, or `On`. Requires `--sshkey` in `SyncoidCommand`. Disabled values preserve the legacy Pexpect-through-Syncoid authentication path. |
-| `SSHAgentKeyLifetimeSeconds` | No | Positive whole-number lifetime for the identity loaded into the private agent. Defaults to `3600`. If it expires during a long run, Syncerate reloads it before the next dataset. |
-| `Mail` | Yes | Recipient address, or `No` to disable email completely. |
-| `SendMailOnSuccess` | No | Boolean controlling success email for both real successful runs and successful dry-run reports. Defaults to `True` when omitted. Setting it to `No` does **not** suppress error email; errors still send whenever `Mail` contains a recipient. |
-| `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
-| `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out` files, or `No` for terminal-only logging. |
-| `SystemAction` | Yes | Trusted shell command executed after a successful real replication run, or `No` to disable it. It is always skipped whenever dry-run mode is active (`DryRun = True` or `--dry-run`). |
-| `ContinueWithoutResume` | No | Boolean; defaults to `True`. Logs Syncoid’s resume-unavailable warning and continues when true. `False` stops the run with exit code `4` and uses the normal error-notification path. Other warnings do not cause failures. |
-| `RetryBrokenPipe` | No | Enables dataset-level Broken Pipe retry handling. Each dataset receives its own retry allowance. Exhausting it stops the entire run with exit `2` and error notifications; later pairs are not started. Missing or disabled values preserve normal Syncoid failure handling. |
-| `BrokenPipeRetryCount` | No | Number of retries allowed for each individual dataset after its initial attempt. Defaults to `1` when omitted. The count resets for every dataset pair. Use `0` to stop immediately after the first ordinary Broken Pipe. Negative values and non-integers are rejected. |
-| `BrokenPipeRetryWaitSeconds` | No | Whole number of seconds to wait before each Broken Pipe retry. Defaults to `10` when omitted. Use `0` to retry immediately. Negative values and non-integers are rejected as configuration errors. |
-| `Use_MQTT` | No | Enables MQTT with `Yes`, `True`, `1`, or `On`. Real success publishes retained `mqtt_message` to `mqtt_topic` when `SendMQTTOnSuccess` is true. Successful dry runs use non-retained JSON on `<mqtt_topic>/dry-run` instead. Failures publish non-retained JSON to `<mqtt_topic>/error`, or to `mqtt_json_topic` when JSON status is enabled. |
-| `SendMQTTOnSuccess` | No | Boolean controlling MQTT publishing for real success and successful dry-run reports. Defaults to `True` when omitted. `False` suppresses all success MQTT/HA/JSON output. Errors still publish whenever `Use_MQTT` or `MQTT_JSON_Status` is enabled. |
-| `broker_address` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker hostname or IP address shared by the enabled MQTT outputs. |
-| `broker_port` | When `Use_MQTT` or `MQTT_JSON_Status` is enabled | MQTT broker TCP port as an integer from `1` through `65535`, commonly `1883`. |
-| `mqtt_username` | No | MQTT username shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
-| `mqtt_password` | No | MQTT password shared by the enabled MQTT outputs. Leave empty when authentication is not used. |
-| `mqtt_topic` | When `Use_MQTT = Yes` | Topic for retained success messages. When only `Use_MQTT` is enabled, failure JSON goes to this exact topic plus `/error`; for example, `syncerate/result/error`. |
-| `mqtt_message` | When `Use_MQTT = Yes` | Original retained success-only payload. Fatal run failures do not publish this legacy message. |
-| `Use_HomeAssistant` | No | Preserves the original Home Assistant availability integration. When both this and `Use_MQTT` are enabled, retained payload `online` is additionally published to `HomeAssistant_Available`. |
-| `HomeAssistant_Available` | When `Use_MQTT = Yes` and HA integration is enabled | Original Home Assistant availability topic. Payload `online` remains retained. |
-| `MQTT_JSON_Status` | No | Independently enables structured success/failure JSON status. It may run together with the old MQTT/HA outputs or by itself while `Use_MQTT = No`. JSON is always non-retained. |
-| `mqtt_json_topic` | When `MQTT_JSON_Status = Yes` | Dedicated JSON-only topic. It must differ from an enabled `mqtt_topic` and `HomeAssistant_Available`; every JSON publish hard-codes `retain = false`. |
+| TOML table | Option | Required | Accepted value or purpose |
+| --- | --- | --- | --- |
+| `[backup]` | `BackupTitle` | No | Optional short name included in logs, email content, and JSON MQTT `title`/compatibility `name` fields. |
+| `[backup]` | `BackupComment` | No | Optional description included in logs and email. TOML basic or multiline strings are supported. |
+| `[syncoid]` | `SourceListPath` | Yes | Path to the source dataset list. Relative paths are resolved from the current working directory. |
+| `[syncoid]` | `DestListPath` | Yes | Path to the destination dataset list. |
+| `[syncoid]` | `SyncoidCommand` | Yes | Non-empty Syncoid command template containing exactly one `SourceDataSet` and one `DestDataSet` placeholder. |
+| `[runtime]` | `ContinueWithoutResume` | No | Boolean; defaults to `true`. Logs Syncoid's specific resume-unavailable warning and continues; `false` stops with exit `4`. |
+| `[runtime]` | `RetryBrokenPipe` | No | Boolean; defaults to `false`. Enables dataset-level ordinary Broken Pipe retries. |
+| `[runtime]` | `BrokenPipeRetryCount` | No | Non-negative integer; defaults to `1`. Number of retries after the initial affected attempt. |
+| `[runtime]` | `BrokenPipeRetryWaitSeconds` | No | Non-negative integer; defaults to `10`. Wait before each ordinary Broken Pipe retry. |
+| `[ssh]` | `PassWord` | Yes | String: `"No"`, `"Ask"`, or a literal SSH password/key passphrase. |
+| `[ssh]` | `UseSSHAgent` | No | Boolean; defaults to `false`. Enables an isolated per-run OpenSSH agent. |
+| `[ssh]` | `SSHAgentKeyLifetimeSeconds` | No | Positive integer; defaults to `3600`. |
+| `[mail]` | `Mail` | Yes | Recipient address, or string `"No"` to disable email completely. |
+| `[mail]` | `SendMailOnSuccess` | No | Boolean; defaults to `true`. Controls success email for real and dry runs. Failure email is not suppressed by this switch. |
+| `[mqtt]` | `Use_MQTT` | No | Boolean; defaults to `false`. Enables retained legacy MQTT success publishing and non-retained failure/dry-run event routing. |
+| `[mqtt]` | `SendMQTTOnSuccess` | No | Boolean; defaults to `true`. Controls success MQTT/HA/JSON publishing. Failure MQTT is not suppressed by this switch. |
+| `[mqtt]` | `broker_address` | When either MQTT output is enabled | Broker hostname/IP. |
+| `[mqtt]` | `broker_port` | When either MQTT output is enabled | Integer `1..65535`; commonly `1883`. |
+| `[mqtt]` | `mqtt_username` | No | Broker username, or empty string. |
+| `[mqtt]` | `mqtt_password` | No | Broker password, or empty string. |
+| `[mqtt]` | `mqtt_topic` | When `Use_MQTT = true` | Legacy retained success topic. Legacy-only failure uses `<mqtt_topic>/error`; dry-run success uses `<mqtt_topic>/dry-run`. |
+| `[mqtt]` | `mqtt_message` | When `Use_MQTT = true` | Legacy retained success payload. The key must exist; an empty payload is allowed. |
+| `[mqtt]` | `MQTT_JSON_Status` | No | Boolean; defaults to `false`. Independently enables structured non-retained success/failure JSON. |
+| `[mqtt]` | `mqtt_json_topic` | When `MQTT_JSON_Status = true` | Dedicated JSON topic, distinct from enabled legacy/availability topics. |
+| `[home_assistant]` | `Use_HomeAssistant` | No | Boolean; defaults to `false`. Enables the legacy retained `online` availability publication when legacy MQTT is also enabled. |
+| `[home_assistant]` | `HomeAssistant_Available` | When HA integration is enabled | Availability topic. |
+| `[logging]` | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
+| `[logging]` | `LogDestination` | Yes | Directory for `.log`, `.err`, and `.out`, or string `"No"` for terminal-only logging. |
+| `[runtime]` | `DryRun` | No | Boolean; defaults to `false`. Safe planning/report mode. `--dry-run` can force it on. |
+| `[runtime]` | `SystemAction` | Yes | Trusted shell command run only after successful real replication, or string `"No"` to disable. Always skipped in dry-run. |
+| `[runtime]` | `ContinueOnMissingDataset` | No | Boolean; defaults to `false`. `false` records the first recognized missing dataset/pool and stops before the next pair. `true` records the failure and continues later pairs. **Either mode still ends in failure with exit `8` and failure reporting.** |
 
-Boolean options (`DryRun`, `UseSSHAgent`, `ContinueWithoutResume`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`) accept `Yes`/`No`, `True`/`False`, `1`/`0`, or `On`/`Off` case-insensitively. Other spellings are rejected at startup instead of being silently treated as disabled. `SendMailOnSuccess`, `SendMQTTOnSuccess`, and `ContinueWithoutResume` default to enabled when omitted. `DryRun` and the other Boolean options default to disabled.
+The loader has a regression-audited schema containing exactly these 31 supported options. Tests compare the loader's actual option accesses to that schema and compare the shipped `example-Syncerate.toml` to the same schema, so a script option cannot be added without also being represented in the TOML example. Unknown extra TOML tables are ignored by startup-configuration logging; only known Syncerate tables are logged, and credential-like keys are suppressed.
 
-When MQTT is enabled, the broker address, valid port, and the topics required by the enabled channel are validated before replication starts. Although some integrations are disabled with `No`, the required keys should remain in the configuration so startup validation succeeds. Required text options may not be empty; use the documented `No` value to disable mail, logging, or the system action.
+`ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` are runtime policy settings and must be placed under `[runtime]`. Syncerate rejects these names when they are left under `[syncoid]`, preventing a misplaced setting from being silently ignored and replaced by its fallback value.
+
+When MQTT is enabled, broker address, broker port, and the topics required by the enabled channels are validated before replication starts. Required text settings may not be empty; use the documented string `"No"` value where that is the supported disable control.
 
 ## Syncoid command templates
 
@@ -407,22 +428,25 @@ Syncerate replaces them separately for every dataset pair and starts Syncoid wit
 
 ### Local source to local destination
 
-```ini
-SyncoidCommand = syncoid SourceDataSet DestDataSet
+```toml
+[syncoid]
+SyncoidCommand = "syncoid SourceDataSet DestDataSet"
 ```
 
 The local Syncoid process and local ZFS commands run as the effective user that started `Syncerate.py`.
 
 ### Remote source to local destination
 
-```ini
-SyncoidCommand = syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation
+```toml
+[syncoid]
+SyncoidCommand = "syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation"
 ```
 
 ### Local source to remote destination
 
-```ini
-SyncoidCommand = syncoid SourceDataSet backupuser@192.0.2.20:DestDataSet --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation
+```toml
+[syncoid]
+SyncoidCommand = "syncoid SourceDataSet backupuser@192.0.2.20:DestDataSet --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation"
 ```
 
 A remote endpoint uses the SSH user written before `@`. `--sshport` selects a non-default SSH port, and `--sshkey` selects the key used for authentication.
@@ -433,30 +457,31 @@ Any other Syncoid options can be included in `SyncoidCommand` or added to indivi
 
 ## Password and passphrase handling
 
-`PassWord` still supports three modes:
+`PassWord` still supports three modes: string `"No"`, string `"Ask"`, or a literal password/passphrase. For example:
 
-```ini
-PassWord = No
-PassWord = Ask
-PassWord = your-secret
+```toml
+[ssh]
+PassWord = "Ask"
 ```
 
-`Ask` prompts once with `getpass()` when Syncerate starts and is recommended for an encrypted SSH key because the passphrase is not stored in the configuration. Password, MQTT credentials, and other secret-like option names are omitted from normal configuration logging. Only the `[Syncerate Config]` section is logged; unrelated INI sections are not echoed.
+`Ask` prompts once with `getpass()` when Syncerate starts and is recommended for an encrypted SSH key because the passphrase is not stored in the configuration. Password, MQTT credentials, and other secret-like option names are omitted from normal configuration logging. Only known Syncerate TOML tables are logged; unrelated TOML tables are not echoed.
 
 ### Recommended encrypted-key mode: private ssh-agent
 
 Enable the isolated agent path with:
 
-```ini
-UseSSHAgent = Yes
+```toml
+[ssh]
+UseSSHAgent = true
 SSHAgentKeyLifetimeSeconds = 3600
-PassWord = Ask
+PassWord = "Ask"
 ```
 
 The `SyncoidCommand` must contain the identity explicitly, for example:
 
-```ini
-SyncoidCommand = syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --sshkey /root/.ssh/syncerate --no-privilege-elevation
+```toml
+[syncoid]
+SyncoidCommand = "syncoid backupuser@192.0.2.10:SourceDataSet DestDataSet --sshkey /root/.ssh/syncerate --no-privilege-elevation"
 ```
 
 Private-agent mode uses this process model: **Pexpect starts Syncoid, and Syncoid remains responsible for starting and controlling SSH, mbuffer, pv, ZFS send/receive, and its own SSH control connections.** Syncerate does not replace Syncoid's SSH process and does not rewrite the configured Syncoid command with hidden SSH options.
@@ -485,37 +510,40 @@ The private agent is still isolated and contains only the configured Syncerate i
 
 With:
 
-```ini
-UseSSHAgent = No
+```toml
+[ssh]
+UseSSHAgent = false
 ```
 
-Syncerate uses the original Pexpect-through-Syncoid model. Pexpect starts Syncoid and watches the output produced by Syncoid and its nested SSH process. If an SSH account-password or private-key-passphrase prompt appears, Syncerate temporarily disables the `.out` logfile, sends `PassWord` directly to the Syncoid Pexpect child, then restores logging. The nested Syncoid prompt path deliberately does not wait for a separate no-echo transition before sending, preserving the established behavior. If `PassWord = No`, an observed credential prompt remains a fatal authentication error. Prompt matching is shaped like a real password/passphrase prompt, so ordinary output containing words such as `password` is not treated as a request for a secret.
+Syncerate uses the original Pexpect-through-Syncoid model. Pexpect starts Syncoid and watches the output produced by Syncoid and its nested SSH process. If an SSH account-password or private-key-passphrase prompt appears, Syncerate temporarily disables the `.out` logfile, sends `PassWord` directly to the Syncoid Pexpect child, then restores logging. The nested Syncoid prompt path deliberately does not wait for a separate no-echo transition before sending, preserving the established behavior. If `PassWord = "No"`, an observed credential prompt remains a fatal authentication error. Prompt matching is shaped like a real password/passphrase prompt, so ordinary output containing words such as `password` is not treated as a request for a secret.
 
 ## Multiline backup comments
 
-`BackupComment` uses normal INI continuation lines. Put the first line after `BackupComment =` and indent every following line with spaces or a tab:
+`BackupComment` lives under `[backup]`. A normal one-line TOML string works, or use a TOML multiline basic string for several lines:
 
-```ini
-BackupTitle = Main ZFS backup
-BackupComment = Replicate selected datasets to the backup pool
-    This line explains why the backup is running.
-    This line can contain another useful note.
+```toml
+[backup]
+BackupComment = """First line
+Second line
+Third line"""
 ```
 
-Do not wrap the whole multiline value in quotes. Quotes would become part of the value, and an unindented second physical line is not a continuation. Syncerate preserves the embedded newlines for email content and logs each comment line separately so terminal and `.log` output keep their normal timestamp/level prefix.
+The embedded newlines are preserved in terminal/file summaries and email reports, while each physical log line is still prefixed safely by the logger.
 
 ## Logging
 
 Terminal-only logging:
 
-```ini
-LogDestination = No
+```toml
+[logging]
+LogDestination = "No"
 ```
 
 Write files to a directory:
 
-```ini
-LogDestination = /var/log/syncerate
+```toml
+[logging]
+LogDestination = "/var/log/syncerate"
 ```
 
 Syncerate creates the directory when necessary and can write:
@@ -532,8 +560,9 @@ Syncerate-<timestamp>.out
 
 The timestamp is generated from `DateTime`, for example:
 
-```ini
-DateTime = %Y-%m-%d_%H_%M_%S
+```toml
+[logging]
+DateTime = "%Y-%m-%d_%H_%M_%S"
 ```
 
 For every normal invocation, Syncerate starts a monotonic runtime timer before configuration/runtime work. The reported `Total runtime` is captured when the replication run has reached its success/failure result, immediately before post-run email and `SystemAction` handling. This fixed cut-off is intentional: it allows the **same runtime value** to be written to terminal, `.log`, and the email that is about to be sent. Time spent sending that same email, waiting the optional two minutes before a system action, or executing the system action cannot be included in an email that has already been constructed.
@@ -542,7 +571,7 @@ For successful runs, Syncerate also reports `Data transferred`. It reads the byt
 
 Syncerate deliberately does **not** guess a transfer size from Syncoid's rounded `(~ size)` estimates. If a transfer starts but a usable `pv` byte counter cannot be observed—for example because `--quiet` suppresses progress, `pv` is unavailable, or custom `--pv-options` replace the normal byte-counter output—the final success summary reports `Data transferred :   Unavailable`.
 
-The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints the transfer total (for completed real replication summaries), inserts one blank line, and prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the final summary. Real success email bodies use the same transfer/runtime summary. A successful dry run instead includes `Run mode : DRY RUN (no replication performed)`, the planned dataset-pair count, and runtime; it deliberately has no `Data transferred` line because no data is sent. Ordinary interrupted error paths include metadata/runtime but do not claim a complete transfer total. Dry-run failures are likewise marked `DRY RUN` in the summary and notification path. The special missing-dataset/pool failure path is different because Syncerate deliberately completes the remaining configured real replication list first; that completed-list failure may therefore include the measured transfer total together with exit code `8`. `--help` and `--version` do not produce a runtime summary.
+The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints the transfer total (for completed real replication summaries), inserts one blank line, and prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the final summary. Real success email bodies use the same transfer/runtime summary. A successful dry run instead includes `Run mode : DRY RUN (no replication performed)`, the planned dataset-pair count, and runtime; it deliberately has no `Data transferred` line because no data is sent. Ordinary interrupted error paths include metadata/runtime but do not claim a complete transfer total. Dry-run failures are likewise marked `DRY RUN` in the summary and notification path. The missing-dataset/pool failure path follows `[runtime].ContinueOnMissingDataset`: with `false`, Syncerate records the first recognized missing dataset/pool and stops before the next pair; with `true`, it records each such failure and continues later configured pairs. Either mode still ends with exit code `8` and failure reporting. A continue-enabled run that reaches the end of the configured list may include the measured transfer total in that failure summary. `--help` and `--version` do not produce a runtime summary.
 
 Example:
 
@@ -563,20 +592,22 @@ Total runtime   :   01:23:45.678
 
 Disable email:
 
-```ini
-Mail = No
+```toml
+[mail]
+Mail = "No"
 ```
 
 Enable email:
 
-```ini
-Mail = user@example.com
-SendMailOnSuccess = True
+```toml
+[mail]
+Mail = "user@example.com"
+SendMailOnSuccess = true
 ```
 
-`SendMailOnSuccess` defaults to `True` when omitted. Set it to `False` when you want email only for failures. The switch applies to both real successful runs and successful dry-run reports. It does not suppress error mail: as long as `Mail` contains a recipient, handled Syncerate errors still attempt to send their normal error email. A successful dry-run email is explicitly marked `DRY RUN`, states that no replication was performed, and contains the planned-command report.
+`SendMailOnSuccess` defaults to `true` when omitted. Set it to `false` when you want email only for failures. The switch applies to both real successful runs and successful dry-run reports. It does not suppress error mail: as long as `Mail` contains a recipient, handled Syncerate errors still attempt to send their normal error email. A successful dry-run email is explicitly marked `DRY RUN`, states that no replication was performed, and contains the planned-command report.
 
-A working local `mail` command is required for delivery. Syncerate can send real-success, dry-run-success, Syncoid-error, script-error, and MQTT-error messages. Real success email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, `Data transferred`, another blank line, and `Total runtime`. Dry-run success mail uses the same dry-run summary, clearly says that no replication was performed, and includes the exact planned-command report; it does not claim a transfer total. Ordinary interrupted error emails include the same metadata/runtime but omit transfer totals because the replication list did not complete. A failure that occurs while dry-run mode is active is clearly marked `DRY RUN` and is still attempted even when `SendMailOnSuccess = False`. Missing-dataset/pool failures from real replication are reported separately: Syncerate first continues through the remaining configured pairs, then sends an exit-code-`8` failure mail that lists every failed pair plus the matched ZFS/Syncoid message and may include the completed-list transfer total. When file logging is enabled, relevant `.log`, `.err`, and `.out` files are attached when available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not replace the replication result.
+A working local `mail` command is required for delivery. Syncerate can send real-success, dry-run-success, Syncoid-error, script-error, and MQTT-error messages. Real success email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, `Data transferred`, another blank line, and `Total runtime`. Dry-run success mail uses the same dry-run summary, clearly says that no replication was performed, and includes the exact planned-command report; it does not claim a transfer total. Ordinary interrupted error emails include the same metadata/runtime but omit transfer totals because the replication list did not complete. A failure that occurs while dry-run mode is active is clearly marked `DRY RUN` and is still attempted even when `SendMailOnSuccess = false`. Missing-dataset/pool failures from real replication are reported separately. With `[runtime].ContinueOnMissingDataset = false`, Syncerate records the first recognized missing dataset/pool, stops before the next pair, and sends an exit-code-`8` failure mail. With it set to `true`, Syncerate records each recognized missing dataset/pool, continues later configured pairs, and still sends an exit-code-`8` failure mail after processing ends. The failure mail lists recorded failed pairs plus the matched ZFS/Syncoid message; a continue-enabled run that reaches the end may also include the completed-list transfer total. When file logging is enabled, relevant `.log`, `.err`, and `.out` files are attached when available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not replace the replication result.
 
 ## Syncoid warnings and resume support
 
@@ -586,16 +617,18 @@ An ordinary warning alone does not make the run fail. An ordinary warning follow
 
 The separate resume policy applies to Syncoid's `ZFS resume feature not available` warning:
 
-```ini
-ContinueWithoutResume = True
+```toml
+[runtime]
+ContinueWithoutResume = true
 ```
 
-This optional Boolean defaults to `True` and accepts the same true/false spellings as the other Boolean settings. Syncerate logs the resume-unavailable warning and waits for Syncoid to finish. A later error or non-zero exit still fails.
+This optional TOML Boolean defaults to `true`; use native unquoted `true` or `false`. Syncerate logs the resume-unavailable warning and waits for Syncoid to finish. A later error or non-zero exit still fails.
 
 To require resume support:
 
-```ini
-ContinueWithoutResume = False
+```toml
+[runtime]
+ContinueWithoutResume = false
 ```
 
 Syncerate stops the current child process and returns exit code `4` when that warning is observed. The remaining dataset pairs and successful-run actions are not started. Enabled error notifications are attempted, even when success notifications are disabled. This reacts to Syncoid's output; it does not perform a separate capability check before Syncoid starts.
@@ -612,14 +645,16 @@ Syncerate retains internal recovery tracking for the non-warning stale-source me
 
 The feature is disabled by default:
 
-```ini
-RetryBrokenPipe = No
+```toml
+[runtime]
+RetryBrokenPipe = false
 ```
 
 Enable it and select the retry count and wait time with:
 
-```ini
-RetryBrokenPipe = Yes
+```toml
+[runtime]
+RetryBrokenPipe = true
 BrokenPipeRetryCount = 1
 BrokenPipeRetryWaitSeconds = 10
 ```
@@ -641,11 +676,11 @@ The retry count is never shared between datasets. This option does not retry aut
 
 ## MQTT notifications
 
-`SendMQTTOnSuccess` is optional and defaults to `True`. Setting it to `False` suppresses successful MQTT messages for both real runs and dry runs, including Home Assistant availability and JSON success events. It does not disable error reporting.
+`SendMQTTOnSuccess` is optional and defaults to `true`. Setting it to `false` suppresses successful MQTT messages for both real runs and dry runs, including Home Assistant availability and JSON success events. It does not disable error reporting.
 
-During dry-run mode, Syncerate never publishes the normal retained `mqtt_message` or retained Home Assistant `online` availability payload. When success MQTT is enabled, it sends one non-retained JSON dry-run report instead. `MQTT_JSON_Status = Yes` uses `mqtt_json_topic`; otherwise `Use_MQTT = Yes` uses the derived `<mqtt_topic>/dry-run` topic. The JSON includes `"dry_run": true` and the planned source/destination pairs.
+During dry-run mode, Syncerate never publishes the normal retained `mqtt_message` or retained Home Assistant `online` availability payload. When success MQTT is enabled, it sends one non-retained JSON dry-run report instead. `MQTT_JSON_Status = true` uses `mqtt_json_topic`; otherwise `Use_MQTT = true` uses the derived `<mqtt_topic>/dry-run` topic. The JSON includes `"dry_run": true` and the planned source/destination pairs.
 
-| Enabled MQTT options | Real success, when `SendMQTTOnSuccess = True` | Dry-run success, when `SendMQTTOnSuccess = True` | Handled error, regardless of the success switch |
+| Enabled MQTT options | Real success, when `SendMQTTOnSuccess = true` | Dry-run success, when `SendMQTTOnSuccess = true` | Handled error, regardless of the success switch |
 | --- | --- | --- | --- |
 | `Use_MQTT` only | Retained `mqtt_message` on `mqtt_topic`, plus configured HA availability | One non-retained JSON dry-run report on `<mqtt_topic>/dry-run`; no retained success/availability payload | Non-retained JSON on `<mqtt_topic>/error` |
 | `MQTT_JSON_Status` only | Non-retained JSON on `mqtt_json_topic` | One non-retained JSON dry-run report on `mqtt_json_topic` | Non-retained JSON on `mqtt_json_topic` |
@@ -656,16 +691,19 @@ The error topic for `Use_MQTT` alone is derived by appending `/error` to the exa
 
 For email and MQTT only on errors, configure:
 
-```ini
-Mail = user@example.com
-SendMailOnSuccess = False
-Use_MQTT = True
-SendMQTTOnSuccess = False
-broker_address = mqtt.example.com
+```toml
+[mail]
+Mail = "user@example.com"
+SendMailOnSuccess = false
+
+[mqtt]
+Use_MQTT = true
+SendMQTTOnSuccess = false
+broker_address = "mqtt.example.com"
 broker_port = 1883
-mqtt_topic = syncerate/result
-mqtt_message = ON
-MQTT_JSON_Status = False
+mqtt_topic = "syncerate/result"
+mqtt_message = "ON"
+MQTT_JSON_Status = false
 ```
 
 This sends error email and publishes failure JSON on `syncerate/result/error`. Keep the other required application settings in your configuration. Enable `MQTT_JSON_Status` and set `mqtt_json_topic` to route errors to a dedicated status topic instead.
@@ -674,28 +712,32 @@ This sends error email and publishes failure JSON on `syncerate/result/error`. K
 
 Enable retained success messages and non-retained error reports:
 
-```ini
-Use_MQTT = Yes
-SendMQTTOnSuccess = True
-broker_address = 192.0.2.30
+```toml
+[mqtt]
+Use_MQTT = true
+SendMQTTOnSuccess = true
+broker_address = "192.0.2.30"
 broker_port = 1883
-mqtt_username = syncerate
-mqtt_password = secret
-mqtt_topic = home-assistant/syncerate/command
-mqtt_message = ON
+mqtt_username = "syncerate"
+mqtt_password = "secret"
+mqtt_topic = "home-assistant/syncerate/command"
+mqtt_message = "ON"
 ```
 
 After replication completes successfully, Syncerate publishes `mqtt_message` to `mqtt_topic` with **retain enabled** when `SendMQTTOnSuccess` is true. Handled failures publish JSON on `<mqtt_topic>/error` when JSON status is disabled, or on `mqtt_json_topic` when enabled.
 
 To add the original Home Assistant availability integration:
 
-```ini
-Use_MQTT = Yes
-Use_HomeAssistant = Yes
-HomeAssistant_Available = home-assistant/syncerate/available
+```toml
+[mqtt]
+Use_MQTT = true
+
+[home_assistant]
+Use_HomeAssistant = true
+HomeAssistant_Available = "home-assistant/syncerate/available"
 ```
 
-On a successful run with `SendMQTTOnSuccess = True`, Syncerate additionally publishes retained payload `online` to `HomeAssistant_Available`. This old HA behavior remains tied to `Use_MQTT` and is unchanged.
+On a successful run with `SendMQTTOnSuccess = true`, Syncerate additionally publishes retained payload `online` to `HomeAssistant_Available`. This old HA behavior remains tied to `Use_MQTT` and is unchanged.
 
 A matching example entity configuration is supplied in:
 
@@ -707,23 +749,24 @@ config/HomeAssistant-Configuration-For-MQTT.yaml
 
 JSON can be enabled **in addition to** the old outputs:
 
-```ini
-Use_MQTT = Yes
-MQTT_JSON_Status = Yes
-
-mqtt_topic = home-assistant/syncerate/command
-mqtt_message = ON
-mqtt_json_topic = homeassistant/syncerate/status
+```toml
+[mqtt]
+Use_MQTT = true
+MQTT_JSON_Status = true
+mqtt_topic = "home-assistant/syncerate/command"
+mqtt_message = "ON"
+mqtt_json_topic = "homeassistant/syncerate/status"
 ```
 
 Or JSON can run by itself while the old MQTT output is disabled:
 
-```ini
-Use_MQTT = No
-MQTT_JSON_Status = Yes
-broker_address = 192.0.2.30
+```toml
+[mqtt]
+Use_MQTT = false
+MQTT_JSON_Status = true
+broker_address = "192.0.2.30"
 broker_port = 1883
-mqtt_json_topic = homeassistant/syncerate/status
+mqtt_json_topic = "homeassistant/syncerate/status"
 ```
 
 The JSON topic is deliberately separate from the retained legacy topics. When both old MQTT and JSON are enabled, `mqtt_json_topic` must differ from `mqtt_topic`; when the old Home Assistant availability integration is also enabled, it must differ from `HomeAssistant_Available` as well.
@@ -778,15 +821,16 @@ Failure JSON example for a missing ZFS dataset:
 
 `title` comes from `BackupTitle`; `name` carries the same value as a compatibility alias. `dry_run` is `true` only for successful dry-run reports, and `planned_datasets` then lists the source/destination pairs that would have been processed. The configured `SyncoidCommand` is deliberately excluded from JSON so SSH endpoints, key paths, and command options are not exposed through the status event.
 
-The `stderr` field is bounded to the last 4000 characters of relevant captured child/Syncoid output. The `warning` and `skipped_datasets` fields remain in the JSON schema for compatibility; current runs do not report exhausted Broken Pipe retries as success. A missing dataset/pool run is a real failure with exit code `8`; after Syncerate finishes the remaining configured pairs, the JSON failure event includes each affected source/destination pair and the matched ZFS/Syncoid text in `failed_datasets`.
+The `stderr` field is bounded to the last 4000 characters of relevant captured child/Syncoid output. The `warning` and `skipped_datasets` fields remain in the JSON schema for compatibility; current runs do not report exhausted Broken Pipe retries as success. A missing dataset/pool run is a real failure with exit code `8`. With `ContinueOnMissingDataset = false` (the default), Syncerate stops the configured list after the first recognized missing dataset/pool error. With `true`, it continues later pairs but still fails at the end. The JSON failure event includes each recorded source/destination pair and the matched ZFS/Syncoid text in `failed_datasets`.
 
-Failure JSON is best-effort and never replaces the original Syncerate exit code. `SendMQTTOnSuccess = No` does not affect this path. If MQTT itself is the failing component, Syncerate does not recursively try to report that MQTT failure over MQTT. Errors before configuration is loaded cannot be published.
+Failure JSON is best-effort and never replaces the original Syncerate exit code. `SendMQTTOnSuccess = false` does not affect this path. If MQTT itself is the failing component, Syncerate does not recursively try to report that MQTT failure over MQTT. Errors before configuration is loaded cannot be published.
 
 For a broker without username authentication, leave both credential fields empty:
 
-```ini
-mqtt_username =
-mqtt_password =
+```toml
+[mqtt]
+mqtt_username = ""
+mqtt_password = ""
 ```
 
 A matching automation with explicit **success**, **failure**, and default **unknown** branches is supplied in:
@@ -801,16 +845,26 @@ The automation example listens to `homeassistant/syncerate/status`. When using `
 
 Disable the action:
 
-```ini
-SystemAction = No
+```toml
+[runtime]
+SystemAction = "No"
 ```
 
-Examples:
+Examples (choose one value):
 
-```ini
-SystemAction = shutdown -P now
-SystemAction = reboot
-SystemAction = /path/to/trusted-script.sh
+```toml
+[runtime]
+SystemAction = "shutdown -P now"
+```
+
+```toml
+[runtime]
+SystemAction = "reboot"
+```
+
+```toml
+[runtime]
+SystemAction = "/path/to/trusted-script.sh"
 ```
 
 The command is executed through a shell only after all dataset transfers succeed, configured success MQTT publishing has completed when `SendMQTTOnSuccess` allows it, and configured success email has been attempted when `SendMailOnSuccess` allows it. dry-run mode always skips `SystemAction`, even when it is configured. Configure only trusted commands. A system-action exception or non-zero shell return code is logged explicitly, but it remains a best-effort post-run action and does not change an otherwise successful Syncerate exit code.
@@ -840,26 +894,29 @@ BackUp/Syncerate-Test
 
 Use a local test command:
 
-```ini
-SyncoidCommand = syncoid SourceDataSet DestDataSet
+```toml
+[syncoid]
+SyncoidCommand = "syncoid SourceDataSet DestDataSet"
 ```
 
 Review the plan first by setting this in the settings file:
 
-```ini
-DryRun = True
+```toml
+[runtime]
+DryRun = true
 ```
 
 Then run Syncerate normally:
 
 ```bash
-./Syncerate.py --conf ./config/Syncerate.cfg
+./Syncerate.py --conf ./config/Syncerate.toml
 ```
 
 Only after the dry-run report is correct, change the settings file back to:
 
-```ini
-DryRun = False
+```toml
+[runtime]
+DryRun = false
 ```
 
 and run the same command for the real replication.
@@ -876,8 +933,8 @@ sudo zfs list -t snapshot
 | Stage/result | Behavior |
 | --- | --- |
 | Preflight list length/name mismatch, empty list, or trailing slash | Stop with exit `1` before any Syncoid command starts. |
-| Syncoid reports a specifically recognized missing dataset/pool during execution | Record that pair and its raw failure context. For a definitive non-warning ZFS missing-data error, give Syncoid up to 5 seconds to unwind; if it remains stuck, stop only that already-failed attempt and continue the configured list. If it exits normally, exits `0`, `1`, or `2` remain the recognized continuation statuses. |
-| List completes with any recorded missing-data failures | Return exit `8`, attempt enabled error mail/MQTT with failed pairs and reasons, and skip successful-run system actions. |
+| Syncoid reports a specifically recognized missing dataset/pool during execution | Record that pair and its raw failure context. For a definitive non-warning ZFS missing-data error, give Syncoid up to 5 seconds to unwind; if it remains stuck, stop only that already-failed attempt. With `ContinueOnMissingDataset = false` (default), stop the configured dataset list after recording the failure. With `true`, continue to later pairs. Recognized missing-data handling still requires matching runtime evidence plus an accepted exit/cleanup state; an exit code by itself never enables this path. |
+| One or more missing-data failures were recorded | Return exit `8`, attempt enabled error mail/MQTT with failed pairs and reasons, and skip successful-run system actions. With continuation enabled, this happens after the remaining list completes; with it disabled, it happens immediately after the first recorded missing-data pair returns to the application layer. |
 | Authentication, connection, other recognized fatal errors, or unrelated nonzero exits | Stop the list; retain their error handling. |
 | Ordinary Broken Pipe retries are exhausted | Stop with exit `2`; attempt enabled error notifications. |
 
@@ -900,7 +957,7 @@ The rules were checked against [Syncoid's implementation](https://github.com/jim
 | `0` | The dataset list completed and no fatal handled error was returned. Mail-command and system-action failures are currently logged rather than changing this code. |
 | `1` | Source/destination list validation failed. |
 | `2` | Script/configuration error or exhausted ordinary Broken Pipe retries. Syncoid can also return this code for an unrelated fatal error. |
-| `4` | Syncoid reported unavailable resume support while `ContinueWithoutResume = False`. Other warning lines do not cause this exit. |
+| `4` | Syncoid reported unavailable resume support while `ContinueWithoutResume = false`. Other warning lines do not cause this exit. |
 | `5` | Password, authentication, or permission failure. |
 | `6` | Connection timed out. |
 | `7` | Connection was refused. |

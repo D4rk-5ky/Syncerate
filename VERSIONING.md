@@ -16,6 +16,42 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.42
+
+Previous version: `0.4.41`.
+
+- Moved the runtime policy settings `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` from `[syncoid]` to `[runtime]` in the authoritative TOML schema, loader, shipped example, README, tests, and code map. `[syncoid]` now owns only dataset-list paths and the Syncoid command template.
+- Preserved the runtime behavior and fallback defaults: omitted `ContinueWithoutResume` still defaults to `true`, omitted `RetryBrokenPipe` still defaults to `false`, retry count defaults to `1`, and retry wait defaults to `10`. Only category ownership changed.
+- Set the shipped example's explicit runtime policy values to the requested `ContinueWithoutResume = false`, `RetryBrokenPipe = true`, `BrokenPipeRetryCount = 1`, and `BrokenPipeRetryWaitSeconds = 10`. These explicit example values intentionally differ from the fallback values used when the settings are omitted.
+- Added a migration guard that rejects these four option names when placed under `[syncoid]`, with a clear message that they moved to `[runtime]`. This prevents an old 0.4.41 category placement from being silently ignored and replaced by fallback behavior.
+- Kept `ContinueOnMissingDataset` in `[runtime]` with its existing disabled-by-default behavior and preserved all mail/MQTT success/failure, dry-run, missing-dataset, resume-warning, and Broken Pipe runtime semantics.
+- Updated authoritative version/build expectations, regression coverage, README current-use documentation, `commented_code_map.md`, verification, and package manifest for 0.4.42. The supplied `dist/Syncerate` remains the older 0.4.29 binary because the required standalone-build dependencies are unavailable in the verification environment.
+
+## 0.4.41
+
+Previous version: `0.4.40`.
+
+- Replaced the runtime INI/`.cfg` configuration format with TOML and renamed the shipped complete example from `config/example-Syncerate.cfg` to `config/example-Syncerate.toml`. Existing private `.cfg` files must be converted before use; the loader no longer treats an INI file as a valid configuration.
+- Reorganized all 31 supported settings into ownership-based TOML tables: `[backup]`, `[syncoid]`, `[ssh]`, `[mail]`, `[mqtt]`, `[home_assistant]`, `[logging]`, and `[runtime]`. `SendMailOnSuccess` belongs to `[mail]`, `SendMQTTOnSuccess` belongs to `[mqtt]`, and `DryRun`, `SystemAction`, and `ContinueOnMissingDataset` belong to `[runtime]`.
+- Added `CONFIG_OPTION_LOCATIONS` as the authoritative schema map plus regression tests that compare both the loader's actual option accesses and the shipped TOML example against that schema. The example contains all 31 current settings in their assigned tables, including `ContinueOnMissingDataset = false`; no source-supported configuration key is missing from the example.
+- Switched configuration loading to Python's built-in `tomllib` and native TOML types. Boolean settings now require unquoted `true`/`false`; quoted Boolean-like strings are rejected instead of being interpreted through INI text conversion. Integer settings likewise require true TOML integers. String-valued controls such as `Mail = "No"`, `PassWord = "No"`, `LogDestination = "No"`, and `SystemAction = "No"` remain strings.
+- Moved MQTT broker/topics/credentials and Home Assistant availability into typed `AppConfig` fields instead of lazily rereading a ConfigParser object. Existing MQTT retention, dry-run, success-gating, and failure-reporting behavior is otherwise preserved.
+- Updated safe startup configuration logging to iterate only recognized TOML tables while continuing to omit passwords, broker credentials, and secret-like settings. TOML multiline strings remain line-prefixed in logs.
+- Updated `--conf`/`--help` examples, README current-use instructions, `commented_code_map.md`, tests, verification, `.gitignore`, version metadata, and the standalone-build expected version for TOML/0.4.41. Source mode now requires Python 3.11+ for built-in `tomllib`.
+- Preserved the supplied `dist/Syncerate` executable unchanged. It remains the older 0.4.29 build because PyInstaller and Paho MQTT are unavailable in the verification environment and therefore cannot honestly be rebuilt as 0.4.41 here.
+
+## 0.4.40
+
+Previous version: `0.4.39`.
+
+- Added optional strict Boolean `ContinueOnMissingDataset`, disabled by default when omitted. `False` preserves fail-fast behavior for the configured dataset list: the first specifically recognized runtime missing ZFS dataset/pool error is recorded, later pairs are not started, and the run still returns exit code `8` with normal failure reporting.
+- `ContinueOnMissingDataset = True` preserves the previous 0.4.39 continuation behavior: recognized missing dataset/pool failures are recorded, later configured pairs continue, and the overall run still fails with exit code `8` after the list with all recorded failures included in reporting. The option never converts missing data into success.
+- Reused the existing missing-data detector, `MissingDatasetFailure` summary, exit-code-8 application boundary, error mail, and MQTT failure reporting instead of adding a parallel error path.
+- Corrected missing-data log/email wording so it no longer always claims the remaining list was completed; reports now state whether continuation was enabled or disabled.
+- Added `ContinueOnMissingDataset = False` with full comments to `config/example-Syncerate.cfg`, updated README/current-use documentation and `commented_code_map.md`, and included the option in strict Boolean validation.
+- Added regression coverage for disabled-by-default stop behavior, explicit opt-in continuation, strict Boolean parsing/defaults, multi-pair application behavior, and error-mail policy wording.
+- Updated authoritative version/build expectations to 0.4.40. The preserved `dist/Syncerate` remains the older 0.4.29 binary because the build dependencies are not available in the verification environment.
+
 ## 0.4.39
 
 Previous version: `0.4.38`.

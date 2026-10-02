@@ -16,9 +16,9 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
         epilog=(
             "Examples:\n"
-            "  %(prog)s --conf /path/to/Syncerate.cfg\n"
-            "  %(prog)s --conf /path/to/Syncerate.cfg --dry-run\n"
-            "  %(prog)s -c ./config/Syncerate.cfg\n"
+            "  %(prog)s --conf /path/to/Syncerate.toml\n"
+            "  %(prog)s --conf /path/to/Syncerate.toml --dry-run\n"
+            "  %(prog)s -c ./config/Syncerate.toml\n"
             "  %(prog)s --version"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -30,7 +30,7 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=str,
         required=True,
         help=(
-            "Path to the required Syncerate INI configuration file. "
+            "Path to the required Syncerate TOML configuration file. "
             "Relative paths are resolved from the current working directory."
         ),
     )
@@ -41,7 +41,7 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "Validate configuration and dataset pairing, then print/log the exact "
             "planned Syncoid commands without starting Syncoid, prompting for "
             "credentials, starting a private ssh-agent, or running SystemAction. "
-            "This forces dry-run on even when DryRun = False in the config. "
+            "This forces dry-run on even when runtime.DryRun = false in the config. "
             "Configured success notifications follow SendMailOnSuccess and "
             "SendMQTTOnSuccess; configured failures still notify normally."
         ),

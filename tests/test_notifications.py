@@ -1,5 +1,4 @@
 import json
-import configparser
 import types
 import tempfile
 import shlex
@@ -38,16 +37,15 @@ class NotificationTests(unittest.TestCase):
     def mqtt_config(self, **overrides):
         """Provide valid broker/topics with inert test defaults."""
 
-        raw = configparser.RawConfigParser()
-        raw.read_dict({"Syncerate Config": {
-            "broker_address": "broker.example.test",
-            "broker_port": "1883",
-            "mqtt_topic": "syncerate/result",
-            "mqtt_message": "ON",
-            "mqtt_json_topic": "syncerate/status",
-            "HomeAssistant_Available": "syncerate/available",
-        }})
-        return make_config(raw_config=raw, **overrides)
+        return make_config(
+            broker_address="broker.example.test",
+            broker_port=1883,
+            mqtt_topic="syncerate/result",
+            mqtt_message="ON",
+            mqtt_json_topic="syncerate/status",
+            home_assistant_available="syncerate/available",
+            **overrides,
+        )
 
     @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
     @mock.patch("syncerate.app.SystemAction")
@@ -73,10 +71,11 @@ class NotificationTests(unittest.TestCase):
                 syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
                 mail_option="user@example.test", use_mqtt=True,
                 send_mail_on_success=False, send_mqtt_on_success=False,
+                continue_on_missing_dataset=True,
                 system_option="must-not-run",
             )
             with mock.patch("syncerate.app.load_app_config", return_value=cfg):
-                self.assertEqual(main(["-c", "mocked.cfg"]), 8)
+                self.assertEqual(main(["-c", "mocked.toml"]), 8)
             self.assertEqual(visited.read_text().splitlines(), ["pool/missing", "pool/nopool", "pool/good"])
             action.assert_not_called()
             self.publish.assert_called_once()
@@ -92,6 +91,7 @@ class NotificationTests(unittest.TestCase):
             self.assertIn("Missing ZFS dataset or pool", subject)
             self.assertIn("pool/missing -> backup/missing", body)
             self.assertIn("pool/nopool -> backup/nopool", body)
+            self.assertIn("ContinueOnMissingDataset was enabled", body)
             self.assertIn("exit code 8", body)
 
     def test_error_publish_routing_ignores_success_switch(self):
@@ -256,7 +256,7 @@ class NotificationTests(unittest.TestCase):
         )
         replications.side_effect = SyncerateError("connection refused", 7, kind="syncoid")
         self.publish.side_effect = OSError("broker unavailable")
-        self.assertEqual(main(["--conf", "mocked.cfg"]), 7)
+        self.assertEqual(main(["--conf", "mocked.toml"]), 7)
         self.publish.assert_called_once()
         mail.assert_called_once()
         self.assertIn("Syncoid error", mail.call_args.args[0])
@@ -381,6 +381,7 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(recipient, "user@example.test")
         self.assertIn("pool/missing -> backup/missing", body)
         self.assertIn("dataset does not exist", body)
+        self.assertIn("ContinueOnMissingDataset was disabled", body)
         self.assertIn("exit code 8", body)
 
 

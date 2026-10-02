@@ -1230,7 +1230,7 @@ def ssh_command(
             if message:
                 logger.error("ZFS/Syncoid: %s", message)
             logger.error(
-                "Recording this dataset pair as failed. Giving Syncoid up to %.1f seconds to finish cleanly before stopping only this failed attempt and continuing the list.",
+                "Recording this dataset pair as failed. Giving Syncoid up to %.1f seconds to finish cleanly before applying the configured missing-dataset continuation policy.",
                 _MISSING_DATASET_FINISH_TIMEOUT_SECONDS,
             )
             logger.error("")
@@ -1416,7 +1416,7 @@ def run_replications(
                     logger=logger,
                 )
 
-            missing_dataset_can_continue = (
+            missing_dataset_detected = (
                 result.missing_dataset_or_pool_detected
                 and (
                     result.missing_dataset_cleanup_forced
@@ -1424,7 +1424,7 @@ def run_replications(
                 )
             )
 
-            if missing_dataset_can_continue:
+            if missing_dataset_detected:
                 failure = MissingDatasetFailure(
                     dataset_pair=dataset_pair,
                     messages=result.missing_dataset_or_pool_messages,
@@ -1434,15 +1434,25 @@ def run_replications(
                 logger.error("")
                 logger.error("----------")
                 logger.error("")
+                for message in failure.messages:
+                    logger.error("ZFS/Syncoid: %s", message)
+
+                if app_config.continue_on_missing_dataset:
+                    logger.error(
+                        "Skipping failed dataset pair and continuing because ContinueOnMissingDataset is enabled: %s -> %s",
+                        dataset_pair.source,
+                        dataset_pair.destination,
+                    )
+                    logger.error("")
+                    break
+
                 logger.error(
-                    "Skipping failed dataset pair and continuing: %s -> %s",
+                    "Stopping after missing dataset/pool because ContinueOnMissingDataset is disabled: %s -> %s",
                     dataset_pair.source,
                     dataset_pair.destination,
                 )
-                for message in failure.messages:
-                    logger.error("ZFS/Syncoid: %s", message)
                 logger.error("")
-                break
+                return summary
 
             if child.exitstatus is None and child.signalstatus is not None:
                 exit_code = 128 + int(child.signalstatus)

@@ -6,7 +6,6 @@ import os
 import subprocess
 from typing import Any, Optional
 
-from .config import CONFIG_SECTION
 from .errors import EXIT_DATASET_MISSING, EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
 from .logging_setup import format_final_run_summary, format_missing_dataset_failures
 from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
@@ -281,10 +280,19 @@ def MailTo(
     ):
         subject_base = dry_run_subject_prefix + "Error running Syncerate.py - Missing ZFS dataset or pool"
         failure_text = format_missing_dataset_failures(ReplicationSummaryData)
+        continuation_text = (
+            "ContinueOnMissingDataset was enabled, so Syncerate continued with "
+            "the remaining configured dataset pairs after each recognized missing "
+            "dataset/pool error. "
+            if app_config.continue_on_missing_dataset
+            else
+            "ContinueOnMissingDataset was disabled, so Syncerate stopped the "
+            "configured dataset list after the first recognized missing dataset/pool error. "
+        )
         body = (
             summary_header(ReplicationSummaryData)
-            + "Syncerate continued with the remaining configured dataset pairs, "
-            + "but the run is marked failed with exit code 8 because one or more "
+            + continuation_text
+            + "The run is marked failed with exit code 8 because one or more "
             + "ZFS datasets or pools were missing.\n\n"
             + "Failed dataset pairs:\n"
             + failure_text
@@ -547,19 +555,10 @@ def send_mqtt_messages(
             kind="mqtt",
         ) from exc
 
-    raw_config = app_config.raw_config
-    broker_address = raw_config.get(CONFIG_SECTION, "broker_address")
-    broker_port = raw_config.getint(CONFIG_SECTION, "broker_port")
-    mqtt_username = raw_config.get(
-        CONFIG_SECTION,
-        "mqtt_username",
-        fallback="",
-    ).strip()
-    mqtt_password = raw_config.get(
-        CONFIG_SECTION,
-        "mqtt_password",
-        fallback="",
-    )
+    broker_address = app_config.broker_address
+    broker_port = app_config.broker_port
+    mqtt_username = app_config.mqtt_username.strip()
+    mqtt_password = app_config.mqtt_password
 
     auth = None
     if mqtt_username:
@@ -581,10 +580,7 @@ def send_mqtt_messages(
         if use_home_assistant:
             messages.append(
                 {
-                    "topic": raw_config.get(
-                        CONFIG_SECTION,
-                        "HomeAssistant_Available",
-                    ),
+                    "topic": app_config.home_assistant_available,
                     "payload": "online",
                     "retain": True,
                     "qos": 0,
@@ -593,8 +589,8 @@ def send_mqtt_messages(
 
         messages.append(
             {
-                "topic": raw_config.get(CONFIG_SECTION, "mqtt_topic"),
-                "payload": raw_config.get(CONFIG_SECTION, "mqtt_message"),
+                "topic": app_config.mqtt_topic,
+                "payload": app_config.mqtt_message,
                 "retain": True,
                 "qos": 0,
             }
@@ -610,11 +606,11 @@ def send_mqtt_messages(
         or (dry_run and success and app_config.use_mqtt)
     ):
         if app_config.mqtt_json_status:
-            status_topic = raw_config.get(CONFIG_SECTION, "mqtt_json_topic").strip()
+            status_topic = app_config.mqtt_json_topic.strip()
         elif dry_run and success:
-            status_topic = raw_config.get(CONFIG_SECTION, "mqtt_topic") + "/dry-run"
+            status_topic = app_config.mqtt_topic + "/dry-run"
         else:
-            status_topic = raw_config.get(CONFIG_SECTION, "mqtt_topic") + "/error"
+            status_topic = app_config.mqtt_topic + "/error"
         mqtt_payload = build_mqtt_status_payload(
             app_config,
             success=success,
@@ -647,12 +643,12 @@ def send_mqtt_messages(
         if success and app_config.use_mqtt and not dry_run:
             logger.info(
                 "Legacy MQTT success message published retained to %s",
-                raw_config.get(CONFIG_SECTION, "mqtt_topic"),
+                app_config.mqtt_topic,
             )
             if use_home_assistant:
                 logger.info(
                     "Home Assistant availability message published retained to %s",
-                    raw_config.get(CONFIG_SECTION, "HomeAssistant_Available"),
+                    app_config.home_assistant_available,
                 )
         if status_topic:
             logger.info(

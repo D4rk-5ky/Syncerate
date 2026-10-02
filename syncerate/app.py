@@ -1,6 +1,5 @@
 """Top-level application orchestration and final error boundary."""
 
-import configparser
 import logging
 import time
 from typing import Optional, Sequence
@@ -67,7 +66,7 @@ def log_syncerate_error(
 
     elif error.kind == "dataset_missing":
         logger.error("One or more Syncoid dataset pairs failed because a ZFS dataset or pool was missing")
-        logger.error("Syncerate completed the remaining dataset list before marking the run failed")
+        logger.error("Syncerate marked the run failed after recording the missing dataset/pool error")
         if error.child_before:
             logger.error("")
             logger.error("Failed dataset pairs:")
@@ -137,7 +136,7 @@ def successfull_run(
         logger.info("The Script ended successfully")
     logger.info("")
     logger.info(
-        "Now going over MAIL, MQTT and System Option, if option is set in the .cfg file"
+        "Now going over MAIL, MQTT and System Option, if option is set in the TOML file"
     )
     logger.info("")
     logger.info(
@@ -173,7 +172,7 @@ def successfull_run(
 
             lines_of_text.extend(
                 [
-                    "Now going over MAIL, MQTT and System Option, if option is set in the .cfg file",
+                    "Now going over MAIL, MQTT and System Option, if option is set in the TOML file",
                     "",
                     "MQTT failures can still be fatal here; mail and system-action failures are logged as best-effort post-run actions",
                     "",
@@ -264,7 +263,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         try:
             app_config = load_app_config(args.conf)
             dry_run = bool(args.dry_run or app_config.dry_run)
-        except (OSError, configparser.Error, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             raise SyncerateError(
                 f"Configuration error: {exc}",
                 EXIT_SCRIPT_ERROR,

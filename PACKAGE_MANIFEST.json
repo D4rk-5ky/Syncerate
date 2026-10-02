@@ -1,8 +1,8 @@
 {
-  "version": "0.4.39",
-  "previous_version": "0.4.38",
-  "source_archive": "Syncerate-0.4.38.zip",
-  "source_archive_sha256": "cb537768a474eb62cf28aeec3e849364da821933e538e0afc1071c8fdf91d845",
+  "version": "0.4.42",
+  "previous_version": "0.4.41",
+  "source_archive": "Syncerate-0.4.41.zip",
+  "source_archive_sha256": "76d3ce251c358536540e8add5fda1cffa0a2277087ef13794555438d6f995274",
   "original_file_count": 41,
   "release_file_count": 41,
   "added": [],
@@ -14,13 +14,9 @@
     "VERSIONING.md",
     "build_pyinstaller.sh",
     "commented_code_map.md",
-    "config/example-Syncerate.cfg",
+    "config/example-Syncerate.toml",
     "syncerate/__init__.py",
-    "syncerate/app.py",
-    "syncerate/cli.py",
     "syncerate/config.py",
-    "syncerate/models.py",
-    "tests/helpers.py",
     "tests/test_app_and_logging.py",
     "tests/test_config.py",
     "tests/test_packaging.py"
@@ -40,13 +36,17 @@
     "config/example-source-file",
     "dist/Syncerate",
     "requirements-build.txt",
+    "syncerate/app.py",
+    "syncerate/cli.py",
     "syncerate/datasets.py",
     "syncerate/errors.py",
     "syncerate/logging_setup.py",
+    "syncerate/models.py",
     "syncerate/notifications.py",
     "syncerate/syncoid_runner.py",
     "syncerate/system_actions.py",
     "tests/__init__.py",
+    "tests/helpers.py",
     "tests/test_datasets.py",
     "tests/test_notifications.py",
     "tests/test_syncoid_runner.py",
@@ -55,19 +55,19 @@
   "self_hash_excluded": "PACKAGE_MANIFEST.json",
   "original_files": {
     ".gitignore": {
-      "sha256": "b77121e1ce923790d4c03f36386bf367157e682a134a0082f49854e6f34fa980",
+      "sha256": "7706f9138d6b7db24ab46f92c3336ebc78cef3456bae465c3f9ac56e4d3e10bb",
       "mode": "0644"
     },
     "PACKAGE_MANIFEST.json": {
-      "sha256": "26a8bb39a0396897dad9636e2c97d1cc6f78f6185e0df00672ce09f1ae3d1d5e",
+      "sha256": "a61fceccdc25c556ae172ef11b754eca9879e558e4d3ab9f546b6dbd2dda8d28",
       "mode": "0644"
     },
     "README.md": {
-      "sha256": "90960574285a54f38cedc4c76d8dfd35a6f379f7424f174280d06199d46c97de",
+      "sha256": "1235dd41c4f56bdd576a77a107b710d1b101e593819eb51aa4b8f894033a0fee",
       "mode": "0644"
     },
     "Syncerate.py": {
-      "sha256": "199be08c2d65246d49418919fb3acb78dd72fc817002190bcf2032ce1ceaab68",
+      "sha256": "e0478f9c7c3a6b9bc5f220409be4a6dd15e66ba6e2e330d70f4d187a018fed80",
       "mode": "0755"
     },
     "Syncerate.spec": {
@@ -75,11 +75,11 @@
       "mode": "0644"
     },
     "VERIFICATION.md": {
-      "sha256": "2320ec884e1e41100f9c61841f1419a6a6f4c6f0eb9495c5be45eea45dd6d8ef",
+      "sha256": "bcebd243024cd2fa90d4cde1dff2fd8d75b7d45a0275f6af25eb0db41c1aaeee",
       "mode": "0644"
     },
     "VERSIONING.md": {
-      "sha256": "547e8d71141a4365f220c54adb50c7f3987e3f704b1fe903f0cad8af87c93b69",
+      "sha256": "52cb39fffbf1a456af54a375aa6699b44f6d3d1cc7af391424830c3ee77c6455",
       "mode": "0644"
     },
     "_config.yaml": {
@@ -91,11 +91,11 @@
       "mode": "0644"
     },
     "build_pyinstaller.sh": {
-      "sha256": "1010e2087b5bb5e4c5ddc5ca86a333f906d656a4d2b676c01fcfd1d0d66833c1",
+      "sha256": "f4a5dc85016aa09ce56a369cef443f3873791a9eb6ef7ee3b5a34221ba37bbde",
       "mode": "0755"
     },
     "commented_code_map.md": {
-      "sha256": "b78bb86cc0b2b8121a2f54f50e4443b7ebc0f7ee46304844a1845a789438643b",
+      "sha256": "583b63ade721922f13e667f795d4bb36bbc6bd4d6872085bd861b85f797e7902",
       "mode": "0644"
     },
     "config/Daily backup at cheapest time - Continue on error without losing progress": {
@@ -118,8 +118,8 @@
       "sha256": "e862544bce508a5c069888b3f2e976a080cfee9e4f23695fdb201fd724e39b64",
       "mode": "0644"
     },
-    "config/example-Syncerate.cfg": {
-      "sha256": "511ae17f2ac2efd0f4c4aed7187e342a04a29458b10666871938c843f08d8a43",
+    "config/example-Syncerate.toml": {
+      "sha256": "439955bd8ddaa81d9f30b7c1e9e0e05ae35c9ba479bc1d4a72628a72f11f0956",
       "mode": "0644"
     },
     "config/example-dest-file": {
@@ -139,19 +139,19 @@
       "mode": "0644"
     },
     "syncerate/__init__.py": {
-      "sha256": "1236ffb673fd9684aff2314a7fe388da9d1d355d726f4d3d2e5cfa461a321a45",
+      "sha256": "87cb099c69d2a238a37ee70dbc83dcafd92d6a36237567fda0a5fd5b34679b64",
       "mode": "0644"
     },
     "syncerate/app.py": {
-      "sha256": "e0f49cd7f33f9aefcb77f9e0be1b3c62ca1111cf8979ee2fa76f107788db093d",
+      "sha256": "6269aa8966edd0b65ff2d9f3d6ab15a06100956bbaad8d102845d185952400f9",
       "mode": "0644"
     },
     "syncerate/cli.py": {
-      "sha256": "f16d0c532048fa2cb9011913c68fb565455e7f5a728f3b60927037076da77286",
+      "sha256": "71e893a3407b91accc9767d7a1461b0f7e60df8968cce1e8212ba973283a96fd",
       "mode": "0644"
     },
     "syncerate/config.py": {
-      "sha256": "722d0a24e4c80ed24a160570787e066d92c9466ed07eeb809c59bf8c88283610",
+      "sha256": "e58d1fd8cf0e8abd0ea5992685521c5f067cfaecea4a9f371388f55c4f09b43e",
       "mode": "0644"
     },
     "syncerate/datasets.py": {
@@ -163,19 +163,19 @@
       "mode": "0644"
     },
     "syncerate/logging_setup.py": {
-      "sha256": "010feade81ec386eeee2814b39d04a84fc9b17c00b15041c1d93af7356e3ef0e",
+      "sha256": "2d86b905d186b7410c402e2fe904a5c152a5f3b60806fd1fb8d10e6d32ff549a",
       "mode": "0644"
     },
     "syncerate/models.py": {
-      "sha256": "ce70c1a32289bf54f18e60e4d7008a2e3e0f29311058400ff511b43406466a3e",
+      "sha256": "aba86e0a8d589c9653df420bb9b364b149e5b2ae88d64e181c9bb9ab3f9585c8",
       "mode": "0644"
     },
     "syncerate/notifications.py": {
-      "sha256": "a7cc08970a2eee30fe5a83a456b9ffb13e829e7f542aa259d7dec1a52a9f48a2",
+      "sha256": "9fe491374a21ef4febf1d7d99d1453b5c928bf553e89af7063c0b0c46cadd56b",
       "mode": "0644"
     },
     "syncerate/syncoid_runner.py": {
-      "sha256": "f4150919037b0d39a26b31c640d39564a6f3f85d82c4afe9310402463dc264d3",
+      "sha256": "e713a257d712a7353ff0e1eeea49f19c452062d9024597249120e60f61d45113",
       "mode": "0644"
     },
     "syncerate/system_actions.py": {
@@ -187,15 +187,15 @@
       "mode": "0644"
     },
     "tests/helpers.py": {
-      "sha256": "8d52ccc6021bfc86fa4d35a30944d39e539202379a3d88392bb332183f842529",
+      "sha256": "47467414ce9ff769c675226bbca9f855b66c3e360d8f6864ef4244af7f11eaf7",
       "mode": "0644"
     },
     "tests/test_app_and_logging.py": {
-      "sha256": "7a995e4fe213c13d23baf8e6f3d3c2e2a7db959c3d8bb4339b532e9200bd6f85",
+      "sha256": "b08177f118b86b6ee0c8f76350ae5e830c85bee35cb6a3b719b3628c830184f8",
       "mode": "0644"
     },
     "tests/test_config.py": {
-      "sha256": "7dcbf6adfeb19f286e7f2b4b8c1d571f21ca4dbc202f1125a579137537547ca8",
+      "sha256": "1e66518cd4ec138476741b5388f0d85febe7875298c8433a6beebdd131d4aea7",
       "mode": "0644"
     },
     "tests/test_datasets.py": {
@@ -203,15 +203,15 @@
       "mode": "0644"
     },
     "tests/test_notifications.py": {
-      "sha256": "55ca42e46e54138116f47d643c7210cf3fa07ae50f767a7bc2dc44bba7ca38df",
+      "sha256": "0f78d489fa88d7ce53f3828f3127ac74f9c847324a31c38e9d0a20f956755ac4",
       "mode": "0644"
     },
     "tests/test_packaging.py": {
-      "sha256": "43bb8732441d3b4a9fd3d99065ede5f968c4908a08297d5a78fe72d71d0197de",
+      "sha256": "8e0e14d916b4491726bfd448995cb76b4dcab4a55e4d2cde8141adbcbe5c0424",
       "mode": "0644"
     },
     "tests/test_syncoid_runner.py": {
-      "sha256": "5c0e15be97667344507f9a98021998ea37667576b2d22556a9218e7b2e1931f5",
+      "sha256": "383d9442db4ea8a6a94466a45e43aa664be6c825cb84b92d0fe3d6dd31eb2ee7",
       "mode": "0644"
     },
     "tests/test_system_actions.py": {
@@ -221,7 +221,7 @@
   },
   "release_files": {
     ".gitignore": {
-      "sha256": "b77121e1ce923790d4c03f36386bf367157e682a134a0082f49854e6f34fa980",
+      "sha256": "7706f9138d6b7db24ab46f92c3336ebc78cef3456bae465c3f9ac56e4d3e10bb",
       "mode": "0644"
     },
     "PACKAGE_MANIFEST.json": {
@@ -230,11 +230,11 @@
       "note": "release hash intentionally excluded because this file describes itself"
     },
     "README.md": {
-      "sha256": "84ff213b3e83c57a34255e9d4f6d98319090ca07572517f3874cd597c9830281",
+      "sha256": "42858252037be57428c0ef259e12aab65684a3a2986af523e538d396a2ddcae7",
       "mode": "0644"
     },
     "Syncerate.py": {
-      "sha256": "199be08c2d65246d49418919fb3acb78dd72fc817002190bcf2032ce1ceaab68",
+      "sha256": "e0478f9c7c3a6b9bc5f220409be4a6dd15e66ba6e2e330d70f4d187a018fed80",
       "mode": "0755"
     },
     "Syncerate.spec": {
@@ -242,11 +242,11 @@
       "mode": "0644"
     },
     "VERIFICATION.md": {
-      "sha256": "3da183b05f4c4ab94497778221105303d243af68fc5c556ec40b485b28c0b5ba",
+      "sha256": "7c42b84f02e5055c6997f7d1074cbd6d56d91bf8ce06a9693c25889469ad70ad",
       "mode": "0644"
     },
     "VERSIONING.md": {
-      "sha256": "17caae9e8ed38ca54fd5325eeafd8d84977ae7f3de3da6e32f005ed235fcb888",
+      "sha256": "8541647249a397df6d6624a4b2d04b838c1e4a246788305f3dc2394443c03d4c",
       "mode": "0644"
     },
     "_config.yaml": {
@@ -258,11 +258,11 @@
       "mode": "0644"
     },
     "build_pyinstaller.sh": {
-      "sha256": "20ae076aff61fa7159764c8452fa26cf8d54d6621fdb12aed08d4f40d809b40a",
+      "sha256": "0b8c93f22d2db6a3e491856a470b7f6cb70e948dcd637657f1a9ed8229894b96",
       "mode": "0755"
     },
     "commented_code_map.md": {
-      "sha256": "96c34f17b395462b8eda101394357c82ecd0c647afaba299784e2aaea8a9d91f",
+      "sha256": "9238213536f1a8088418ddd1a2e78f5eebfc5bf72ddd15f6d3d5ecdbe7cf8bd2",
       "mode": "0644"
     },
     "config/Daily backup at cheapest time - Continue on error without losing progress": {
@@ -285,8 +285,8 @@
       "sha256": "e862544bce508a5c069888b3f2e976a080cfee9e4f23695fdb201fd724e39b64",
       "mode": "0644"
     },
-    "config/example-Syncerate.cfg": {
-      "sha256": "ea5a491084daee7bc25df76d99c9c2936b49e0a8750ec7cd6167a30380a6bed2",
+    "config/example-Syncerate.toml": {
+      "sha256": "e61fe2192d4487c2702a6921eab50e53b0c4801074ad5d612c2bfc0d43b6514c",
       "mode": "0644"
     },
     "config/example-dest-file": {
@@ -306,19 +306,19 @@
       "mode": "0644"
     },
     "syncerate/__init__.py": {
-      "sha256": "97dab132e819852c82f6a63cdb9b8b4b32356406388a52ce6862ccff5c219233",
+      "sha256": "3e8acfc4004b35231e16c150b100bd9d15becbe93bcaecff73d175a17a6909d3",
       "mode": "0644"
     },
     "syncerate/app.py": {
-      "sha256": "a6d286dfafa2ce8501f884dc51f4c71f354eb5bca4ddba402229b03991677a7f",
+      "sha256": "6269aa8966edd0b65ff2d9f3d6ab15a06100956bbaad8d102845d185952400f9",
       "mode": "0644"
     },
     "syncerate/cli.py": {
-      "sha256": "f550bb1aa6e43123aff39076e358aa164f3b6cb76ef7b20a3d04f70800d380d7",
+      "sha256": "71e893a3407b91accc9767d7a1461b0f7e60df8968cce1e8212ba973283a96fd",
       "mode": "0644"
     },
     "syncerate/config.py": {
-      "sha256": "9187c3d713e0efa953397b16b2931879c3ca1c65922112dee82327cc6f4de662",
+      "sha256": "99a75ba98a5e84098fa5d1630a32ae55b2bb851d8fedb68af2e0a42089914b7a",
       "mode": "0644"
     },
     "syncerate/datasets.py": {
@@ -330,19 +330,19 @@
       "mode": "0644"
     },
     "syncerate/logging_setup.py": {
-      "sha256": "010feade81ec386eeee2814b39d04a84fc9b17c00b15041c1d93af7356e3ef0e",
+      "sha256": "2d86b905d186b7410c402e2fe904a5c152a5f3b60806fd1fb8d10e6d32ff549a",
       "mode": "0644"
     },
     "syncerate/models.py": {
-      "sha256": "c389285c9b5bbd6fbb9355885c18ac97450e2823f20830337240663506483af8",
+      "sha256": "aba86e0a8d589c9653df420bb9b364b149e5b2ae88d64e181c9bb9ab3f9585c8",
       "mode": "0644"
     },
     "syncerate/notifications.py": {
-      "sha256": "a7cc08970a2eee30fe5a83a456b9ffb13e829e7f542aa259d7dec1a52a9f48a2",
+      "sha256": "9fe491374a21ef4febf1d7d99d1453b5c928bf553e89af7063c0b0c46cadd56b",
       "mode": "0644"
     },
     "syncerate/syncoid_runner.py": {
-      "sha256": "f4150919037b0d39a26b31c640d39564a6f3f85d82c4afe9310402463dc264d3",
+      "sha256": "e713a257d712a7353ff0e1eeea49f19c452062d9024597249120e60f61d45113",
       "mode": "0644"
     },
     "syncerate/system_actions.py": {
@@ -354,15 +354,15 @@
       "mode": "0644"
     },
     "tests/helpers.py": {
-      "sha256": "d88c96f0488c63d33ee138ef7681def78846caa14bbcdc14c177745c9f2943c8",
+      "sha256": "47467414ce9ff769c675226bbca9f855b66c3e360d8f6864ef4244af7f11eaf7",
       "mode": "0644"
     },
     "tests/test_app_and_logging.py": {
-      "sha256": "4b6ea60bc1e66164e9006ff28ef09207e3b0f52382104ace881ec7de1b18c621",
+      "sha256": "b1d2285bfa4d8a84c43cfc1306fee5357de9a488d8905d8b5fb6e3ecaacf132b",
       "mode": "0644"
     },
     "tests/test_config.py": {
-      "sha256": "e9e23ea577b344de926bff1a45c522d7773569c57df3fcbf1d3b2a4f11779306",
+      "sha256": "4c4b7d19eec8399d446e84b38d991726bad95d197027e0c33fd1cb069d530e5b",
       "mode": "0644"
     },
     "tests/test_datasets.py": {
@@ -370,15 +370,15 @@
       "mode": "0644"
     },
     "tests/test_notifications.py": {
-      "sha256": "55ca42e46e54138116f47d643c7210cf3fa07ae50f767a7bc2dc44bba7ca38df",
+      "sha256": "0f78d489fa88d7ce53f3828f3127ac74f9c847324a31c38e9d0a20f956755ac4",
       "mode": "0644"
     },
     "tests/test_packaging.py": {
-      "sha256": "fed4735b4e3042b9aaea75233a9c608d5af041941c54517cb6664f8aca718cca",
+      "sha256": "4589ed44b70dc948df50a184c7c8289f18737c58296a861acc091737151de1d7",
       "mode": "0644"
     },
     "tests/test_syncoid_runner.py": {
-      "sha256": "5c0e15be97667344507f9a98021998ea37667576b2d22556a9218e7b2e1931f5",
+      "sha256": "383d9442db4ea8a6a94466a45e43aa664be6c825cb84b92d0fe3d6dd31eb2ee7",
       "mode": "0644"
     },
     "tests/test_system_actions.py": {

@@ -31,10 +31,10 @@ class AppAndLoggingTests(unittest.TestCase):
         help_text = stream.getvalue()
         self.assertIn("--conf FILE", help_text)
         self.assertIn("-c FILE", help_text)
-        self.assertIn("required Syncerate INI configuration file", help_text)
+        self.assertIn("required Syncerate TOML configuration file", help_text)
         self.assertIn("--dry-run", help_text)
         self.assertIn("planned Syncoid commands without starting", help_text)
-        self.assertIn("DryRun = False", help_text)
+        self.assertIn("runtime.DryRun = false", help_text)
         self.assertIn("--version", help_text)
         self.assertIn("Show the installed Syncerate version and exit.", help_text)
         self.assertIn("Examples:", help_text)
@@ -103,33 +103,17 @@ class AppAndLoggingTests(unittest.TestCase):
         self.assertIn("00:01:02.345", lines[runtime_index])
 
     def test_startup_multiline_comment_prefixes_every_physical_log_line(self):
-        import configparser
-
-        raw = configparser.RawConfigParser()
-        raw.read_string(
-            textwrap.dedent(
-                """
-                [Syncerate Config]
-                Mail = No
-                SystemAction = No
-                DateTime = %Y
-                LogDestination = No
-                BackupTitle = Nightly backup
-                BackupComment = First line
-                    Second line
-                    Third line
-                SourceListPath = source
-                DestListPath = dest
-                PassWord = No
-                SyncoidCommand = syncoid SourceDataSet DestDataSet
-                UseSSHAgent = No
-                RetryBrokenPipe = No
-                Use_MQTT = No
-                Use_HomeAssistant = No
-                MQTT_JSON_Status = No
-                """
-            )
-        )
+        raw = {
+            "backup": {
+                "BackupTitle": "Nightly backup",
+                "BackupComment": "First line\nSecond line\nThird line",
+            },
+            "syncoid": {"SyncoidCommand": "syncoid SourceDataSet DestDataSet"},
+            "ssh": {"PassWord": "No"},
+            "mail": {"Mail": "No"},
+            "logging": {"DateTime": "%Y", "LogDestination": "No"},
+            "runtime": {"SystemAction": "No"},
+        }
         cfg = make_config(
             raw_config=raw,
             backup_title="Nightly backup",
@@ -214,29 +198,20 @@ class AppAndLoggingTests(unittest.TestCase):
         send_mqtt_messages_mock.assert_not_called()
 
     def test_logging_omits_unrelated_sections_and_secret_like_options(self):
-        import configparser
-
-        raw = configparser.RawConfigParser()
-        raw.read_string(
-            textwrap.dedent(
-                """
-                [Syncerate Config]
-                Mail = No
-                SystemAction = No
-                DateTime = %Y
-                LogDestination = No
-                SourceListPath = source
-                DestListPath = dest
-                PassWord = top-secret
-                SyncoidCommand = syncoid SourceDataSet DestDataSet
-                custom_api_token = should-not-leak
-
-                [Other Application]
-                username = other-user
-                password = other-secret
-                """
-            )
-        )
+        raw = {
+            "syncoid": {
+                "SyncoidCommand": "syncoid SourceDataSet DestDataSet",
+                "custom_api_token": "should-not-leak",
+            },
+            "ssh": {"PassWord": "top-secret"},
+            "mail": {"Mail": "No"},
+            "logging": {"DateTime": "%Y", "LogDestination": "No"},
+            "runtime": {"SystemAction": "No"},
+            "other_application": {
+                "username": "other-user",
+                "password": "other-secret",
+            },
+        }
         cfg = make_config(
             raw_config=raw,
             password_option="top-secret",
@@ -260,35 +235,78 @@ class AppAndLoggingTests(unittest.TestCase):
         script: str,
         source_text: str,
         dest_text: str,
-        extra: str = "",
+        overrides: dict[str, object] | None = None,
     ) -> Path:
+        import json
+
         source = directory / "source-list"
         dest = directory / "dest-list"
         source.write_text(source_text, encoding="utf-8")
         dest.write_text(dest_text, encoding="utf-8")
-        config = directory / "syncerate.cfg"
-        config.write_text(
-            textwrap.dedent(
-                f"""
-                [Syncerate Config]
-                Mail = No
-                SystemAction = No
-                DateTime = %Y-%m-%d_%H_%M_%S
-                LogDestination = No
-                SourceListPath = {source}
-                DestListPath = {dest}
-                PassWord = No
-                SyncoidCommand = {shlex.quote(script)} SourceDataSet DestDataSet
-                UseSSHAgent = No
-                RetryBrokenPipe = No
-                Use_MQTT = No
-                Use_HomeAssistant = No
-                MQTT_JSON_Status = No
-                {extra}
-                """
-            ),
-            encoding="utf-8",
-        )
+        config = directory / "syncerate.toml"
+
+        values: dict[str, dict[str, object]] = {
+            "backup": {"BackupTitle": "", "BackupComment": ""},
+            "syncoid": {
+                "SourceListPath": str(source),
+                "DestListPath": str(dest),
+                "SyncoidCommand": f"{shlex.quote(script)} SourceDataSet DestDataSet",
+            },
+            "ssh": {
+                "PassWord": "No",
+                "UseSSHAgent": False,
+                "SSHAgentKeyLifetimeSeconds": 3600,
+            },
+            "mail": {"Mail": "No", "SendMailOnSuccess": True},
+            "mqtt": {
+                "Use_MQTT": False,
+                "SendMQTTOnSuccess": True,
+                "broker_address": "",
+                "broker_port": 1883,
+                "mqtt_username": "",
+                "mqtt_password": "",
+                "mqtt_topic": "",
+                "mqtt_message": "",
+                "MQTT_JSON_Status": False,
+                "mqtt_json_topic": "",
+            },
+            "home_assistant": {
+                "Use_HomeAssistant": False,
+                "HomeAssistant_Available": "",
+            },
+            "logging": {
+                "DateTime": "%Y-%m-%d_%H_%M_%S",
+                "LogDestination": "No",
+            },
+            "runtime": {
+                "DryRun": False,
+                "SystemAction": "No",
+                "ContinueOnMissingDataset": False,
+                "ContinueWithoutResume": True,
+                "RetryBrokenPipe": False,
+                "BrokenPipeRetryCount": 1,
+                "BrokenPipeRetryWaitSeconds": 0,
+            },
+        }
+
+        for dotted_name, value in (overrides or {}).items():
+            section, option = dotted_name.split(".", 1)
+            values[section][option] = value
+
+        lines: list[str] = []
+        for section_name, options in values.items():
+            lines.append(f"[{section_name}]")
+            for option, value in options.items():
+                if isinstance(value, bool):
+                    rendered = "true" if value else "false"
+                elif isinstance(value, int):
+                    rendered = str(value)
+                else:
+                    rendered = json.dumps(str(value))
+                lines.append(f"{option} = {rendered}")
+            lines.append("")
+
+        config.write_text("\n".join(lines), encoding="utf-8")
         return config
 
 
@@ -311,7 +329,7 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data\n",
-                "DryRun = True",
+                {"runtime.DryRun": True},
             )
 
             stream = io.StringIO()
@@ -344,13 +362,11 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data: --no-sync-snap\n",
+                {
+                    "ssh.PassWord": "Ask",
+                    "runtime.SystemAction": "echo must-not-run",
+                },
             )
-            config_text = config.read_text(encoding="utf-8")
-            config_text = config_text.replace("PassWord = No", "PassWord = Ask")
-            config_text = config_text.replace(
-                "SystemAction = No", "SystemAction = echo must-not-run"
-            )
-            config.write_text(config_text, encoding="utf-8")
 
             stream = io.StringIO()
             with mock.patch("sys.stdout", stream):
@@ -436,7 +452,10 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/a\n",
                 "backup/b\n",
-                "SendMailOnSuccess = False\nSendMQTTOnSuccess = False",
+                {
+                    "mail.SendMailOnSuccess": False,
+                    "mqtt.SendMQTTOnSuccess": False,
+                },
             )
             self.assertEqual(main(["--conf", str(config), "--dry-run"]), 1)
             password.assert_not_called()
@@ -507,7 +526,11 @@ class AppAndLoggingTests(unittest.TestCase):
             )
             config = self.write_config(
                 directory, script, "pool/a\npool/b\n", "backup/a\nbackup/b\n",
-                "ContinueWithoutResume = False\nSendMailOnSuccess = False\nSendMQTTOnSuccess = False",
+                {
+                    "runtime.ContinueWithoutResume": False,
+                    "mail.SendMailOnSuccess": False,
+                    "mqtt.SendMQTTOnSuccess": False,
+                },
             )
             self.assertEqual(main(["--conf", str(config)]), 4)
             self.assertFalse(marker.exists())
@@ -544,10 +567,48 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/missing\npool/good\n",
                 "backup/missing\nbackup/good\n",
+                {"runtime.ContinueOnMissingDataset": True},
             )
 
             self.assertEqual(main(["--conf", str(config)]), 8)
             self.assertTrue(marker.exists())
+            success_mock.assert_not_called()
+            mqtt_failure_mock.assert_called_once()
+            error_mail_mock.assert_called_once()
+            summary = mqtt_failure_mock.call_args.kwargs["replication_summary"]
+            self.assertTrue(summary.has_missing_dataset_failure)
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
+
+    @mock.patch("syncerate.app.successfull_run")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_main_missing_dataset_stops_list_by_default_and_reports_failure_code_8(
+        self,
+        mqtt_failure_mock,
+        error_mail_mock,
+        success_mock,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "good-ran"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                "import pathlib, sys\n"
+                f"marker = pathlib.Path({str(marker)!r})\n"
+                "if sys.argv[1].endswith('/missing'):\n"
+                "    print(\"cannot open 'pool/missing': dataset does not exist\", flush=True)\n"
+                "    sys.exit(2)\n"
+                "marker.write_text('yes')\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/missing\npool/good\n",
+                "backup/missing\nbackup/good\n",
+            )
+
+            self.assertEqual(main(["--conf", str(config)]), 8)
+            self.assertFalse(marker.exists())
             success_mock.assert_not_called()
             mqtt_failure_mock.assert_called_once()
             error_mail_mock.assert_called_once()
@@ -567,7 +628,10 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data\n",
-                "BackupTitle = Timer test\nBackupComment = First line\n    Second line",
+                {
+                    "backup.BackupTitle": "Timer test",
+                    "backup.BackupComment": "First line\nSecond line",
+                },
             )
             stream = io.StringIO()
             with mock.patch("sys.stdout", stream):
@@ -597,29 +661,13 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data\n",
-                "\n".join(
-                    [
-                        "Mail = user@example.test",
-                        f"LogDestination = {log_directory}",
-                        "BackupTitle = Mail timer test",
-                        "BackupComment = First line",
-                        "    Second line",
-                    ]
-                ),
+                {
+                    "mail.Mail": "user@example.test",
+                    "logging.LogDestination": str(log_directory),
+                    "backup.BackupTitle": "Mail timer test",
+                    "backup.BackupComment": "First line\nSecond line",
+                },
             )
-
-            # write_config supplies Mail/LogDestination defaults, so replace them
-            # rather than creating duplicate INI options.
-            config_text = config.read_text(encoding="utf-8")
-            config_text = config_text.replace("Mail = No", "Mail = user@example.test")
-            config_text = config_text.replace(
-                "LogDestination = No", f"LogDestination = {log_directory}"
-            )
-            config_text = config_text.replace(
-                "Mail = user@example.test\nLogDestination = " + str(log_directory) + "\n",
-                "",
-            )
-            config.write_text(config_text, encoding="utf-8")
 
             self.assertEqual(main(["--conf", str(config)]), 0)
             send_mail_mock.assert_called_once()
@@ -662,7 +710,7 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data\n",
-                "RetryBrokenPipe = YESS",
+                {"runtime.RetryBrokenPipe": "YESS"},
             )
             self.assertEqual(main(["--conf", str(config)]), 2)
             self.assertFalse(marker.exists())

@@ -1,42 +1,65 @@
-"""Configuration-file loading, validation, and Boolean option normalization."""
+"""TOML configuration loading and validation for Syncerate."""
 
-import configparser
 import shlex
+from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError as exc:  # pragma: no cover - Python < 3.11 guard
+    raise RuntimeError(
+        "Syncerate requires Python 3.11 or newer for built-in TOML support"
+    ) from exc
 
 from .models import AppConfig
 
-CONFIG_SECTION = "Syncerate Config"
 
+CONFIG_OPTION_LOCATIONS = {
+    "backup": ("BackupTitle", "BackupComment"),
+    "syncoid": (
+        "SourceListPath",
+        "DestListPath",
+        "SyncoidCommand",
+    ),
+    "ssh": ("PassWord", "UseSSHAgent", "SSHAgentKeyLifetimeSeconds"),
+    "mail": ("Mail", "SendMailOnSuccess"),
+    "mqtt": (
+        "Use_MQTT",
+        "SendMQTTOnSuccess",
+        "broker_address",
+        "broker_port",
+        "mqtt_username",
+        "mqtt_password",
+        "mqtt_topic",
+        "mqtt_message",
+        "MQTT_JSON_Status",
+        "mqtt_json_topic",
+    ),
+    "home_assistant": ("Use_HomeAssistant", "HomeAssistant_Available"),
+    "logging": ("DateTime", "LogDestination"),
+    "runtime": (
+        "DryRun",
+        "SystemAction",
+        "ContinueOnMissingDataset",
+        "ContinueWithoutResume",
+        "RetryBrokenPipe",
+        "BrokenPipeRetryCount",
+        "BrokenPipeRetryWaitSeconds",
+    ),
+}
+
+# Keep startup logging order in the same ownership order as the schema/example.
+CONFIG_SECTIONS = tuple(CONFIG_OPTION_LOCATIONS)
+
+# Kept as a small compatibility helper for code importing it from older releases.
+# The TOML loader itself requires native true/false values and does not use this.
 _ENABLED_VALUES = {"YES", "TRUE", "1", "ON"}
-_DISABLED_VALUES = {"NO", "FALSE", "0", "OFF"}
 
 
 def option_is_enabled(value: Any) -> bool:
-    """Return True for supported enabled values used in the config file."""
+    """Return True for legacy text values that represented an enabled option."""
 
     return str(value).strip().upper() in _ENABLED_VALUES
-
-
-def parse_boolean_option(
-    raw_config: configparser.RawConfigParser,
-    option_name: str,
-    *,
-    fallback: str = "No",
-) -> bool:
-    """Read one documented Boolean option and reject ambiguous/typo values."""
-
-    value = raw_config.get(CONFIG_SECTION, option_name, fallback=fallback)
-    normalized = value.strip().upper()
-
-    if normalized in _ENABLED_VALUES:
-        return True
-    if normalized in _DISABLED_VALUES:
-        return False
-
-    raise ValueError(
-        f"{option_name} must be one of: Yes, No, True, False, 1, 0, On, Off"
-    )
 
 
 def validate_syncoid_command_template(command_template: str) -> None:
@@ -63,40 +86,136 @@ def validate_syncoid_command_template(command_template: str) -> None:
         )
 
 
-def _required_text(
-    raw_config: configparser.RawConfigParser,
-    option_name: str,
-) -> str:
-    """Return one required non-empty configuration value."""
+def _section(raw_config: dict[str, Any], name: str) -> dict[str, Any]:
+    """Return one TOML table as a dictionary, treating an omitted table as empty."""
 
-    value = raw_config.get(CONFIG_SECTION, option_name).strip()
+    value = raw_config.get(name, {})
+    if not isinstance(value, dict):
+        raise ValueError(f"[{name}] must be a TOML table")
+    return value
+
+
+def _required_text(section: dict[str, Any], section_name: str, option_name: str) -> str:
+    """Return one required non-empty string from a TOML table."""
+
+    if option_name not in section:
+        raise ValueError(f"{section_name}.{option_name} is required")
+    value = section[option_name]
+    if not isinstance(value, str):
+        raise ValueError(f"{section_name}.{option_name} must be a string")
+    value = value.strip()
     if not value:
-        raise ValueError(f"{option_name} must not be empty")
+        raise ValueError(f"{section_name}.{option_name} must not be empty")
+    return value
+
+
+def _optional_text(
+    section: dict[str, Any],
+    section_name: str,
+    option_name: str,
+    *,
+    fallback: str = "",
+    strip: bool = True,
+) -> str:
+    """Return an optional string while rejecting non-string TOML values."""
+
+    if option_name not in section:
+        return fallback
+    value = section[option_name]
+    if not isinstance(value, str):
+        raise ValueError(f"{section_name}.{option_name} must be a string")
+    return value.strip() if strip else value
+
+
+def _boolean(
+    section: dict[str, Any],
+    section_name: str,
+    option_name: str,
+    *,
+    fallback: bool = False,
+) -> bool:
+    """Return one native TOML Boolean and reject quoted/string substitutes."""
+
+    if option_name not in section:
+        return fallback
+    value = section[option_name]
+    if type(value) is not bool:
+        raise ValueError(
+            f"{section_name}.{option_name} must be a TOML boolean: true or false"
+        )
+    return value
+
+
+def _integer(
+    section: dict[str, Any],
+    section_name: str,
+    option_name: str,
+    *,
+    fallback: int,
+) -> int:
+    """Return one TOML integer while rejecting booleans/floats/strings."""
+
+    if option_name not in section:
+        return fallback
+    value = section[option_name]
+    if type(value) is not int:
+        raise ValueError(f"{section_name}.{option_name} must be a whole number")
     return value
 
 
 def load_app_config(config_path: str) -> AppConfig:
-    """Read the INI file, validate startup settings, and return AppConfig."""
+    """Read the TOML file, validate startup settings, and return AppConfig."""
 
-    raw_config = configparser.RawConfigParser()
-    loaded_files = raw_config.read(config_path)
-
-    if not loaded_files:
+    path = Path(config_path)
+    try:
+        with path.open("rb") as config_file:
+            raw_config = tomllib.load(config_file)
+    except FileNotFoundError:
         raise FileNotFoundError(f"Could not read config file: {config_path}")
+    except OSError:
+        raise
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Invalid TOML configuration: {exc}") from exc
 
-    if not raw_config.has_section(CONFIG_SECTION):
-        raise configparser.NoSectionError(CONFIG_SECTION)
+    if not isinstance(raw_config, dict):
+        raise ValueError("The TOML root must contain configuration tables")
 
-    mail_option = _required_text(raw_config, "Mail")
-    system_option = _required_text(raw_config, "SystemAction")
-    datetime_format = _required_text(raw_config, "DateTime")
-    source_list_path = _required_text(raw_config, "SourceListPath")
-    destination_list_path = _required_text(raw_config, "DestListPath")
-    password_option = _required_text(raw_config, "PassWord")
-    syncoid_command = _required_text(raw_config, "SyncoidCommand")
+    backup = _section(raw_config, "backup")
+    syncoid = _section(raw_config, "syncoid")
+    ssh = _section(raw_config, "ssh")
+    mail = _section(raw_config, "mail")
+    logging_section = _section(raw_config, "logging")
+    runtime = _section(raw_config, "runtime")
+    mqtt = _section(raw_config, "mqtt")
+    home_assistant = _section(raw_config, "home_assistant")
+
+    moved_runtime_options = (
+        "ContinueWithoutResume",
+        "RetryBrokenPipe",
+        "BrokenPipeRetryCount",
+        "BrokenPipeRetryWaitSeconds",
+    )
+    misplaced_runtime_options = [
+        option for option in moved_runtime_options if option in syncoid
+    ]
+    if misplaced_runtime_options:
+        names = ", ".join(f"syncoid.{option}" for option in misplaced_runtime_options)
+        raise ValueError(
+            f"{names} moved to the [runtime] table in Syncerate 0.4.42"
+        )
+
+    source_list_path = _required_text(syncoid, "syncoid", "SourceListPath")
+    destination_list_path = _required_text(syncoid, "syncoid", "DestListPath")
+    syncoid_command = _required_text(syncoid, "syncoid", "SyncoidCommand")
     validate_syncoid_command_template(syncoid_command)
 
-    log_destination_text = _required_text(raw_config, "LogDestination")
+    password_option = _required_text(ssh, "ssh", "PassWord")
+    mail_option = _required_text(mail, "mail", "Mail")
+    datetime_format = _required_text(logging_section, "logging", "DateTime")
+    log_destination_text = _required_text(
+        logging_section, "logging", "LogDestination"
+    )
+    system_option = _required_text(runtime, "runtime", "SystemAction")
 
     if log_destination_text.upper() == "NO":
         log_destination = None
@@ -105,125 +224,119 @@ def load_app_config(config_path: str) -> AppConfig:
         if not log_destination.endswith("/"):
             log_destination += "/"
 
-    ssh_agent_key_lifetime_seconds = raw_config.getint(
-        CONFIG_SECTION,
+    ssh_agent_key_lifetime_seconds = _integer(
+        ssh,
+        "ssh",
         "SSHAgentKeyLifetimeSeconds",
         fallback=3600,
     )
-
     if ssh_agent_key_lifetime_seconds <= 0:
         raise ValueError(
-            "SSHAgentKeyLifetimeSeconds must be a positive whole number"
+            "ssh.SSHAgentKeyLifetimeSeconds must be a positive whole number"
         )
 
-    broken_pipe_retry_count = raw_config.getint(
-        CONFIG_SECTION,
+    broken_pipe_retry_count = _integer(
+        runtime,
+        "runtime",
         "BrokenPipeRetryCount",
         fallback=1,
     )
-
     if broken_pipe_retry_count < 0:
         raise ValueError(
-            "BrokenPipeRetryCount must be zero or a positive whole number"
+            "runtime.BrokenPipeRetryCount must be zero or a positive whole number"
         )
 
-    broken_pipe_retry_wait_seconds = raw_config.getint(
-        CONFIG_SECTION,
+    broken_pipe_retry_wait_seconds = _integer(
+        runtime,
+        "runtime",
         "BrokenPipeRetryWaitSeconds",
         fallback=10,
     )
-
     if broken_pipe_retry_wait_seconds < 0:
         raise ValueError(
-            "BrokenPipeRetryWaitSeconds must be zero or a positive whole number"
+            "runtime.BrokenPipeRetryWaitSeconds must be zero or a positive whole number"
         )
 
-    dry_run = parse_boolean_option(raw_config, "DryRun")
-    use_mqtt = parse_boolean_option(raw_config, "Use_MQTT")
-    send_mail_on_success = parse_boolean_option(
-        raw_config,
+    dry_run = _boolean(runtime, "runtime", "DryRun")
+    continue_on_missing_dataset = _boolean(
+        runtime, "runtime", "ContinueOnMissingDataset"
+    )
+    continue_without_resume = _boolean(
+        runtime,
+        "runtime",
+        "ContinueWithoutResume",
+        fallback=True,
+    )
+    retry_broken_pipe = _boolean(runtime, "runtime", "RetryBrokenPipe")
+    use_ssh_agent = _boolean(ssh, "ssh", "UseSSHAgent")
+    send_mail_on_success = _boolean(
+        mail,
+        "mail",
         "SendMailOnSuccess",
-        fallback="Yes",
+        fallback=True,
     )
-    send_mqtt_on_success = parse_boolean_option(
-        raw_config,
+    use_mqtt = _boolean(mqtt, "mqtt", "Use_MQTT")
+    send_mqtt_on_success = _boolean(
+        mqtt,
+        "mqtt",
         "SendMQTTOnSuccess",
-        fallback="Yes",
+        fallback=True,
     )
-    mqtt_json_status = parse_boolean_option(raw_config, "MQTT_JSON_Status")
-    use_home_assistant = parse_boolean_option(raw_config, "Use_HomeAssistant")
-    use_ssh_agent = parse_boolean_option(raw_config, "UseSSHAgent")
-    retry_broken_pipe = parse_boolean_option(raw_config, "RetryBrokenPipe")
-    continue_without_resume = parse_boolean_option(
-        raw_config, "ContinueWithoutResume", fallback="Yes"
+    mqtt_json_status = _boolean(mqtt, "mqtt", "MQTT_JSON_Status")
+    use_home_assistant = _boolean(
+        home_assistant,
+        "home_assistant",
+        "Use_HomeAssistant",
     )
 
-    # The legacy MQTT/HA outputs and the JSON status output are independent.
-    # Validate every enabled channel before replication begins so a typo or a
-    # missing broker/topic cannot fail only after all datasets have been touched.
-    legacy_mqtt_topic = ""
-    home_assistant_available = ""
+    broker_address = _optional_text(mqtt, "mqtt", "broker_address")
+    broker_port = _integer(mqtt, "mqtt", "broker_port", fallback=1883)
+    mqtt_username = _optional_text(mqtt, "mqtt", "mqtt_username")
+    mqtt_password = _optional_text(
+        mqtt, "mqtt", "mqtt_password", strip=False
+    )
+    mqtt_topic = _optional_text(mqtt, "mqtt", "mqtt_topic")
+    mqtt_message = _optional_text(
+        mqtt, "mqtt", "mqtt_message", strip=False
+    )
+    mqtt_json_topic = _optional_text(mqtt, "mqtt", "mqtt_json_topic")
+    home_assistant_available = _optional_text(
+        home_assistant,
+        "home_assistant",
+        "HomeAssistant_Available",
+    )
 
     if use_mqtt or mqtt_json_status:
-        broker_address = raw_config.get(
-            CONFIG_SECTION,
-            "broker_address",
-            fallback="",
-        ).strip()
         if not broker_address:
             raise ValueError(
-                "broker_address must be configured when MQTT publishing is enabled"
+                "mqtt.broker_address must be configured when MQTT publishing is enabled"
             )
-
-        try:
-            broker_port = raw_config.getint(CONFIG_SECTION, "broker_port")
-        except (configparser.NoOptionError, ValueError) as exc:
-            raise ValueError(
-                "broker_port must be a whole number when MQTT publishing is enabled"
-            ) from exc
-
         if not 1 <= broker_port <= 65535:
-            raise ValueError("broker_port must be between 1 and 65535")
+            raise ValueError("mqtt.broker_port must be between 1 and 65535")
 
     if use_mqtt:
-        legacy_mqtt_topic = raw_config.get(
-            CONFIG_SECTION,
-            "mqtt_topic",
-            fallback="",
-        ).strip()
-        if not legacy_mqtt_topic:
-            raise ValueError("mqtt_topic must be configured when Use_MQTT is enabled")
-
-        # Require the option to exist even though an empty MQTT payload remains
-        # valid and is therefore deliberately not rejected.
-        if not raw_config.has_option(CONFIG_SECTION, "mqtt_message"):
-            raise ValueError("mqtt_message must be configured when Use_MQTT is enabled")
-
-        if use_home_assistant:
-            home_assistant_available = raw_config.get(
-                CONFIG_SECTION,
-                "HomeAssistant_Available",
-                fallback="",
-            ).strip()
-            if not home_assistant_available:
-                raise ValueError(
-                    "HomeAssistant_Available must be configured when "
-                    "Use_MQTT and Use_HomeAssistant are enabled"
-                )
+        if not mqtt_topic:
+            raise ValueError(
+                "mqtt.mqtt_topic must be configured when mqtt.Use_MQTT is enabled"
+            )
+        if "mqtt_message" not in mqtt:
+            raise ValueError(
+                "mqtt.mqtt_message must be configured when mqtt.Use_MQTT is enabled"
+            )
+        if use_home_assistant and not home_assistant_available:
+            raise ValueError(
+                "home_assistant.HomeAssistant_Available must be configured when "
+                "mqtt.Use_MQTT and home_assistant.Use_HomeAssistant are enabled"
+            )
 
     if mqtt_json_status:
-        mqtt_json_topic = raw_config.get(
-            CONFIG_SECTION,
-            "mqtt_json_topic",
-            fallback="",
-        ).strip()
         if not mqtt_json_topic:
             raise ValueError(
-                "mqtt_json_topic must be configured when MQTT_JSON_Status is enabled"
+                "mqtt.mqtt_json_topic must be configured when mqtt.MQTT_JSON_Status is enabled"
             )
-        if use_mqtt and mqtt_json_topic == legacy_mqtt_topic:
+        if use_mqtt and mqtt_json_topic == mqtt_topic:
             raise ValueError(
-                "mqtt_json_topic must be different from the legacy mqtt_topic"
+                "mqtt.mqtt_json_topic must be different from the legacy mqtt.mqtt_topic"
             )
         if (
             use_mqtt
@@ -231,7 +344,8 @@ def load_app_config(config_path: str) -> AppConfig:
             and mqtt_json_topic == home_assistant_available
         ):
             raise ValueError(
-                "mqtt_json_topic must be different from HomeAssistant_Available"
+                "mqtt.mqtt_json_topic must be different from "
+                "home_assistant.HomeAssistant_Available"
             )
 
     return AppConfig(
@@ -242,15 +356,9 @@ def load_app_config(config_path: str) -> AppConfig:
         use_mqtt=use_mqtt,
         datetime_format=datetime_format,
         log_destination=log_destination,
-        backup_title=raw_config.get(
-            CONFIG_SECTION,
-            "BackupTitle",
-            fallback="",
-        ).strip(),
-        backup_comment=raw_config.get(
-            CONFIG_SECTION,
-            "BackupComment",
-            fallback="",
+        backup_title=_optional_text(backup, "backup", "BackupTitle"),
+        backup_comment=_optional_text(
+            backup, "backup", "BackupComment", strip=False
         ).strip(),
         source_list_path=source_list_path,
         destination_list_path=destination_list_path,
@@ -264,7 +372,16 @@ def load_app_config(config_path: str) -> AppConfig:
         use_ssh_agent=use_ssh_agent,
         ssh_agent_key_lifetime_seconds=ssh_agent_key_lifetime_seconds,
         retry_broken_pipe=retry_broken_pipe,
+        continue_on_missing_dataset=continue_on_missing_dataset,
         continue_without_resume=continue_without_resume,
         broken_pipe_retry_count=broken_pipe_retry_count,
         broken_pipe_retry_wait_seconds=broken_pipe_retry_wait_seconds,
+        broker_address=broker_address,
+        broker_port=broker_port,
+        mqtt_username=mqtt_username,
+        mqtt_password=mqtt_password,
+        mqtt_topic=mqtt_topic,
+        mqtt_message=mqtt_message,
+        mqtt_json_topic=mqtt_json_topic,
+        home_assistant_available=home_assistant_available,
     )

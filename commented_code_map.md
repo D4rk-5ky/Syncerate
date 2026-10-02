@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.39`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.42`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -65,7 +65,7 @@ All runtime work begins when `main()` is called.
 This remains the executable used by existing commands:
 
 ```bash
-./Syncerate.py --conf /path/to/Syncerate.cfg
+./Syncerate.py --conf /path/to/Syncerate.toml
 ./Syncerate.py --help
 ./Syncerate.py --version
 ```
@@ -84,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.39"
+VERSION = "0.4.42"
 __version__ = VERSION
 ```
 
@@ -121,125 +121,65 @@ It replaces internal `sys.exit()` calls. `app.main()` catches it, logs the corre
 
 ## `syncerate/models.py`
 
-This module contains data only. It does not start work or import higher-level modules.
+This module contains typed runtime state only. It does not start work or import higher-level modules.
 
 ### `AppConfig`
 
-Immutable configuration state loaded from one INI file. It replaces former runtime globals such as:
+Immutable validated configuration state loaded from one TOML file. The loader converts category-owned TOML keys into typed fields so runtime code does not have to reparse raw strings.
 
-- `config`;
-- `MailOption`;
-- `SystemOption`;
-- `Use_MQTT`;
-- `DryRun`;
-- `SendMailOnSuccess`;
-- `SendMQTTOnSuccess`;
-- `MQTT_JSON_Status`;
-- `mqtt_json_topic` (dedicated JSON-only topic read from the raw config);
-- `DateTime`;
-- `LogDestination`;
-- `BackupTitle`;
-- `BackupComment`;
-- `PassWordOption`;
-- `SyncoidCommand`;
-- `UseSSHAgent`;
-- `SSHAgentKeyLifetimeSeconds`;
-- `ContinueWithoutResume`;
-- `RetryBrokenPipe`;
-- `BrokenPipeRetryCount`;
-- `BrokenPipeRetryWaitSeconds`.
+Important fields:
 
-Fields:
+- `config_path`: selected TOML path used in diagnostics;
+- `raw_config`: parsed nested TOML dictionary retained for safe startup configuration logging;
+- `mail_option` / `send_mail_on_success`: `[mail]` recipient-or-`"No"` control and its native Boolean success gate;
+- `system_option`: `[runtime].SystemAction`, a trusted success-only command or `"No"`;
+- `dry_run`: `[runtime].DryRun`, default `false`; CLI `--dry-run` may only force it on;
+- `continue_on_missing_dataset`: `[runtime].ContinueOnMissingDataset`, default `false`; false stops after recording the first recognized missing dataset/pool, true continues later pairs, and either mode keeps the run failed;
+- `use_mqtt` / `send_mqtt_on_success` / `mqtt_json_status`: typed `[mqtt]` feature switches;
+- `broker_address`, `broker_port`, `mqtt_username`, `mqtt_password`, `mqtt_topic`, `mqtt_message`, `mqtt_json_topic`: validated `[mqtt]` transport/payload settings, stored directly instead of lazily rereading the raw config;
+- `use_home_assistant` / `home_assistant_available`: typed `[home_assistant]` settings;
+- `datetime_format` / `log_destination`: `[logging]` filename format and destination, with string `"No"` normalized to `None`;
+- `backup_title` / `backup_comment`: optional `[backup]` metadata; TOML multiline strings are supported for comments;
+- `source_list_path`, `destination_list_path`, `syncoid_command`: `[syncoid]` dataset-list and command-template settings;
+- `continue_without_resume`, `retry_broken_pipe`, `broken_pipe_retry_count`, `broken_pipe_retry_wait_seconds`: `[runtime]` replication runtime/error-handling policy settings;
+- `password_option`, `use_ssh_agent`, `ssh_agent_key_lifetime_seconds`: `[ssh]` credential/agent settings.
 
-- `config_path`: selected configuration path for logs;
-- `raw_config`: retained `RawConfigParser` for lazy MQTT/HA option reads;
-- `mail_option`: recipient or `No`;
-- `system_option`: successful-run command or `No`;
-- `use_mqtt`: normalized Boolean enabling retained success MQTT and non-retained failure events;
-- `send_mail_on_success`: normalized Boolean controlling only success/warning-success mail; defaults to `True` when the INI option is omitted;
-- `send_mqtt_on_success`: normalized Boolean controlling only success/warning-success MQTT publishing across both legacy/HA and JSON success paths; defaults to `True` when the INI option is omitted;
-- `mqtt_json_status`: normalized Boolean independently enabling structured non-retained success/failure MQTT status;
-- `use_home_assistant`: the strictly validated legacy Home Assistant availability Boolean reused by notifications instead of reparsing raw text;
-- `datetime_format`: filename timestamp format;
-- `log_destination`: normalized directory or `None`;
-- `backup_title` / `backup_comment`: optional descriptive text; `backup_comment` may contain embedded newlines loaded from standard indented INI continuation lines;
-- `source_list_path` / `destination_list_path`: dataset-list files;
-- `password_option`: `No`, `Ask`, or a literal credential;
-- `syncoid_command`: command template;
-- `dry_run`: normalized Boolean safety mode from `DryRun`, defaulting to `False`; the CLI `--dry-run` flag can only force the effective mode on;
-- `use_ssh_agent`: normalized Boolean enabling the isolated per-run agent path;
-- `ssh_agent_key_lifetime_seconds`: positive lifetime for the loaded private-agent identity, defaulting to `3600`;
-- `continue_without_resume`: normalized Boolean, default true, permitting continuation after the resume-unavailable warning; false stops the run with code 4;
-- `retry_broken_pipe`: normalized Boolean controlling optional per-dataset retries;
-- `broken_pipe_retry_count`: validated retries available to each individual dataset, defaulting to `1`;
-- `broken_pipe_retry_wait_seconds`: validated whole seconds to wait before each retry, defaulting to `10`.
+Native TOML Booleans are retained as Python `bool` values; quoted `"true"`/`"false"` strings are rejected by the loader. String-valued controls such as `PassWord = "No"`, `Mail = "No"`, `LogDestination = "No"`, and `SystemAction = "No"` remain strings because those settings can also hold real values.
 
 Properties:
 
-- `mail_enabled`: mail is enabled unless the value is `No`;
-- `system_action_enabled`: system action is enabled unless the value is `No`;
-- `logging_enabled`: file logging is enabled when a log directory exists.
-
-The raw parser remains available for MQTT broker credentials, payloads, and topics. Boolean feature switches are validated once at startup and carried as typed fields instead of being interpreted again later.
+- `mail_enabled`: true when `Mail` is not the string `"No"`; centralizes the mail-disable rule.
+- `system_action_enabled`: true when `SystemAction` is not `"No"`; prevents callers from duplicating string normalization.
+- `logging_enabled`: true only when `LogDestination` was normalized to a real directory.
 
 ### `RunContext`
 
-Immutable values created for one invocation:
-
-- timestamp;
-- log directory;
-- `.log` path;
-- `.err` path;
-- `.out` path.
-
-It replaces global timestamp and log-path variables. When logging is disabled, all file paths are `None` and terminal logging still works.
+Immutable per-run timestamp and optional `.log`, `.err`, and `.out` paths. `logging_enabled` reports whether file logging is active. Keeping these paths in per-run state avoids mutable module globals.
 
 ### `DatasetPair`
 
-One validated replication unit containing:
-
-- source dataset;
-- destination dataset;
-- destination-specific Syncoid arguments.
-
-It replaces three parallel source/destination/argument lists, preventing arguments from becoming associated with the wrong dataset.
-
-### `SSHAgentSession`
-
-Mutable per-run state for the isolated OpenSSH agent. It stores only process/socket metadata and never stores the passphrase. Fields include the foreground agent process, private temporary directory, socket path, child environment, selected identity path, `ssh-add` executable, and key lifetime. Keeping this state explicit lets `app.main()` guarantee cleanup around the complete replication list.
-
-### `MissingDatasetFailure`
-
-Immutable record for one configured `DatasetPair` that encountered a recognized missing ZFS dataset/pool condition. It stores the pair plus every matched ZFS/Syncoid message so terminal logging, MQTT JSON, and email can report the same evidence without reparsing logs.
-
-### `ReplicationSummary`
-
-Carries aggregate state for the processed dataset list. Its `broken_pipe_failed_datasets` list is retained for compatibility with callers constructing summaries; current execution stops on retry exhaustion and does not populate that list, while `missing_dataset_failures` contains `MissingDatasetFailure` records for pairs that hit the continue-but-fail missing-data path. `has_broken_pipe_warning` identifies that compatibility case for externally constructed summaries; `has_missing_dataset_failure` identifies a completed-list failure that must return exit code `8`. `transferred_bytes` accumulates actual Syncoid/`pv` bytes across attempts, and `transfer_measurement_complete` remains true only when every started Syncoid send stream supplied a usable byte counter.
-
-#### `has_broken_pipe_warning`
-
-Returns whether the compatibility `broken_pipe_failed_datasets` list is nonempty. Current runtime does not populate it; notification helpers still accept externally constructed summaries.
-
-#### `has_missing_dataset_failure`
-
-Returns true when at least one pair was recorded as failed because a ZFS dataset or pool was missing. `app.main()` uses this to defer the final exit-code-`8` failure until the remaining dataset list has completed.
+One preflight-validated source dataset, destination dataset, and tuple of destination-side extra arguments. It is the unit processed sequentially by the replication runner.
 
 ### `SyncoidAttemptResult`
 
-Returned by one monitored Syncoid attempt. It contains:
+Mutable result from one monitored Syncoid child attempt. It carries the child/argv, repeated-pattern and warning state, Broken Pipe state, recognized missing-dataset/pool evidence, whether bounded missing-data cleanup had to force-stop the child, measured `pv` bytes, and transfer-measurement completeness. Returning this structure lets higher layers distinguish safe continuation cases from ordinary fatal exits without reparsing raw output.
 
-- the `pexpect` child;
-- the exact command used for the attempt;
-- repeated-pattern status;
-- whether the known missing-destroy-snapshot condition was observed;
-- whether this attempt stopped after detecting an ordinary Broken Pipe;
-- whether recognized missing dataset/pool output was observed;
-- the matched missing dataset/pool messages for later per-pair reporting;
-- whether Syncerate had to force-stop an otherwise stuck Syncoid process after the bounded missing-data cleanup window;
-- the actual `pv` bytes observed during this attempt;
-- whether transfer measurement was complete for every started stream in this attempt.
+### `SSHAgentSession`
 
-It replaces former mutable control globals and carries transfer/error state without requiring a second Syncoid/ZFS query.
+One isolated private `ssh-agent` process plus its temporary directory/socket/environment, identity path, `ssh-add` path, and key lifetime. Explicit state makes teardown deterministic.
+
+### `MissingDatasetFailure`
+
+One failed `DatasetPair` plus the recognized ZFS/Syncoid messages proving a dataset or pool was missing. These records feed exit-code-8 logs, MQTT JSON, and email reports.
+
+### `ReplicationSummary`
+
+Aggregate state for the configured dataset list: exhausted Broken Pipe pairs, recorded missing-dataset/pool failures, transferred bytes, and whether transfer measurement remained complete.
+
+Properties:
+
+- `has_broken_pipe_warning`: true when at least one pair exhausted its configured ordinary Broken Pipe retries.
+- `has_missing_dataset_failure`: true when at least one missing dataset/pool failure was recorded. This drives the final exit-code-8 failure path whether continuation was disabled or enabled.
 
 ## `syncerate/cli.py`
 
@@ -250,53 +190,82 @@ Creates the `argparse` parser only when called.
 Supported flags/commands:
 
 ```bash
-./Syncerate.py --conf /path/to/Syncerate.cfg
-./Syncerate.py -c ./config/Syncerate.cfg
-./Syncerate.py --conf ./config/Syncerate.cfg --dry-run
+./Syncerate.py --conf /path/to/Syncerate.toml
+./Syncerate.py -c ./config/Syncerate.toml
+./Syncerate.py --conf ./config/Syncerate.toml --dry-run
 ./Syncerate.py --help
 ./Syncerate.py --version
 ```
 
-- `--conf FILE` / `-c FILE`: required for both a real run and `--dry-run`, has no hidden/default path, and passes the selected INI path to `load_app_config()`. Relative paths remain relative to the caller's current working directory.
-- `--dry-run`: one-way CLI override that forces application-level dry-run on even when `DryRun = False` in the selected settings file. The normal persistent control is `DryRun` in `[Syncerate Config]`. Dry run loads/validates config and dataset pairing and builds the exact command for every pair, but intentionally does not resolve/request credentials, start the private SSH agent, start Syncoid, transfer data, or execute `SystemAction`. Successful dry-run notifications use the same `SendMailOnSuccess`/`SendMQTTOnSuccess` gates as real success, while handled failures still use the independent failure-notification path.
-- `-h` / `--help`: argparse's built-in help action; prints the full syntax, descriptions, dry-run safety behavior, and examples and exits before configuration/runtime work.
-- `--version`: argparse version action using `%(prog)s` plus the authoritative `VERSION`, so the displayed name is `Syncerate.py` for the source entry point and `Syncerate` for the standalone executable. It exits before configuration/runtime work.
+- `--conf FILE` / `-c FILE`: required for real and dry runs; selects the TOML file and has no hidden/default path. Relative paths stay relative to the caller's current working directory.
+- `--dry-run`: one-way override that forces application dry-run on even when `[runtime].DryRun = false`. It never forces a configured dry run off. Dry run validates configuration/dataset pairing and builds/reports each exact command, but does not resolve/request credentials, start the private SSH agent, start Syncoid, transfer data, or execute `SystemAction`. Success notifications still obey `[mail].SendMailOnSuccess` and `[mqtt].SendMQTTOnSuccess`; handled failures use the independent failure-notification path.
+- `-h` / `--help`: argparse built-in help; prints full syntax/descriptions/examples and exits before runtime work.
+- `--version`: argparse version action using `%(prog)s` plus the authoritative `VERSION`; exits before configuration/runtime work.
 
-The parser uses `RawDescriptionHelpFormatter` so the multi-line examples in the epilog keep their intended layout. The optional `argv` parameter lets tests pass an explicit argument list without modifying process arguments.
+`RawDescriptionHelpFormatter` preserves the multi-line examples. The optional `argv` argument lets tests exercise parsing without mutating process arguments.
 
 ## `syncerate/config.py`
 
-### `CONFIG_SECTION`
+This module owns the TOML schema, parsing, type validation, and startup validation. It uses Python 3.11+'s built-in `tomllib`; no runtime third-party TOML dependency is required.
 
-```python
-CONFIG_SECTION = "Syncerate Config"
-```
+### `CONFIG_SECTIONS`
 
-Keeps the INI section name consistent between normal configuration loading and lazy notification settings.
+Ordered tuple derived from `CONFIG_OPTION_LOCATIONS`, so startup logging follows the same category order as the schema/example and cannot drift independently. Unknown tables are not echoed by the startup logger.
+
+### `CONFIG_OPTION_LOCATIONS`
+
+Single schema map assigning every supported configuration key to its owning table. Regression tests compare both `load_app_config()`'s actual helper-based option accesses and `config/example-Syncerate.toml` against this map exactly, preventing a supported option from being added to code without also being represented in the example. It currently contains 31 options.
 
 ### `option_is_enabled(value)`
 
-Legacy compatibility helper that returns true only for `YES`, `TRUE`, `1`, or `ON` after normalization. External imports of this helper continue to work, but runtime configuration loading uses the stricter parser below so typo values cannot silently become false.
-
-### `parse_boolean_option(raw_config, option_name, *, fallback="No")`
-
-Reads one documented Boolean and accepts exactly the enabled/disabled spellings `Yes/No`, `True/False`, `1/0`, and `On/Off` case-insensitively. Any other nonempty spelling raises `ValueError` before replication begins. This is used for `DryRun`, `UseSSHAgent`, `ContinueWithoutResume`, `RetryBrokenPipe`, `Use_MQTT`, `SendMailOnSuccess`, `SendMQTTOnSuccess`, `Use_HomeAssistant`, and `MQTT_JSON_Status`. Most callers use the default fallback `No`; the two success-notification controls and `ContinueWithoutResume` deliberately pass `fallback="Yes"` so omitted keys preserve successful notifications and continuation without resume support.
+Small legacy compatibility helper retained for external imports from older releases. It recognizes the historical enabled text values (`YES`, `TRUE`, `1`, `ON`), but the TOML loader itself does **not** use it: Boolean settings must be native TOML `true`/`false`.
 
 ### `validate_syncoid_command_template(command_template)`
 
-Parses the configured template with `shlex.split()`, rejects empty/malformed commands, and requires exactly one occurrence of `SourceDataSet` and exactly one occurrence of `DestDataSet`. Validation is called both while loading configuration and while building argv, so direct callers of `build_syncoid_command()` get the same protection.
+Parses `SyncoidCommand` with `shlex.split()`, rejects empty/malformed commands, and requires exactly one `SourceDataSet` and one `DestDataSet` placeholder. Validation happens during config loading and command construction so unsafe/malformed templates fail before a child process starts.
 
-### `_required_text(raw_config, option_name)`
+### `_section(raw_config, name)`
 
-Private startup helper that reads a required option, strips surrounding whitespace, and rejects an empty value. It centralizes the same validation used by `Mail`, `SystemAction`, `DateTime`, both list paths, `PassWord`, `SyncoidCommand`, and `LogDestination`.
+Returns one TOML table as a dictionary. Omitted optional tables are treated as empty; a non-table value under a recognized table name is rejected.
+
+### `_required_text(section, section_name, option_name)`
+
+Reads a required non-empty TOML string and reports errors with its qualified `section.option` name. It centralizes required string type/emptiness checks.
+
+### `_optional_text(section, section_name, option_name, *, fallback="", strip=True)`
+
+Reads an optional TOML string, returns a caller-provided fallback when omitted, rejects non-string values, and optionally preserves leading/trailing content for payload/password/comment fields where stripping would change meaning.
+
+### `_boolean(section, section_name, option_name, *, fallback=False)`
+
+Reads a native TOML Boolean and rejects quoted strings, integers, and other substitutes. This avoids the old INI ambiguity where a typo could be misinterpreted as disabled.
+
+### `_integer(section, section_name, option_name, *, fallback)`
+
+Reads a true TOML integer while explicitly rejecting booleans, floats, and strings. Callers add range validation for ports, retry counts/waits, and SSH-agent lifetime.
 
 ### `load_app_config(config_path)`
 
-Reads and validates the selected INI file, then returns immutable `AppConfig`. It verifies the file and section, validates all required nonempty text, strictly parses supported Booleans, validates the Syncoid template before any dataset is touched, validates positive/non-negative numeric retry/agent settings, normalizes `LogDestination = No` to `None`, and validates enabled MQTT channels before replication. `DryRun` is an optional strict Boolean with a `No` default. `SendMailOnSuccess`, `SendMQTTOnSuccess`, and `ContinueWithoutResume` are optional strict Booleans with `Yes` defaults so omitted options preserve successful notifications and continuation without resume support. Invalid values fail at startup; the parsed resume policy is stored on `AppConfig` and passed to every Syncoid attempt.
+Loads the selected TOML file with `tomllib`, retrieves each category, validates required/optional values and ranges, validates `SyncoidCommand`, and returns immutable `AppConfig`.
 
-For MQTT it requires a broker address, port `1..65535`, the legacy topic/message when `Use_MQTT` is enabled, the HA availability topic when that legacy integration is enabled, and a dedicated JSON topic when `MQTT_JSON_Status` is enabled. Conflicting retained/non-retained topics are rejected. Broker credentials, payload text, and topic values stay in `raw_config`; validated feature switches are stored as typed fields in `AppConfig`.
+Category ownership is intentional:
 
-It does not create logs, read datasets, resolve credentials, import `paho-mqtt`, or start external commands. Expected parser/configuration exceptions are converted by `app.main()` into a clear exit-code-2 configuration error.
+- `[backup]`: `BackupTitle`, `BackupComment`;
+- `[syncoid]`: list paths and command template;
+- `[ssh]`: `PassWord`, `UseSSHAgent`, key lifetime;
+- `[mail]`: `Mail`, `SendMailOnSuccess`;
+- `[mqtt]`: MQTT enable/success/JSON switches plus broker credentials/topics/payload;
+- `[home_assistant]`: HA enable and availability topic;
+- `[logging]`: `DateTime`, `LogDestination`;
+- `[runtime]`: `DryRun`, `SystemAction`, `ContinueOnMissingDataset`, `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, `BrokenPipeRetryWaitSeconds`.
+
+`ContinueOnMissingDataset` defaults to `false`; if omitted or false, the first recognized missing dataset/pool is recorded and stops the remaining pair list. When true, later configured pairs are attempted, but the final result still fails with exit code `8` and failure reporting. `SendMailOnSuccess`, `SendMQTTOnSuccess`, and `ContinueWithoutResume` default to `true` to preserve established behavior when omitted.
+
+Enabled MQTT channels trigger broker/port/topic validation before replication. `mqtt_json_topic` must not collide with retained legacy/HA topics. Secrets and payload/topic fields are copied into typed `AppConfig` fields so notification code no longer reparses raw configuration.
+
+`ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` are runtime policy options. A migration guard rejects those four names if they are mistakenly left in `[syncoid]`, so an older-category setting cannot be silently ignored and replaced by a default.
+
+Malformed TOML and invalid startup settings become clear configuration errors before dataset access, credential prompts, MQTT imports, or external commands.
 
 ## `syncerate/logging_setup.py`
 
@@ -357,19 +326,19 @@ Formats every recorded missing-data failure as `source -> destination` followed 
 
 ### `format_final_run_summary(app_config, elapsed_seconds, replication_summary=None, *, dry_run=False, planned_dataset_count=None)`
 
-Builds the canonical plain-text final summary shared by logging and email. It renders `Final run summary`, one blank line, then the optional metadata. When both metadata fields exist it renders `BackupTitle`, one blank line, the multiline `BackupComment` with aligned continuation lines, and another blank line. For completed real replication summaries it renders `Data transferred` using `format_transfer_size()` if measurement was complete, otherwise `Data transferred :   Unavailable`; one blank line follows the transfer row before `Total runtime`. When `dry_run=True`, it instead renders `Run mode : DRY RUN (no replication performed)` and, when known, `Dataset pairs planned`; it deliberately omits `Data transferred` because no child process was started. Ordinary interrupted failure/legacy callers that do not have a complete replication summary retain the runtime-only form. The missing-dataset/pool path deliberately completes the remaining real list, so it may pass that completed summary and report the measured transfer total alongside the failure. Keeping this as plain text prevents terminal, `.log`, and email layouts from drifting apart.
+Builds the canonical plain-text final summary shared by logging and email. It renders `Final run summary`, one blank line, then the optional metadata. When both metadata fields exist it renders `BackupTitle`, one blank line, the multiline `BackupComment` with aligned continuation lines, and another blank line. For completed real replication summaries it renders `Data transferred` using `format_transfer_size()` if measurement was complete, otherwise `Data transferred :   Unavailable`; one blank line follows the transfer row before `Total runtime`. When `dry_run=True`, it instead renders `Run mode : DRY RUN (no replication performed)` and, when known, `Dataset pairs planned`; it deliberately omits `Data transferred` because no child process was started. Ordinary interrupted failure/legacy callers that do not have a complete replication summary retain the runtime-only form. The missing-dataset/pool path follows `continue_on_missing_dataset`: false stops after recording the first recognized missing dataset/pool; true continues later pairs but keeps the run failed. A continue-enabled run that reaches the end may pass the completed summary and report its measured transfer total alongside exit code `8`. Keeping this as plain text prevents terminal, `.log`, and email layouts from drifting apart.
 
 ### `log_final_run_summary(app_config, elapsed_seconds, logger, replication_summary=None, *, dry_run=False, planned_dataset_count=None)`
 
-Writes `format_final_run_summary()` one physical line at a time through the normal logger, wrapped in the existing separator block. On real success this happens before mail is constructed, so the file handler has already written/flushed both the transfer total and runtime into `.log`. Dry-run success/failure uses the same logger path with the explicit dry-run mode/planned-count fields and no transfer claim. Ordinary interrupted failure paths use the function without claiming a complete transfer total, while the completed-list missing-data failure can safely pass its collected summary.
+Writes `format_final_run_summary()` one physical line at a time through the normal logger, wrapped in the existing separator block. On real success this happens before mail is constructed, so the file handler has already written/flushed both the transfer total and runtime into `.log`. Dry-run success/failure uses the same logger path with the explicit dry-run mode/planned-count fields and no transfer claim. Ordinary interrupted failure paths use the function without claiming a complete transfer total, while a continue-enabled missing-data failure that reaches the end of the list can safely pass its collected summary.
 
 ### `log_startup_configuration(app_config, run_context, logger)`
 
 Logs startup details while hiding secrets.
 
-It logs only `[Syncerate Config]`, never unrelated INI sections. It omits `PassWord`, MQTT username/password, common secret-like option names (`password`, `secret`, `token`, `credential`, API-key forms), and disabled integration-only settings. This preserves useful diagnostics while reducing the chance that a shared INI file or a future secret option is echoed accidentally.
+It logs only the recognized TOML tables in `CONFIG_SECTIONS`, never arbitrary extra tables. It omits `PassWord`, MQTT username/password, common secret-like option names (`password`, `secret`, `token`, `credential`, API-key forms), and disabled integration-only settings. This preserves useful diagnostics while reducing the chance that a future secret option is echoed accidentally.
 
-The startup `Backup information` heading is followed by a blank logging record before the metadata for readability. Backup metadata and other configuration values are emitted through `log_multiline_value()`, so standard INI continuation lines cannot inject unprefixed physical lines into the output.
+The startup `Backup information` heading is followed by a blank logging record before the metadata for readability. Backup metadata and other configuration values are emitted through `log_multiline_value()`, so TOML multiline strings cannot inject unprefixed physical lines into the output.
 
 ## `syncerate/datasets.py`
 
@@ -468,7 +437,7 @@ Builds the current success and failure message variants:
 - Syncoid error;
 - MQTT error.
 
-When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. Real successful calls pass `ReplicationSummaryData`; successful dry-run calls instead pass `DryRun=True`, the planned-pair count, and the exact dry-run report. Dry-run success gets a clearly marked subject/body saying that no replication occurred and, when file logging is enabled, attaches the available `.log` only because no Syncoid `.out` is created. Dry-run failures reuse the normal error variants but prefix the subject with `DRY RUN` and use the dry-run summary. The special real missing-data failure passes its completed `ReplicationSummaryData`, reports exit code `8`, lists every affected source/destination pair plus its matched ZFS/Syncoid reason, and can include the completed transfer total. For compatibility callers supplying a Broken Pipe warning summary, the subject remains exactly `Syncerate Succsful - WARNING BROKEN PIPE`. When logging is enabled normal real-run variants attach available `.log`, `.err`, and `.out`; when logging is disabled they send text only. It does not call `sys.exit()`.
+When called from `main()`, `RuntimeSeconds` carries the already captured monotonic run duration. Real successful calls pass `ReplicationSummaryData`; successful dry-run calls instead pass `DryRun=True`, the planned-pair count, and the exact dry-run report. Dry-run success gets a clearly marked subject/body saying that no replication occurred and, when file logging is enabled, attaches the available `.log` only because no Syncoid `.out` is created. Dry-run failures reuse the normal error variants but prefix the subject with `DRY RUN` and use the dry-run summary. The special real missing-data failure passes its `ReplicationSummaryData`, reports exit code `8`, lists every recorded source/destination pair plus its matched ZFS/Syncoid reason, and states whether `ContinueOnMissingDataset` stopped the list after the first failure or allowed later pairs to run. It can include the measured transfer total accumulated before failure handling completed. For compatibility callers supplying a Broken Pipe warning summary, the subject remains exactly `Syncerate Succsful - WARNING BROKEN PIPE`. When logging is enabled normal real-run variants attach available `.log`, `.err`, and `.out`; when logging is disabled they send text only. It does not call `sys.exit()`.
 
 ### `mqtt_error_output(error, max_chars=4000)`
 
@@ -733,14 +702,15 @@ For each pair it:
 6. when enabled, gives each dataset its own `app_config.broken_pipe_retry_count` allowance and waits `app_config.broken_pipe_retry_wait_seconds` before every ordinary Broken Pipe retry;
 7. raises a script error with code `2` when ordinary Broken Pipe retries are exhausted, stopping the whole list; zero retries fails on the first ordinary Broken Pipe;
 8. closes the child;
-9. when `ssh_command()` force-stopped a process that failed to exit within the fixed missing-data cleanup window, records that already-confirmed pair as `MissingDatasetFailure` and continues instead of converting the deliberate termination signal into a run-wide fatal error;
-10. otherwise, only when recognized runtime missing-data evidence was observed, accepts Syncoid exit `0`, `1`, or `2`, records a `MissingDatasetFailure`, and continues to the next pair; exit codes alone never permit continuation;
-11. converts other signal termination to `128 + signal`;
-12. preserves any other real Syncoid exit code immediately, including an exit outside `0`/`1`/`2` after earlier missing-data text, so a later unrelated failure is not masked;
-13. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any other exit remains authoritative;
-14. adds each attempt's actual measured bytes to the run-level `ReplicationSummary` and ANDs its completeness flag into the run-level measurement status.
+9. when `ssh_command()` force-stopped a process that failed to exit within the fixed missing-data cleanup window, treats the deliberate termination as an already-confirmed missing-data attempt rather than converting its signal into an unrelated fatal error;
+10. otherwise, only when recognized runtime missing-data evidence was observed, accepts Syncoid exit `0`, `1`, or `2` for the missing-data policy path; exit codes alone never qualify;
+11. records the pair as `MissingDatasetFailure`; if `app_config.continue_on_missing_dataset` is false (the default), returns the summary immediately so the application reports exit `8`, while true skips only that failed pair and continues to the next configured pair;
+12. converts other signal termination to `128 + signal`;
+13. preserves any other real Syncoid exit code immediately, including an exit outside `0`/`1`/`2` after earlier missing-data text, so a later unrelated failure is not masked;
+14. treats the missing-destroy-snapshot message as nonfatal only if Syncoid ultimately exits `0`; any other exit remains authoritative;
+15. adds each attempt's actual measured bytes to the run-level `ReplicationSummary` and ANDs its completeness flag into the run-level measurement status.
 
-The function returns `ReplicationSummary`, including any accumulated missing-data failures, instead of raising code `8` immediately. This allows the remaining configured pairs to run before `app.main()` marks the overall run failed. `broken_pipe_retries_used` is initialized inside the dataset loop, so every dataset pair receives the full configured retry count independently. Bytes transferred by failed Broken Pipe attempts remain part of the total because those bytes really crossed the send pipeline before the retry; the replacement attempt contributes its own bytes separately. No transfer is started in parallel, preserving sequential behavior.
+The function returns `ReplicationSummary`, including any accumulated missing-data failures, instead of raising code `8` itself. With `ContinueOnMissingDataset = False`, it returns immediately after the first recorded missing-data pair so `app.main()` can report the normal code-`8` failure. With the option enabled, it continues later pairs and returns all recorded missing-data failures after the list completes. `broken_pipe_retries_used` is initialized inside the dataset loop, so every dataset pair receives the full configured retry count independently. Bytes transferred by failed Broken Pipe attempts remain part of the total because those bytes really crossed the send pipeline before the retry; the replacement attempt contributes its own bytes separately. No transfer is started in parallel, preserving sequential behavior.
 
 ## `syncerate/app.py`
 
@@ -787,11 +757,11 @@ Execution order:
 11. enter `private_ssh_agent()` (a no-op when disabled);
 12. run all replications and collect `ReplicationSummary`;
 13. leave the agent context so identities/socket/process are cleaned before notifications;
-14. if `ReplicationSummary.has_missing_dataset_failure` is true, build one code-`8` `dataset_missing` error containing all affected pairs/reasons instead of entering the success stage;
+14. if `ReplicationSummary.has_missing_dataset_failure` is true, build one code-`8` `dataset_missing` error containing all recorded pairs/reasons instead of entering the success stage; depending on `ContinueOnMissingDataset`, the summary may represent the first failed pair only or failures accumulated while later pairs continued;
 15. otherwise capture the monotonic elapsed runtime and pass it into real successful completion handling;
 16. return `0` only when no fatal/completed-list failure exists.
 
-For the deferred real missing-data failure, the exception boundary passes the completed `ReplicationSummary` into final-summary logging, MQTT JSON failure reporting, and the dedicated failure email. For any failure while dry-run mode is active, it passes `dry_run=True` through final summary, MQTT failure reporting, and error mail, so the event remains distinguishable from real replication while still ignoring the success-notification switches. Expected file/config/parser errors during `load_app_config()` are first converted into a clear script/configuration `SyncerateError` with code `2`. Known and unexpected errors log diagnostics, capture/log the monotonic runtime before failure notifications, best-effort publish JSON failure status where applicable, and pass the same runtime into error mail. This ordering deliberately excludes the time needed to send the email itself and any later real-run `SystemAction`; that is the only way email can contain the same stable runtime already present in the `.log`.
+For a real missing-data failure, the exception boundary passes the returned `ReplicationSummary` into final-summary logging, MQTT JSON failure reporting, and the dedicated failure email. Those reports remain failures whether continuation was disabled or enabled. For any failure while dry-run mode is active, it passes `dry_run=True` through final summary, MQTT failure reporting, and error mail, so the event remains distinguishable from real replication while still ignoring the success-notification switches. Expected file/config/parser errors during `load_app_config()` are first converted into a clear script/configuration `SyncerateError` with code `2`. Known and unexpected errors log diagnostics, capture/log the monotonic runtime before failure notifications, best-effort publish JSON failure status where applicable, and pass the same runtime into error mail. This ordering deliberately excludes the time needed to send the email itself and any later real-run `SystemAction`; that is the only way email can contain the same stable runtime already present in the `.log`.
 
 ## Configuration and command data flow
 
@@ -842,7 +812,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
 - Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
 - Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.39`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.42`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -860,9 +830,29 @@ The packaged `tests/` directory uses only Python `unittest` plus Syncerate's exi
 - `no_logging_context()`: creates a `RunContext` with file logging disabled.
 - `write_executable(path, body)`: writes an executable temporary Python program used as a fake Syncoid child.
 
-### `tests/test_config.py` — `ConfigTests`
+### `tests/test_config.py`
 
-`load_text()` writes and loads temporary INI content. The test methods cover the shipped example config, compatibility `option_is_enabled()`, strict Boolean spellings/typos, the enabled-by-default and explicitly-disabled success-notification controls, empty required values, Syncoid placeholder/shlex validation, enabled MQTT broker/port/topic requirements, Home Assistant availability requirements, and JSON topic separation.
+- `ConfigTests`: groups TOML loader/schema validation tests.
+- `load_text()`: writes temporary TOML text and returns the validated `AppConfig`.
+- `test_shipped_example_config_loads()`: verifies the shipped TOML example parses and validates.
+- `test_shipped_example_contains_every_supported_config_option()`: compares the example's tables/keys exactly with `CONFIG_OPTION_LOCATIONS`, currently locking all 31 supported settings into the example.
+- `test_loader_option_accesses_match_documented_schema()`: AST-audits `load_app_config()` helper calls and requires every actually accessed option to match the same 31-key schema, closing the gap between code and example.
+- `test_valid_minimal_config_loads()`: verifies required minimal TOML plus documented defaults.
+- `test_continue_on_missing_dataset_defaults_false_and_requires_toml_boolean()`: locks safe default false and native-Boolean validation for `[runtime].ContinueOnMissingDataset`.
+- `test_runtime_policy_options_reject_old_syncoid_table_location()`: verifies the four moved runtime-policy options fail clearly if an older config leaves them under `[syncoid]`.
+- `test_continue_without_resume_defaults_true_and_requires_toml_boolean()`: locks default true and native-Boolean validation for `[runtime].ContinueWithoutResume`.
+- `test_dry_run_defaults_false_and_requires_toml_boolean()`: locks safe default false and native-Boolean validation for `[runtime].DryRun`.
+- `test_success_notification_switches_default_to_enabled_when_omitted()`: verifies mail/MQTT success switches remain enabled by default.
+- `test_success_notification_switches_can_be_disabled()`: verifies each category's native Boolean success switch can be disabled.
+- `test_success_notification_switch_rejects_non_boolean()`: rejects quoted/non-Boolean success-switch values.
+- `test_multiline_backup_comment_uses_toml_multiline_string()`: verifies TOML multiline comments survive as embedded newlines.
+- `test_option_is_enabled_remains_legacy_compatibility_helper()`: locks the intentionally retained legacy helper independently of TOML parsing.
+- `test_boolean_string_is_rejected_by_loader()`: verifies quoted Boolean-like strings do not silently configure runtime behavior.
+- `test_native_toml_booleans_are_accepted_across_categories()`: verifies real TOML Booleans across category boundaries.
+- `test_empty_password_option_is_rejected()` / `test_empty_required_value_is_rejected()`: lock required-string validation.
+- `test_syncoid_command_requires_both_placeholders()`, `test_syncoid_command_rejects_duplicate_placeholder()`, `test_syncoid_command_reports_shlex_error()`: lock safe command-template validation.
+- `test_enabled_mqtt_requires_broker_address()`, `test_enabled_mqtt_requires_valid_port_range()`, `test_enabled_legacy_mqtt_requires_topic()`, `test_enabled_legacy_mqtt_requires_message_key()`, `test_enabled_home_assistant_requires_availability_topic()`, `test_enabled_json_mqtt_requires_dedicated_topic()`, `test_json_topic_conflict_with_legacy_topic_is_rejected()`: lock conditional MQTT/HA startup validation.
+- `test_invalid_toml_reports_configuration_error()`: verifies malformed TOML is surfaced as a configuration error.
 
 ### `tests/test_datasets.py` — `DatasetTests`
 
@@ -898,8 +888,8 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
 - `Syncerate.spec`, `build_pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
-- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.39 executable and is not imported by source-mode tests; rebuild it with `build_pyinstaller.sh` for this release.
-- `config/example-Syncerate.cfg`: complete option example kept synchronized with the loader.
+- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.42 executable and is not imported by source-mode tests; rebuild it with `build_pyinstaller.sh` for this release.
+- `config/example-Syncerate.toml`: complete 31-option categorized TOML example kept synchronized exactly with `CONFIG_OPTION_LOCATIONS`.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
 - Home Assistant YAML examples: legacy availability and JSON-status consumption examples.
 - `_layouts/default.html` / `_config.yaml`: GitHub Pages presentation files. Version 0.4.23 removed the unused jQuery 1.12.4 include because no project code uses it.
@@ -942,30 +932,34 @@ Every test/helper function is listed here explicitly so the code map remains exh
 
 ### `tests/test_config.py`
 
-- `ConfigTests`: groups the tests and their shared setup for this module.
-- `load_text()`: writes temporary INI text and returns the validated AppConfig.
-- `test_shipped_example_config_loads()`: regression check that shipped example config loads.
-- `test_valid_minimal_config_loads()`: regression check that valid minimal config loads and omitted `DryRun` defaults safely to false.
-- `test_dry_run_defaults_false_and_validates_booleans()`: verifies `DryRun` defaults to false, accepts every documented Boolean spelling, and rejects ambiguous/typo values before replication.
-- `test_success_notification_switches_default_to_enabled_when_omitted()`: verifies both new success-notification controls preserve legacy behavior by defaulting to true when absent.
-- `test_success_notification_switches_can_be_disabled()`: verifies both new controls accept documented disabled Boolean spellings and normalize to false.
-- `test_success_notification_switch_rejects_invalid_boolean()`: verifies typo/ambiguous values for the new controls fail startup validation instead of silently changing notification behavior.
-- `test_multiline_backup_comment_uses_ini_continuation_lines()`: verifies indented INI continuation lines load into `backup_comment` as embedded newlines.
-- `test_option_is_enabled_remains_compatibility_helper()`: regression check that option is enabled remains compatibility helper.
-- `test_boolean_typo_is_rejected_by_loader()`: regression check that boolean typo is rejected by loader.
-- `test_all_documented_boolean_spellings_are_accepted()`: regression check that all documented boolean spellings are accepted.
-- `test_empty_password_option_is_rejected()`: regression check that empty password option is rejected.
-- `test_empty_required_value_is_rejected()`: regression check that empty required value is rejected.
-- `test_syncoid_command_requires_both_placeholders()`: regression check that syncoid command requires both placeholders.
-- `test_syncoid_command_rejects_duplicate_placeholder()`: regression check that syncoid command rejects duplicate placeholder.
-- `test_syncoid_command_reports_shlex_error()`: regression check that syncoid command reports shlex error.
-- `test_enabled_mqtt_requires_broker_address()`: regression check that enabled mqtt requires broker address.
-- `test_enabled_mqtt_requires_valid_port_range()`: regression check that enabled mqtt requires valid port range.
-- `test_enabled_legacy_mqtt_requires_topic()`: regression check that enabled legacy mqtt requires topic.
-- `test_enabled_home_assistant_requires_availability_topic()`: regression check that enabled home assistant requires availability topic.
-- `test_enabled_json_mqtt_requires_dedicated_topic()`: regression check that enabled json mqtt requires dedicated topic.
-- `test_json_topic_conflict_with_legacy_topic_is_rejected()`: regression check that json topic conflict with legacy topic is rejected.
-
+- `ConfigTests`: groups TOML configuration/schema regression tests.
+- `load_text()`: writes temporary TOML text and returns validated `AppConfig`.
+- `test_shipped_example_config_loads()`: regression check for the behavior named by this test.
+- `test_shipped_example_contains_every_supported_config_option()`: regression check for the behavior named by this test.
+- `test_valid_minimal_config_loads()`: regression check for the behavior named by this test.
+- `test_continue_on_missing_dataset_defaults_false_and_requires_toml_boolean()`: regression check for the behavior named by this test.
+- `test_continue_without_resume_defaults_true_and_requires_toml_boolean()`: regression check for the behavior named by this test.
+- `test_dry_run_defaults_false_and_requires_toml_boolean()`: regression check for the behavior named by this test.
+- `test_success_notification_switches_default_to_enabled_when_omitted()`: regression check for the behavior named by this test.
+- `test_success_notification_switches_can_be_disabled()`: regression check for the behavior named by this test.
+- `test_success_notification_switch_rejects_non_boolean()`: regression check for the behavior named by this test.
+- `test_multiline_backup_comment_uses_toml_multiline_string()`: regression check for the behavior named by this test.
+- `test_option_is_enabled_remains_legacy_compatibility_helper()`: regression check for the behavior named by this test.
+- `test_boolean_string_is_rejected_by_loader()`: regression check for the behavior named by this test.
+- `test_native_toml_booleans_are_accepted_across_categories()`: regression check for the behavior named by this test.
+- `test_empty_password_option_is_rejected()`: regression check for the behavior named by this test.
+- `test_empty_required_value_is_rejected()`: regression check for the behavior named by this test.
+- `test_syncoid_command_requires_both_placeholders()`: regression check for the behavior named by this test.
+- `test_syncoid_command_rejects_duplicate_placeholder()`: regression check for the behavior named by this test.
+- `test_syncoid_command_reports_shlex_error()`: regression check for the behavior named by this test.
+- `test_enabled_mqtt_requires_broker_address()`: regression check for the behavior named by this test.
+- `test_enabled_mqtt_requires_valid_port_range()`: regression check for the behavior named by this test.
+- `test_enabled_legacy_mqtt_requires_topic()`: regression check for the behavior named by this test.
+- `test_enabled_legacy_mqtt_requires_message_key()`: regression check for the behavior named by this test.
+- `test_enabled_home_assistant_requires_availability_topic()`: regression check for the behavior named by this test.
+- `test_enabled_json_mqtt_requires_dedicated_topic()`: regression check for the behavior named by this test.
+- `test_json_topic_conflict_with_legacy_topic_is_rejected()`: regression check for the behavior named by this test.
+- `test_invalid_toml_reports_configuration_error()`: regression check for the behavior named by this test.
 ### `tests/test_datasets.py`
 
 - `DatasetTests`: groups the tests and their shared setup for this module.
@@ -1011,7 +1005,8 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_private_agent_disabled_yields_none()`: regression check that private agent disabled yields none.
 - `run_fake()`: runs a temporary fake Syncoid executable through the real Pexpect replication path.
 - `test_openssh_permanently_added_known_host_warning_is_nonfatal()`: verifies the general ignore policy includes OpenSSH known-hosts warnings.
-- `test_missing_dataset_exit_two_is_recorded_and_list_continues()`: verifies documented `dataset does not exist` output with Syncoid exit `2` records the failed pair and still executes the next configured pair.
+- `test_missing_dataset_exit_two_is_recorded_and_list_continues()`: verifies documented `dataset does not exist` output with Syncoid exit `2` records the failed pair and still executes the next configured pair when `ContinueOnMissingDataset` is explicitly enabled.
+- `test_missing_dataset_stops_list_by_default_but_still_records_failure()`: verifies the default disabled policy records the missing-data pair but does not execute the later configured pair.
 - `test_missing_pool_exit_two_is_recorded()`: verifies `cannot open 'pool': no such pool` uses the same deferred failure path.
 - `test_missing_pool_import_message_is_recorded()`: verifies OpenZFS's `cannot import 'pool': no such pool available` form is recognized by the same missing-pool path.
 - `test_skipping_dataset_warnings_are_ignored()`: verifies a generic skip warning is ignored; only the exact disappeared-dataset report is deferred as missing data.
@@ -1031,7 +1026,8 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_broken_pipe_exhaustion_stops_list_after_configured_retries()`: verifies the configured retry count is honored and exhaustion raises code 2 before later pairs start.
 - `test_repeated_host_key_prompt_fails_code_9()`: regression check that repeated host key prompt fails code 9.
 
-- `test_main_missing_dataset_continues_list_then_reports_failure_code_8()`: end-to-end check that `main()` continues later pairs, skips the success stage, forwards the completed missing-data summary to MQTT/mail failure handling, and returns exit code `8`.
+- `test_main_missing_dataset_continues_list_then_reports_failure_code_8()`: end-to-end check that `main()` continues later pairs only when the option is enabled, skips the success stage, forwards the completed missing-data summary to MQTT/mail failure handling, and returns exit code `8`.
+- `test_main_missing_dataset_stops_list_by_default_and_reports_failure_code_8()`: end-to-end check that omitted/false continuation stops before the next pair but still forwards the recorded failure to MQTT/mail handling and returns exit code `8`.
 - `test_json_failure_payload_lists_missing_dataset_failures()`: verifies MQTT JSON failure status contains structured source/destination/reason entries for missing-data failures.
 - `test_missing_dataset_failure_mail_lists_failed_pair_and_reason()`: verifies the dedicated missing-data failure email names the affected pair, includes the matched ZFS reason, and states exit code `8`.
 
@@ -1066,7 +1062,7 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_mqtt_errors_and_unavailable_config_do_not_republish()`: verifies the existing no-config and MQTT-recursion guards.
 - `test_main_failure_still_sends_mail_when_error_mqtt_fails()`: runs the application error boundary with mocked replication and broker failures. Confirms one attempted MQTT error report, subsequent error email despite both success switches being false, and preservation of the original replication exit code.
 
-The `tests/test_config.py` Boolean checks exercise `DryRun` and both success switches with true/false, yes/no, on/off, numeric, and mixed-case spellings; invalid values must fail startup validation.
+The `tests/test_config.py` Boolean checks exercise `DryRun`, `ContinueOnMissingDataset`, and both success switches with true/false, yes/no, on/off, numeric, and mixed-case spellings; invalid values must fail startup validation.
 
 
 ### Warning/resume regression checks

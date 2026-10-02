@@ -12,7 +12,7 @@ import sys
 from syncerate import VERSION, __version__
 from syncerate.app import log_syncerate_error, main, successfull_run
 from syncerate.cli import parse_arguments
-from syncerate.config import CONFIG_SECTION, load_app_config, option_is_enabled
+from syncerate.config import CONFIG_SECTIONS, load_app_config, option_is_enabled
 from syncerate.datasets import (
     load_dataset_pairs,
     missmatchinglists,
