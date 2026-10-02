@@ -16,6 +16,164 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.42
+
+Previous version: `0.4.41`.
+
+- Moved the runtime policy settings `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` from `[syncoid]` to `[runtime]` in the authoritative TOML schema, loader, shipped example, README, tests, and code map. `[syncoid]` now owns only dataset-list paths and the Syncoid command template.
+- Preserved the runtime behavior and fallback defaults: omitted `ContinueWithoutResume` still defaults to `true`, omitted `RetryBrokenPipe` still defaults to `false`, retry count defaults to `1`, and retry wait defaults to `10`. Only category ownership changed.
+- Set the shipped example's explicit runtime policy values to the requested `ContinueWithoutResume = false`, `RetryBrokenPipe = true`, `BrokenPipeRetryCount = 1`, and `BrokenPipeRetryWaitSeconds = 10`. These explicit example values intentionally differ from the fallback values used when the settings are omitted.
+- Added a migration guard that rejects these four option names when placed under `[syncoid]`, with a clear message that they moved to `[runtime]`. This prevents an old 0.4.41 category placement from being silently ignored and replaced by fallback behavior.
+- Kept `ContinueOnMissingDataset` in `[runtime]` with its existing disabled-by-default behavior and preserved all mail/MQTT success/failure, dry-run, missing-dataset, resume-warning, and Broken Pipe runtime semantics.
+- Updated authoritative version/build expectations, regression coverage, README current-use documentation, `commented_code_map.md`, verification, and package manifest for 0.4.42. The supplied `dist/Syncerate` remains the older 0.4.29 binary because the required standalone-build dependencies are unavailable in the verification environment.
+
+## 0.4.41
+
+Previous version: `0.4.40`.
+
+- Replaced the runtime INI/`.cfg` configuration format with TOML and renamed the shipped complete example from `config/example-Syncerate.cfg` to `config/example-Syncerate.toml`. Existing private `.cfg` files must be converted before use; the loader no longer treats an INI file as a valid configuration.
+- Reorganized all 31 supported settings into ownership-based TOML tables: `[backup]`, `[syncoid]`, `[ssh]`, `[mail]`, `[mqtt]`, `[home_assistant]`, `[logging]`, and `[runtime]`. `SendMailOnSuccess` belongs to `[mail]`, `SendMQTTOnSuccess` belongs to `[mqtt]`, and `DryRun`, `SystemAction`, and `ContinueOnMissingDataset` belong to `[runtime]`.
+- Added `CONFIG_OPTION_LOCATIONS` as the authoritative schema map plus regression tests that compare both the loader's actual option accesses and the shipped TOML example against that schema. The example contains all 31 current settings in their assigned tables, including `ContinueOnMissingDataset = false`; no source-supported configuration key is missing from the example.
+- Switched configuration loading to Python's built-in `tomllib` and native TOML types. Boolean settings now require unquoted `true`/`false`; quoted Boolean-like strings are rejected instead of being interpreted through INI text conversion. Integer settings likewise require true TOML integers. String-valued controls such as `Mail = "No"`, `PassWord = "No"`, `LogDestination = "No"`, and `SystemAction = "No"` remain strings.
+- Moved MQTT broker/topics/credentials and Home Assistant availability into typed `AppConfig` fields instead of lazily rereading a ConfigParser object. Existing MQTT retention, dry-run, success-gating, and failure-reporting behavior is otherwise preserved.
+- Updated safe startup configuration logging to iterate only recognized TOML tables while continuing to omit passwords, broker credentials, and secret-like settings. TOML multiline strings remain line-prefixed in logs.
+- Updated `--conf`/`--help` examples, README current-use instructions, `commented_code_map.md`, tests, verification, `.gitignore`, version metadata, and the standalone-build expected version for TOML/0.4.41. Source mode now requires Python 3.11+ for built-in `tomllib`.
+- Preserved the supplied `dist/Syncerate` executable unchanged. It remains the older 0.4.29 build because PyInstaller and Paho MQTT are unavailable in the verification environment and therefore cannot honestly be rebuilt as 0.4.41 here.
+
+## 0.4.40
+
+Previous version: `0.4.39`.
+
+- Added optional strict Boolean `ContinueOnMissingDataset`, disabled by default when omitted. `False` preserves fail-fast behavior for the configured dataset list: the first specifically recognized runtime missing ZFS dataset/pool error is recorded, later pairs are not started, and the run still returns exit code `8` with normal failure reporting.
+- `ContinueOnMissingDataset = True` preserves the previous 0.4.39 continuation behavior: recognized missing dataset/pool failures are recorded, later configured pairs continue, and the overall run still fails with exit code `8` after the list with all recorded failures included in reporting. The option never converts missing data into success.
+- Reused the existing missing-data detector, `MissingDatasetFailure` summary, exit-code-8 application boundary, error mail, and MQTT failure reporting instead of adding a parallel error path.
+- Corrected missing-data log/email wording so it no longer always claims the remaining list was completed; reports now state whether continuation was enabled or disabled.
+- Added `ContinueOnMissingDataset = False` with full comments to `config/example-Syncerate.cfg`, updated README/current-use documentation and `commented_code_map.md`, and included the option in strict Boolean validation.
+- Added regression coverage for disabled-by-default stop behavior, explicit opt-in continuation, strict Boolean parsing/defaults, multi-pair application behavior, and error-mail policy wording.
+- Updated authoritative version/build expectations to 0.4.40. The preserved `dist/Syncerate` remains the older 0.4.29 binary because the build dependencies are not available in the verification environment.
+
+## 0.4.39
+
+Previous version: `0.4.38`.
+
+- Added `DryRun` as a real `[Syncerate Config]` Boolean setting, defaulting to `False` when omitted. `DryRun = True` now activates the same safe planning/report mode that 0.4.38 exposed only through the CLI.
+- Kept `--dry-run` as a one-way convenience override: it can force dry-run on even when `DryRun = False`, but it cannot force a configured `DryRun = True` back to a real replication. This prevents an accidental command-line option from disabling the safety setting.
+- Preserved dry-run safety behavior: no password/passphrase resolution, private ssh-agent startup, Syncoid child process, ZFS transfer, or `SystemAction` execution.
+- Preserved success/failure notification policy in both real and dry-run modes. `SendMailOnSuccess` and `SendMQTTOnSuccess` suppress only their respective successful notifications; configured error mail/MQTT remains independent and is still attempted on failures.
+- Added `DryRun = False` with full comments to `config/example-Syncerate.cfg`, updated README/current-use documentation and CLI help, and documented the new typed `AppConfig.dry_run` field/config flow in `commented_code_map.md`.
+- Added regression coverage for config-driven dry-run without the CLI flag, strict `DryRun` Boolean parsing/defaults, CLI override behavior, and preservation of dry-run no-execution guarantees.
+- Updated authoritative version/build expectations to 0.4.39. The preserved `dist/Syncerate` remains the older 0.4.29 binary because the build dependencies are not available in the verification environment.
+
+## 0.4.38
+
+Previous version: `0.4.37`.
+
+- Added application-level `--dry-run` support. A dry run still loads and validates the selected configuration, reads/validates the source and destination lists, and builds the exact Syncoid argv for every pair, but it does not resolve/request credentials, start the private SSH agent, start Syncoid, transfer data, or execute `SystemAction`.
+- Added a dedicated dry-run report that prints/logs the planned pair count, notification state, each source/destination mapping, and the exact shell-style Syncoid command that a real run would use. The final summary explicitly identifies `DRY RUN (no replication performed)` and does not claim a transfer total.
+- Kept the existing independent `SendMailOnSuccess` and `SendMQTTOnSuccess` controls and made their dry-run behavior explicit. `SendMailOnSuccess = False` suppresses successful real-run and successful dry-run mail only; `SendMQTTOnSuccess = False` suppresses successful real-run and successful dry-run MQTT only. Both remain enabled by default when omitted.
+- Preserved failure reporting independently of the two success switches. Configured error email/MQTT is still attempted after handled failures even when the corresponding success switch is disabled, including failures occurring during `--dry-run`. Dry-run failure summaries/payloads are marked as dry run.
+- Added a safety-specific dry-run MQTT route: dry runs never publish the historical retained `mqtt_message` or retained Home Assistant `online` availability signal. A successful dry run publishes one non-retained JSON report on `mqtt_json_topic` when `MQTT_JSON_Status` is enabled, otherwise on `<mqtt_topic>/dry-run` for legacy-only MQTT.
+- Extended MQTT JSON status with `dry_run` and `planned_datasets`. Real runs emit `dry_run: false`; successful dry runs emit `dry_run: true` plus the planned source/destination pairs; dry-run failures retain `dry_run: true`.
+- Added clearly marked dry-run success email containing the dry-run final summary and planned-command report. When logging is enabled it attaches the available `.log`; no `.out` file is required because Syncoid never starts. Dry-run error mail is also marked `DRY RUN`.
+- Updated CLI help/examples, README current-use documentation, complete example configuration comments, commented code map, regression tests, authoritative version, PyInstaller expected-version check, verification record, and package manifest. No configuration key was added, removed, or renamed.
+- Preserved the supplied `dist/Syncerate` executable unchanged. It remains the older 0.4.29 build and must be rebuilt from the 0.4.38 source on a compatible system with the documented PyInstaller dependencies.
+
+## 0.4.37
+
+Previous version: `0.4.36`.
+
+- Investigated a real run where all 65 source/destination suffix checks passed, then the first Syncoid receive reported a missing destination parent dataset and no later pair appeared to run.
+- Added a fixed 5-second cleanup deadline after a definitive non-warning missing dataset/pool diagnostic. Syncerate still gives Syncoid time to exit normally, but if the failed child/pipeline remains stuck it force-stops only that already-failed attempt and continues to the next configured pair.
+- Preserved safety handling during that cleanup window: authentication, permission, connection, and unrelated real nonzero exits remain fatal; the forced continuation applies only after narrowly recognized missing-data evidence.
+- Added explicit `missing_dataset_cleanup_forced` state to `SyncoidAttemptResult` so `run_replications()` can distinguish Syncerate's deliberate cleanup signal from an unrelated terminating signal.
+- Added `log_failure_output_lines()` to duplicate a bounded tail of raw child output into ERROR logging. Missing-data `.err` files now include nearby Syncoid/ZFS/mbuffer diagnostics, the exact matched missing-data line, and trailing receive output when available; `.out` remains the complete raw stream.
+- Kept the existing end-of-run semantics: failed missing-data pairs are accumulated, later pairs continue, the final run returns exit code `8`, enabled error mail/MQTT still report all failed pairs, and successful system actions do not run.
+- Added regression coverage reproducing the observed missing-parent/mbuffer/receive output and a deliberately hung child after a missing-data error. Both tests verify that the next configured pair really executes.
+- Updated README current-use behavior, commented code map, version metadata, build-version expectation, example-config version marker, verification record, and package manifest. No user configuration key or CLI flag was added or renamed.
+
+## 0.4.36
+
+Previous version: `0.4.35`.
+
+- Performed a full project/release audit before editing; replication, SSH, Syncoid monitoring, dataset validation, retry behavior, notification routing, and system-action behavior are intentionally unchanged.
+- Updated the authoritative package version, standalone-build expected version, packaging regression expectation, example-config release marker, README version references, and commented code map to `0.4.36`.
+- Replaced the shortened README disclaimer with the requested full liability and AI-assisted/vibe-coded disclaimers while retaining the Syncerate-specific ZFS/Syncoid data-loss warning and current-use safety guidance.
+- Verified that the shipped example configuration contains all 29 configuration keys consumed across the application, and that every production class/function plus every test/helper function is represented in `commented_code_map.md`.
+- Corrected stale documentation metadata that referred to an absent `config/destlist-bck` asset; the code map now describes only assets actually present in this project.
+- Regenerated `VERIFICATION.md` for this release and regenerated `PACKAGE_MANIFEST.json` from the supplied 0.4.35 archive versus the final 0.4.36 tree, including added/modified/unchanged/removed classifications, hashes, and mode information.
+- Preserved the supplied `dist/Syncerate` file unchanged because build dependencies could not be installed in the offline verification environment. That binary identifies itself as 0.4.29 and is explicitly documented as unsuitable for the 0.4.36 release until rebuilt from source.
+- Kept README as current-use documentation only; release history remains in this file. No configuration option, command-line flag, dataset rule, exit-code mapping, or runtime safety policy was added, removed, or renamed.
+
+## 0.4.35
+
+Previous version: `0.4.34`.
+
+- Preserved preflight validation unchanged: all dataset-pair final names and list lengths must match, and empty lists/trailing slashes are rejected before any Syncoid process or credential work. Added application-level checks proving even a mismatch after a valid pair blocks the entire run.
+- Restored the narrowly matched Syncoid disappeared-dataset warning as runtime missing-data evidence. Other warnings remain ignored, subject to the existing resume-unavailable policy.
+- Verified exact English diagnostics and error flow against pinned upstream Syncoid/OpenZFS source; documented source links. Added complete-line matching for missing source/pool, missing destination parent/pool, receive-destination errors, and Syncoid's property-query error wrapper. Excluded snapshot/bookmark names, generic no-datasets/skip messages, debug echoes, and message-prefix false positives.
+- Required matching runtime missing-data evidence before accepting Syncoid exits 0, 1, or 2 as deferred failures. Exit 1 covers upstream incremental-transfer failure paths; codes alone never grant continuation. Authentication/connection failures, signals, and other exit codes keep their fatal behavior.
+- Added EOF handling for complete unterminated missing-data diagnostics. Preserved complete reasons for email/MQTT summaries. A Broken Pipe following confirmed missing-data evidence waits for Syncoid's final status rather than starting an unrelated retry.
+- Changed exhausted ordinary Broken Pipe retries to stop the whole run with exit 2, as requested. Zero retries stops on the first ordinary Broken Pipe. Successful retries can still continue normally. Retained existing summary/notification compatibility fields and functions, but normal execution no longer emits Broken Pipe warning-success results.
+- Reused the existing deferred-failure summary and application error boundary: after the remaining list runs, any recorded missing-data pair produces exit 8 and enabled error mail/MQTT, even with success switches false. Successful system actions are not run. Added a full application test checking actual constructed mail content and MQTT payloads after two missing-data failures and a later successful pair.
+- Updated current-use README, all-options configuration comments, function/command map, version metadata, build-version expectation, and regression tests. All original files and existing disclaimer preserved.
+
+## 0.4.34
+
+Previous version: `0.4.33`.
+
+- Replaced special-case warning failures and warning exceptions in `ssh_command()` with one complete-line warning handler. Syncoid `WARN`/`WARNING` lines are ignored for failure detection, including skipped-dataset warnings. Ordinary warnings remain in raw `.out` capture but are not separately registered as application warnings or missing-data failures.
+- Added `read_warning_line()` to consume each warning through CR, LF, or EOF. Error-looking words inside a warning cannot trigger authentication, connection, password/host-key prompts, missing-data, or Broken Pipe handling, including when output arrives in chunks. Warning text is excluded from transfer accounting.
+- Added optional strict Boolean `ContinueWithoutResume`, default true to preserve existing behavior. The resume-unavailable warning is always logged; true continues and checks the eventual process result, while false stops the run with exit code 4 and the existing error-notification path. Added the field to `AppConfig`, validated it in the config loader, and passed it to every attempt.
+- Removed the dedicated known-host warning matcher, fatal generic-warning handler, and warning-based skipped-dataset failure paths. A warning-only missing-dataset skip followed by a non-zero exit retains that actual exit code instead of being converted into a deferred missing-data failure.
+- Kept non-warning authentication, connection, missing dataset/pool, stale-source, Broken Pipe, repeated-prompt, process-exit, and signal handling. Retained silent receive-reset bookkeeping so ignoring the reset warning does not change how a following non-warning recovery-related Broken Pipe is handled. Preserved success/error notification controls and all original project files.
+- Updated fake-process regression tests for ignored warnings, streaming/EOF handling, resume policies and Boolean validation, raw logging/transfer accounting, preserved non-warning failures/signals, and stale recovery. Added optional logger injection to the shared fake-run test method for reliable log assertions.
+- Updated README for current behavior, all-options config example, function/test map, version metadata, standalone build-version expectation, and packaging test.
+
+## 0.4.33
+
+Previous version: `0.4.32`.
+
+- Reused the existing optional `SendMailOnSuccess` and `SendMQTTOnSuccess` settings, which default to true. Each suppresses only its own successful/warning-success notifications when false; master channel settings still apply. Examples now show the `True` spelling explicitly.
+- Extended `send_mqtt_failure_status()` to handle either enabled MQTT mode. `Use_MQTT` alone now sends a non-retained JSON error event on the exact `mqtt_topic` plus `/error`. When `MQTT_JSON_Status` is enabled, the existing `mqtt_json_topic` is used and no duplicate fallback event is sent.
+- Reused `send_mqtt_messages()` and `build_mqtt_status_payload()` for error delivery, preserving structured errors, captured output, and missing-dataset details. Success payloads and HA availability remain success-only; failure events never replace retained success state.
+- Preserved error mail independently of the success toggle, original failure exit codes when error publishing fails, and the guard against reporting an MQTT publishing error recursively over MQTT.
+- Added regression coverage for channel/topic routing, both success toggle values, independent mail/MQTT switches, warning-success behavior, default-enabled success, disabled channels, error-report recursion, and error-mail delivery when MQTT failure reporting fails. Expanded Boolean validation coverage for both switches.
+- Updated README usage, commented code map, config comments, Home Assistant subscription guidance, package version, build-version check, and its packaging test. No replication, SSH, retry, dataset validation, or system-action behavior was changed. All original project files remain included.
+
+## 0.4.32
+
+Previous version: `0.4.31`.
+
+- Added optional strict Boolean `SendMailOnSuccess`, defaulting to `Yes` when omitted. When `Mail` contains a recipient and `SendMailOnSuccess = No`, successful and warning-success runs skip email, while handled error paths still attempt the normal error email.
+- Added optional strict Boolean `SendMQTTOnSuccess`, also defaulting to `Yes` when omitted. Setting it to `No` suppresses all successful-run MQTT publishing: the legacy retained `mqtt_message`, the optional retained Home Assistant availability `online` signal, and the independent non-retained JSON success event.
+- Kept MQTT error reporting independent from the new success switch. When `MQTT_JSON_Status = Yes`, handled failures still publish the existing non-retained JSON failure event even if `SendMQTTOnSuccess = No`. The historical `Use_MQTT` topic remains success-only so existing retained-topic consumers are not given a new failure payload format.
+- Kept error-email behavior independent from the new success switch. `send_error_mail()` still depends only on whether `Mail` itself is enabled, so suppressing routine success mail cannot hide failures.
+- Added regression coverage for default-enabled compatibility, explicit disable values, invalid Boolean rejection, successful mail/MQTT suppression, and preservation of error mail/MQTT JSON failure reporting.
+- Updated README/current-use behavior, `commented_code_map.md`, `config/example-Syncerate.cfg`, version metadata, and standalone build-version expectations for 0.4.32. Replication, SSH, Syncoid, dataset, retry, missing-data, transfer-accounting, and system-action behavior are unchanged.
+
+## 0.4.31
+
+Previous version: `0.4.30`.
+
+- Added a narrowly scoped non-fatal match for OpenSSH's normal first-contact `Warning: Permanently added 'host' (KEYTYPE) to the list of known hosts.` output. The existing interactive host-key confirmation behavior is unchanged; this release only prevents the follow-up known-hosts message from being misclassified as a generic fatal warning.
+- Added continue-but-fail handling for documented missing ZFS dataset/pool output: `cannot open '...': dataset does not exist`, `cannot open '...': no such pool`, `cannot import '...': no such pool available`, plus Syncoid's own current `WARNING: Skipping dataset (dataset no longer exists): ...` form (while retaining compatibility with the older `WARN` spelling). Syncoid's `CRITICAL ERROR: ` prefix around captured ZFS errors is also accepted.
+- Missing-data pairs are recorded individually and the remaining configured dataset list continues. Syncoid exit `0` is accepted only for the specific recursive missing-dataset skip path and exit `2` for the normal missing source/pool path; any other exit code remains immediately fatal so an unrelated later Syncoid failure is not masked.
+- After the list finishes, any recorded missing dataset/pool makes the overall run fail with the existing exit code `8`. Success-only MQTT/system-action handling is not run.
+- Extended MQTT JSON failure status with `failed_datasets`, containing the affected source, destination, and matched missing-data reason. Extended missing-data failure email text to list the same affected pairs/reasons.
+- Added regression coverage for the OpenSSH known-hosts warning, missing dataset, missing pool, Syncoid's recursive missing-dataset warning, continuation to later pairs, preservation of unrelated nonzero exit codes, overall exit code `8`, and structured MQTT failure reporting.
+- Updated README/current-use behavior, `commented_code_map.md`, version metadata, example-config version metadata, and standalone build-version expectations. No configuration option was added, removed, or renamed.
+
+## 0.4.30
+
+Previous version: `0.4.29`.
+
+- Fixed the standalone PyInstaller post-build version check. The frozen executable is named `Syncerate` and argparse therefore reports `Syncerate <version>`; the old wrapper incorrectly required `Syncerate.py <version>` and could reject an otherwise valid build. The wrapper now derives the expected program name from the actual `dist/Syncerate` filename.
+- Expanded the built-in CLI help so every Syncerate application flag has a clear purpose: `--conf`/`-c` documents the required INI path and relative-path behavior, `--version` has an explicit description, and the help footer includes normal-run/version examples.
+- Expanded `README.md` with current-use-only flag behavior and examples, including that `--help` and `--version` do not require `--conf` or start runtime work, while a normal run has no implicit/default configuration path. The existing project disclaimer and liability notice remain unchanged.
+- Corrected the stale `build_attempt_result(...)` signature in `commented_code_map.md`, synchronized its CLI/build descriptions with the actual implementation, and expanded every `TransferByteCounter` method into an individually named explanation of what it does and why it exists.
+- Added regression coverage for the improved CLI help and updated the packaging regression to lock the corrected standalone version-output check.
+- Updated version metadata, example-config version metadata, build-version expectations, README, and `commented_code_map.md` for `0.4.30`. No configuration option was added, removed, or renamed, and no replication, SSH, retry, notification, transfer-accounting, or safety behavior changed.
+
 ## 0.4.29
 
 Previous version: `0.4.28`.

@@ -1,6 +1,5 @@
 """Dataclasses that carry configuration and per-run state explicitly."""
 
-import configparser
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -10,7 +9,7 @@ class AppConfig:
     """Validated application settings loaded from one configuration file."""
 
     config_path: str
-    raw_config: configparser.RawConfigParser
+    raw_config: dict[str, Any]
     mail_option: str
     system_option: str
     use_mqtt: bool
@@ -22,6 +21,9 @@ class AppConfig:
     destination_list_path: str
     password_option: str
     syncoid_command: str
+    dry_run: bool = False
+    send_mail_on_success: bool = True
+    send_mqtt_on_success: bool = True
     mqtt_json_status: bool = False
     use_home_assistant: bool = False
     use_ssh_agent: bool = False
@@ -29,6 +31,16 @@ class AppConfig:
     retry_broken_pipe: bool = False
     broken_pipe_retry_count: int = 1
     broken_pipe_retry_wait_seconds: int = 10
+    continue_on_missing_dataset: bool = False
+    continue_without_resume: bool = True
+    broker_address: str = ""
+    broker_port: int = 1883
+    mqtt_username: str = ""
+    mqtt_password: str = ""
+    mqtt_topic: str = ""
+    mqtt_message: str = ""
+    mqtt_json_topic: str = ""
+    home_assistant_available: str = ""
 
     @property
     def mail_enabled(self) -> bool:
@@ -73,6 +85,9 @@ class SyncoidAttemptResult:
     repeated_pattern: bool = False
     ignored_missing_destroy_snapshot: bool = False
     broken_pipe_detected: bool = False
+    missing_dataset_or_pool_detected: bool = False
+    missing_dataset_or_pool_messages: tuple[str, ...] = ()
+    missing_dataset_cleanup_forced: bool = False
     transferred_bytes: int = 0
     transfer_measurement_complete: bool = True
 
@@ -90,11 +105,20 @@ class SSHAgentSession:
     key_lifetime_seconds: int
 
 
+@dataclass(frozen=True)
+class MissingDatasetFailure:
+    """One dataset pair that failed because a ZFS dataset or pool was missing."""
+
+    dataset_pair: DatasetPair
+    messages: tuple[str, ...]
+
+
 @dataclass
 class ReplicationSummary:
-    """Non-fatal conditions collected while processing the dataset list."""
+    """Aggregate conditions collected while processing the dataset list."""
 
     broken_pipe_failed_datasets: list[DatasetPair] = field(default_factory=list)
+    missing_dataset_failures: list[MissingDatasetFailure] = field(default_factory=list)
     transferred_bytes: int = 0
     transfer_measurement_complete: bool = True
 
@@ -103,3 +127,9 @@ class ReplicationSummary:
         """Return True when at least one dataset exhausted its Broken Pipe retries."""
 
         return bool(self.broken_pipe_failed_datasets)
+
+    @property
+    def has_missing_dataset_failure(self) -> bool:
+        """Return True when at least one pair failed on a missing dataset or pool."""
+
+        return bool(self.missing_dataset_failures)

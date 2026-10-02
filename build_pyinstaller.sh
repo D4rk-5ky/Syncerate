@@ -5,7 +5,7 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-EXPECTED_VERSION="0.4.29"
+EXPECTED_VERSION="0.4.42"
 
 "$PYTHON_BIN" - <<'PY'
 missing = []
@@ -37,8 +37,10 @@ if [[ ! -x "$EXECUTABLE" ]]; then
 fi
 
 VERSION_OUTPUT="$($EXECUTABLE --version)"
-if [[ "$VERSION_OUTPUT" != "Syncerate.py $EXPECTED_VERSION" ]]; then
+EXPECTED_VERSION_OUTPUT="$(basename "$EXECUTABLE") $EXPECTED_VERSION"
+if [[ "$VERSION_OUTPUT" != "$EXPECTED_VERSION_OUTPUT" ]]; then
     echo "Unexpected standalone version output: $VERSION_OUTPUT" >&2
+    echo "Expected: $EXPECTED_VERSION_OUTPUT" >&2
     exit 1
 fi
 

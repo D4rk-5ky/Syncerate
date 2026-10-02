@@ -1,6 +1,7 @@
 """Syncoid command construction, process monitoring, and safety handling."""
 
 import logging
+from collections import deque
 import os
 import pwd
 import re
@@ -20,7 +21,6 @@ from .config import validate_syncoid_command_template
 from .errors import (
     EXIT_CONNECTION_REFUSED,
     EXIT_CONNECTION_TIMEOUT,
-    EXIT_DATASET_MISSING,
     EXIT_LIST_ERROR,
     EXIT_OK,
     EXIT_PASSWORD_DENIED,
@@ -32,6 +32,7 @@ from .errors import (
 from .models import (
     AppConfig,
     DatasetPair,
+    MissingDatasetFailure,
     ReplicationSummary,
     RunContext,
     SSHAgentSession,
@@ -49,6 +50,40 @@ _TRANSFER_START_RE = re.compile(
     r"--no-stream selected; sending newest full snapshot"
     r")"
 )
+
+# Syncoid uses 0 for a disappeared recursive child, 1 for some incremental
+# failures, and 2 for initial/property-query failures. Never classify by exit
+# code alone; matching missing-data output is also required.
+_SYNCOID_MISSING_DATASET_EXIT_CODES = {0, 1, 2}
+
+# A definitive non-warning missing dataset/pool error means the current
+# replication pair cannot succeed. Give Syncoid a brief chance to unwind its
+# pipeline normally, but do not let a stuck zfs send/receive, mbuffer, or SSH
+# child block every later configured dataset forever.
+_MISSING_DATASET_FINISH_TIMEOUT_SECONDS = 5.0
+
+# Full English OpenZFS error lines, optionally wrapped by Syncoid. Exclude
+# snapshot/bookmark names: a missing snapshot is not a missing dataset/pool.
+_ZFS_NAME = r"'[^'@#\r\n]+'"
+_ZFS_MISSING_DATASET_OR_POOL_TEXT = (
+    r"[ \t]*(?:CRITICAL ERROR:[ \t]*(?:getzfsvalue[ \t]+[^\r\n]*?:[ \t]*)?)?"
+    r"(?:"
+    r"cannot (?:open|import) " + _ZFS_NAME
+    + r": (?:dataset does not exist|no such pool(?: available| or dataset)?)"
+    r"|cannot create " + _ZFS_NAME
+    + r": (?:parent does not exist|no such pool " + _ZFS_NAME + r")"
+    r"|cannot receive (?:new filesystem|incremental|resume) stream: "
+    r"(?:destination " + _ZFS_NAME + r" does not exist|parent does not exist|no such pool " + _ZFS_NAME + r")"
+    r")[ \t]*"
+)
+_ZFS_MISSING_DATASET_OR_POOL_RE = re.compile(
+    _ZFS_MISSING_DATASET_OR_POOL_TEXT, re.IGNORECASE
+)
+_SYNCOID_MISSING_DATASET_WARNING_RE = re.compile(
+    r"WARN(?:ING)?[ \t]*:?[ \t]+Skipping dataset \(dataset no longer exists\):"
+    r"[ \t]+[^@#\r\n]+\.\.\.[ \t]*", re.IGNORECASE
+)
+
 
 _PV_PROGRESS_RE = re.compile(
     r"^\s*(?P<amount>\d+(?:[.,]\d+)?)\s*"
@@ -181,6 +216,9 @@ def build_attempt_result(
     repeated_pattern: bool,
     ignored_missing_destroy_snapshot: bool,
     broken_pipe_detected: bool = False,
+    missing_dataset_or_pool_detected: bool = False,
+    missing_dataset_or_pool_messages: tuple[str, ...] = (),
+    missing_dataset_cleanup_forced: bool = False,
 ) -> SyncoidAttemptResult:
     """Finalize transfer accounting and build one Syncoid attempt result."""
 
@@ -191,6 +229,9 @@ def build_attempt_result(
         repeated_pattern=repeated_pattern,
         ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
         broken_pipe_detected=broken_pipe_detected,
+        missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+        missing_dataset_or_pool_messages=missing_dataset_or_pool_messages,
+        missing_dataset_cleanup_forced=missing_dataset_cleanup_forced,
         transferred_bytes=transferred_bytes,
         transfer_measurement_complete=measurement_complete,
     )
@@ -232,6 +273,36 @@ def safe_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+
+def log_failure_output_lines(
+    logger: logging.Logger,
+    text: str,
+    *,
+    heading: str,
+    max_lines: int = 40,
+) -> None:
+    """Copy a bounded tail of raw child output into normal ERROR logging.
+
+    Pexpect's raw logfile remains the complete `.out` stream.  This helper
+    duplicates the useful failure context into `.err` so mail attachments and
+    terminal logs show what Syncoid/ZFS/mbuffer actually printed without
+    copying an unbounded progress stream.
+    """
+
+    physical_lines: deque[str] = deque(maxlen=max_lines)
+    for match in re.finditer(r"[^\r\n]+", safe_text(text)):
+        line = match.group(0).rstrip()
+        if line.strip():
+            physical_lines.append(line)
+
+    if not physical_lines:
+        return
+
+    logger.error("%s", heading)
+    for line in physical_lines:
+        logger.error("%s", line)
 
 def send_secret(
     child: Any,
@@ -735,6 +806,53 @@ def build_syncoid_command(
     command_parts.extend(extra_args)
     return command_parts
 
+def format_dry_run_report(
+    app_config: AppConfig,
+    dataset_pairs: Sequence[DatasetPair],
+) -> str:
+    """Return the non-destructive execution plan shown for ``--dry-run``."""
+
+    success_mail = app_config.mail_enabled and app_config.send_mail_on_success
+    success_mqtt = (
+        (app_config.use_mqtt or app_config.mqtt_json_status)
+        and app_config.send_mqtt_on_success
+    )
+    failure_mail = app_config.mail_enabled
+    failure_mqtt = app_config.use_mqtt or app_config.mqtt_json_status
+
+    lines = [
+        "Dry run report",
+        "",
+        "NO REPLICATION WAS PERFORMED.",
+        "Syncoid was not started, credentials were not requested, a private ssh-agent was not started, and SystemAction was not executed.",
+        "",
+        f"Dataset pairs planned :   {len(dataset_pairs)}",
+        f"Success email        :   {'enabled' if success_mail else 'disabled'}",
+        f"Success MQTT report  :   {'enabled' if success_mqtt else 'disabled'}",
+        f"Failure email        :   {'enabled' if failure_mail else 'disabled'}",
+        f"Failure MQTT         :   {'enabled' if failure_mqtt else 'disabled'}",
+        "",
+        "Planned Syncoid commands:",
+    ]
+
+    for number, dataset_pair in enumerate(dataset_pairs, start=1):
+        command = build_syncoid_command(
+            app_config.syncoid_command,
+            dataset_pair.source,
+            dataset_pair.destination,
+            dataset_pair.extra_arguments,
+        )
+        lines.extend(
+            [
+                "",
+                f"{number}. {dataset_pair.source} -> {dataset_pair.destination}",
+                f"   {shlex.join(command)}",
+            ]
+        )
+
+    return "\n".join(lines)
+
+
 def effective_user_name() -> str:
     """Return the username belonging to Syncerate's effective local UID."""
 
@@ -743,6 +861,18 @@ def effective_user_name() -> str:
     except (KeyError, OSError):
         return f"UID {os.geteuid()}"
 
+def read_warning_line(child: Any, prefix: str) -> str:
+    """Consume a warning through its line ending or EOF before classifying it.
+
+    Reading the complete line prevents error-like words inside a warning from
+    reaching the error/prompt matchers, including when output arrives in chunks.
+    Pexpect still writes the raw output to the configured child logfile.
+    """
+
+    child.expect([r"[\r\n]", pexpect.EOF])
+    return prefix + safe_text(child.before)
+
+
 def ssh_command(
     syncoid_command: list[str],
     password: Optional[str],
@@ -750,6 +880,7 @@ def ssh_command(
     logger: logging.Logger,
     retry_broken_pipe: bool = False,
     process_env: Optional[dict[str, str]] = None,
+    continue_without_resume: bool = True,
 ) -> SyncoidAttemptResult:
     """Start and monitor one Syncoid process and return explicit flags."""
 
@@ -758,6 +889,10 @@ def ssh_command(
     stale_resume_recovery_active = False
     stale_resume_reset_announced = False
     broken_pipe_detected = False
+    missing_dataset_or_pool_detected = False
+    missing_dataset_or_pool_messages: list[str] = []
+    missing_dataset_finish_deadline: Optional[float] = None
+    missing_dataset_cleanup_forced = False
     modified_command = list(syncoid_command)
     transfer_counter = TransferByteCounter(
         measurement_possible="--quiet" not in modified_command
@@ -794,23 +929,25 @@ def ssh_command(
         output_handle = open(run_context.output_file, "a", encoding="utf-8")
         child.logfile = output_handle
 
-    PATTERN_HOSTKEY = 0
-    PATTERN_NO_DESTROY_SNAP = 1
-    PATTERN_PERMISSION_DENIED = 2
-    PATTERN_TIMEOUT = 3
-    PATTERN_REFUSED = 4
-    PATTERN_PASSPHRASE = 5
-    PATTERN_EOF = 6
-    PATTERN_WARN_SKIPPING = 7
+    PATTERN_WARNING = 0
+    PATTERN_HOSTKEY = 1
+    PATTERN_NO_DESTROY_SNAP = 2
+    PATTERN_PERMISSION_DENIED = 3
+    PATTERN_TIMEOUT = 4
+    PATTERN_REFUSED = 5
+    PATTERN_PASSPHRASE = 6
+    PATTERN_EOF = 7
     PATTERN_STALE_RESUME_SOURCE = 8
-    PATTERN_RESUME_RESET = 9
-    PATTERN_FRESH_SEND = 10
-    PATTERN_RESUME_UNAVAILABLE = 11
-    PATTERN_BROKEN_PIPE = 12
-    PATTERN_GENERIC_WARN = 13
-    PATTERN_PASSWORD = 14
+    PATTERN_FRESH_SEND = 9
+    PATTERN_BROKEN_PIPE = 10
+    PATTERN_ZFS_MISSING_DATASET_OR_POOL = 11
+    PATTERN_PASSWORD = 12
+    PATTERN_MISSING_DATASET_FINISH_TIMEOUT = 13
 
+    # Match a warning prefix before any prompt/error on the same line, then
+    # consume that entire line. Warnings cannot be mistaken for nested errors.
     patterns = [
+        r"(?im)(?:^|[\r\n])[ \t]*(?:WARN|WARNING)(?=[ \t:\r\n]):?",
         "Are you sure you want to continue connecting",
         "could not find any snapshots to destroy; check snapshot names.",
         "Permission denied",
@@ -818,14 +955,12 @@ def ssh_command(
         "Connection refused",
         r"(?im)(?:^|[\r\n])[^\r\n]*\benter passphrase for [^\r\n]*:\s*",
         pexpect.EOF,
-        "WARN Skipping dataset",
         r"(?i)used in the initial send no longer exists",
-        r"(?i)(?:WARN|WARNING): resetting partially receive state because the snapshot source no longer exists",
         r"(?i)INFO: Sending (?:incremental|full)",
-        r"WARN: ZFS resume feature not available on (?:source|target|source and target) machines? - sync will continue without resume support\.",
         r"(?i)broken pipe",
-        r"(?im)(?:^|[\r\n])(?:WARN|WARNING)(?:\b|:)",
+        r"(?im)(?:^|[\r\n])" + _ZFS_MISSING_DATASET_OR_POOL_TEXT + r"(?=[\r\n])",
         r"(?im)(?:^|[\r\n])[^\r\n]*\bpassword:\s*$",
+        pexpect.TIMEOUT,
     ]
 
     max_pattern_executions = 5
@@ -837,10 +972,16 @@ def ssh_command(
     pattern_count = {index: 0 for index in repeat_guarded_patterns}
 
     while True:
-        index = child.expect(patterns)
+        expect_timeout = None
+        if missing_dataset_finish_deadline is not None:
+            expect_timeout = max(
+                0.0,
+                missing_dataset_finish_deadline - time.monotonic(),
+            )
+        index = child.expect(patterns, timeout=expect_timeout)
 
         transfer_counter.feed(safe_text(child.before))
-        if isinstance(child.after, str):
+        if index != PATTERN_WARNING and isinstance(child.after, str):
             transfer_counter.feed(child.after)
 
         if index in repeat_guarded_patterns:
@@ -860,7 +1001,45 @@ def ssh_command(
             repeated_pattern = True
             break
 
-        if index == PATTERN_HOSTKEY:
+        if index == PATTERN_WARNING:
+            warning_text = read_warning_line(child, safe_text(child.after)).strip()
+            # Preserve the boundary of preceding progress output without
+            # interpreting warning text as a transfer heading or pv counter.
+            transfer_counter.feed("\n")
+            if _SYNCOID_MISSING_DATASET_WARNING_RE.fullmatch(warning_text):
+                missing_dataset_or_pool_detected = True
+                if warning_text not in missing_dataset_or_pool_messages:
+                    missing_dataset_or_pool_messages.append(warning_text)
+                logger.error("Syncoid reported a disappeared dataset: %s", warning_text)
+                logger.error("Recording this pair as failed; waiting for Syncoid to finish before continuing the list.")
+            elif re.search(
+                r"(?i)^WARN(?:ING)?[ \t]*:?[ \t]*ZFS resume feature not available\b",
+                warning_text,
+            ):
+                logger.warning("%s", warning_text)
+                if not continue_without_resume:
+                    die(
+                        child,
+                        "ERROR! Syncoid resume support is unavailable and "
+                        "ContinueWithoutResume is disabled.\n" + warning_text,
+                        EXIT_WARNING,
+                        logger=logger,
+                    )
+                logger.warning(
+                    "ContinueWithoutResume is enabled; waiting for Syncoid's real exit status."
+                )
+            elif re.search(
+                r"(?i)^WARN(?:ING)?[ \t]*:?[ \t]*resetting partially receive state because the snapshot source no longer exists",
+                warning_text,
+            ):
+                # Silent recovery bookkeeping only: this warning never becomes
+                # a failure or a separately logged warning. Keep the existing
+                # treatment of a subsequent non-warning Broken Pipe during reset.
+                stale_resume_recovery_active = True
+                stale_resume_reset_announced = True
+            continue
+
+        elif index == PATTERN_HOSTKEY:
             child.sendline("yes")
 
         elif index == PATTERN_NO_DESTROY_SNAP:
@@ -918,6 +1097,21 @@ def ssh_command(
             )
 
         elif index == PATTERN_EOF:
+            if missing_dataset_or_pool_detected:
+                log_failure_output_lines(
+                    logger,
+                    safe_text(child.before),
+                    heading="Additional Syncoid/ZFS/mbuffer output before the failed attempt exited:",
+                )
+
+            # A final diagnostic need not have a newline. Match the entire
+            # remaining line, using the same narrow rules as the live matcher.
+            for line in safe_text(child.before).splitlines():
+                if _ZFS_MISSING_DATASET_OR_POOL_RE.fullmatch(line):
+                    missing_dataset_or_pool_detected = True
+                    message = line.strip()
+                    if message not in missing_dataset_or_pool_messages:
+                        missing_dataset_or_pool_messages.append(message)
             close_child_logfile(child, logger)
             return build_attempt_result(
                 child,
@@ -925,14 +1119,9 @@ def ssh_command(
                 transfer_counter,
                 repeated_pattern=repeated_pattern,
                 ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
-            )
-
-        elif index == PATTERN_WARN_SKIPPING:
-            die(
-                child,
-                "ERROR! Syncoid skipped a dataset. Check source/destination datasets.",
-                EXIT_DATASET_MISSING,
-                logger=logger,
+                missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+                missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
+                missing_dataset_cleanup_forced=missing_dataset_cleanup_forced,
             )
 
         elif index == PATTERN_STALE_RESUME_SOURCE:
@@ -954,21 +1143,6 @@ def ssh_command(
             logger.warning("")
             continue
 
-        elif index == PATTERN_RESUME_RESET:
-            stale_resume_recovery_active = True
-            stale_resume_reset_announced = True
-
-            logger.warning("")
-            logger.warning("Syncoid is resetting the stale partially received ZFS stream.")
-            logger.warning(
-                "The old resumable receive token points to a source snapshot that no longer exists."
-            )
-            logger.warning(
-                "Waiting for Syncoid to clear the receive state and start a fresh valid send."
-            )
-            logger.warning("")
-            continue
-
         elif index == PATTERN_FRESH_SEND:
             if stale_resume_recovery_active:
                 logger.info("")
@@ -980,18 +1154,10 @@ def ssh_command(
                 stale_resume_reset_announced = False
             continue
 
-        elif index == PATTERN_RESUME_UNAVAILABLE:
-            logger.warning("")
-            logger.warning(
-                "Syncoid reported that resumable receive is unavailable for this transfer."
-            )
-            logger.warning(
-                "Syncoid explicitly continues without resume support, so Syncerate will wait for its real exit status."
-            )
-            logger.warning("")
-            continue
-
         elif index == PATTERN_BROKEN_PIPE:
+            if missing_dataset_or_pool_detected:
+                logger.info("Broken Pipe followed a missing dataset/pool error; waiting for Syncoid's final status.")
+                continue
             if stale_resume_recovery_active:
                 logger.warning("")
                 logger.warning(
@@ -1043,30 +1209,36 @@ def ssh_command(
                 repeated_pattern=repeated_pattern,
                 ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
                 broken_pipe_detected=broken_pipe_detected,
+                missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+                missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
+                missing_dataset_cleanup_forced=missing_dataset_cleanup_forced,
             )
 
-        elif index == PATTERN_GENERIC_WARN:
-            warning_text = safe_text(child.after) + safe_text(child.buffer)
+        elif index == PATTERN_ZFS_MISSING_DATASET_OR_POOL:
+            missing_dataset_or_pool_detected = True
+            message = safe_text(child.after).strip()
+            if message and message not in missing_dataset_or_pool_messages:
+                missing_dataset_or_pool_messages.append(message)
 
-            if (
-                ignored_missing_destroy_snapshot
-                and "zfs destroy" in warning_text
-                and "failed: 256" in warning_text
-            ):
-                logger.info("")
-                logger.info("Syncoid produced the known non-fatal destroy warning.")
-                logger.info(
-                    "Continuing because ignored_missing_destroy_snapshot is True."
+            logger.error("")
+            logger.error("ZFS reported a missing dataset or pool.")
+            log_failure_output_lines(
+                logger,
+                safe_text(child.before),
+                heading="Syncoid/ZFS/mbuffer output leading up to the failure:",
+            )
+            if message:
+                logger.error("ZFS/Syncoid: %s", message)
+            logger.error(
+                "Recording this dataset pair as failed. Giving Syncoid up to %.1f seconds to finish cleanly before applying the configured missing-dataset continuation policy.",
+                _MISSING_DATASET_FINISH_TIMEOUT_SECONDS,
+            )
+            logger.error("")
+            if missing_dataset_finish_deadline is None:
+                missing_dataset_finish_deadline = (
+                    time.monotonic() + _MISSING_DATASET_FINISH_TIMEOUT_SECONDS
                 )
-                logger.info("")
-                continue
-
-            die(
-                child,
-                "ERROR! Syncoid produced a warning.",
-                EXIT_WARNING,
-                logger=logger,
-            )
+            continue
 
         elif index == PATTERN_PASSWORD:
             if password is None:
@@ -1085,6 +1257,42 @@ def ssh_command(
                 wait_for_noecho=False,
             )
 
+        elif index == PATTERN_MISSING_DATASET_FINISH_TIMEOUT:
+            # This timeout is only enabled after a definitive non-warning ZFS
+            # missing-data diagnostic.  The pair is already failed; force
+            # cleanup so one wedged pipeline cannot block the remaining list.
+            missing_dataset_cleanup_forced = True
+            log_failure_output_lines(
+                logger,
+                safe_text(child.before),
+                heading="Additional Syncoid/ZFS/mbuffer output before forced cleanup:",
+            )
+            logger.error(
+                "Syncoid did not exit within %.1f seconds after the missing dataset/pool failure.",
+                _MISSING_DATASET_FINISH_TIMEOUT_SECONDS,
+            )
+            logger.error(
+                "Stopping only this failed Syncoid attempt so Syncerate can continue with the next configured dataset pair."
+            )
+            try:
+                child.terminate(force=True)
+            except Exception:
+                logger.exception(
+                    "Could not terminate the missing-dataset Syncoid attempt cleanly"
+                )
+            close_child_logfile(child, logger)
+            return build_attempt_result(
+                child,
+                modified_command,
+                transfer_counter,
+                repeated_pattern=repeated_pattern,
+                ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+                broken_pipe_detected=broken_pipe_detected,
+                missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+                missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
+                missing_dataset_cleanup_forced=missing_dataset_cleanup_forced,
+            )
+
     close_child_logfile(child, logger)
     return build_attempt_result(
         child,
@@ -1092,6 +1300,9 @@ def ssh_command(
         transfer_counter,
         repeated_pattern=repeated_pattern,
         ignored_missing_destroy_snapshot=ignored_missing_destroy_snapshot,
+        missing_dataset_or_pool_detected=missing_dataset_or_pool_detected,
+        missing_dataset_or_pool_messages=tuple(missing_dataset_or_pool_messages),
+        missing_dataset_cleanup_forced=missing_dataset_cleanup_forced,
     )
 
 def run_replications(
@@ -1102,7 +1313,7 @@ def run_replications(
     logger: logging.Logger,
     ssh_agent_session: Optional[SSHAgentSession] = None,
 ) -> ReplicationSummary:
-    """Run all dataset pairs and return any non-fatal run warnings."""
+    """Run all dataset pairs and return accumulated warnings/deferred failures."""
 
     summary = ReplicationSummary()
 
@@ -1147,6 +1358,7 @@ def run_replications(
                 run_context,
                 logger,
                 retry_broken_pipe=app_config.retry_broken_pipe,
+                continue_without_resume=app_config.continue_without_resume,
                 process_env=(
                     ssh_agent_session.environment
                     if ssh_agent_session is not None
@@ -1185,25 +1397,13 @@ def run_replications(
                     time.sleep(app_config.broken_pipe_retry_wait_seconds)
                     continue
 
-                summary.broken_pipe_failed_datasets.append(dataset_pair)
-
-                logger.warning("")
-                logger.warning("----------")
-                logger.warning("")
-                logger.warning(
-                    "Broken Pipe persisted for %s -> %s.",
-                    dataset_pair.source,
-                    dataset_pair.destination,
+                raise SyncerateError(
+                    "Broken Pipe retries exhausted for "
+                    f"{dataset_pair.source} -> {dataset_pair.destination} "
+                    f"after {app_config.broken_pipe_retry_count} retries; stopping the run.",
+                    EXIT_SCRIPT_ERROR,
+                    kind="script",
                 )
-                logger.warning(
-                    "The configured retry count of %s has been exhausted; skipping this dataset and continuing the list.",
-                    app_config.broken_pipe_retry_count,
-                )
-                logger.warning(
-                    "The final run remains successful but will carry a Broken Pipe warning."
-                )
-                logger.warning("")
-                break
 
 
             child.close()
@@ -1215,6 +1415,44 @@ def run_replications(
                     EXIT_REPEATED_PATTERN,
                     logger=logger,
                 )
+
+            missing_dataset_detected = (
+                result.missing_dataset_or_pool_detected
+                and (
+                    result.missing_dataset_cleanup_forced
+                    or child.exitstatus in _SYNCOID_MISSING_DATASET_EXIT_CODES
+                )
+            )
+
+            if missing_dataset_detected:
+                failure = MissingDatasetFailure(
+                    dataset_pair=dataset_pair,
+                    messages=result.missing_dataset_or_pool_messages,
+                )
+                summary.missing_dataset_failures.append(failure)
+
+                logger.error("")
+                logger.error("----------")
+                logger.error("")
+                for message in failure.messages:
+                    logger.error("ZFS/Syncoid: %s", message)
+
+                if app_config.continue_on_missing_dataset:
+                    logger.error(
+                        "Skipping failed dataset pair and continuing because ContinueOnMissingDataset is enabled: %s -> %s",
+                        dataset_pair.source,
+                        dataset_pair.destination,
+                    )
+                    logger.error("")
+                    break
+
+                logger.error(
+                    "Stopping after missing dataset/pool because ContinueOnMissingDataset is disabled: %s -> %s",
+                    dataset_pair.source,
+                    dataset_pair.destination,
+                )
+                logger.error("")
+                return summary
 
             if child.exitstatus is None and child.signalstatus is not None:
                 exit_code = 128 + int(child.signalstatus)

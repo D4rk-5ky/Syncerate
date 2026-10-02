@@ -6,7 +6,7 @@ import os
 import sys
 from typing import Optional
 
-from .config import CONFIG_SECTION
+from .config import CONFIG_SECTIONS
 from .models import AppConfig, ReplicationSummary, RunContext
 
 
@@ -154,10 +154,28 @@ def format_transfer_size(transferred_bytes: int) -> str:
     return f"{byte_count / 1024:.2f} KB"
 
 
+def format_missing_dataset_failures(replication_summary: ReplicationSummary) -> str:
+    """Return a readable list of dataset pairs that failed because ZFS data was missing."""
+
+    lines: list[str] = []
+    for failure in replication_summary.missing_dataset_failures:
+        pair = failure.dataset_pair
+        lines.append(f"- {pair.source} -> {pair.destination}")
+        if failure.messages:
+            for message in failure.messages:
+                lines.append(f"  {message}")
+        else:
+            lines.append("  ZFS/Syncoid reported a missing dataset or pool.")
+    return "\n".join(lines)
+
+
 def format_final_run_summary(
     app_config: Optional[AppConfig],
     elapsed_seconds: float,
     replication_summary: Optional[ReplicationSummary] = None,
+    *,
+    dry_run: bool = False,
+    planned_dataset_count: Optional[int] = None,
 ) -> str:
     """Return the final summary as plain text for logs and email bodies."""
 
@@ -192,7 +210,15 @@ def format_final_run_summary(
     if metadata_written:
         lines.append("")
 
-    if replication_summary is not None:
+    if dry_run:
+        lines.append("Run mode        :   DRY RUN (no replication performed)")
+        if planned_dataset_count is not None:
+            lines.append(
+                f"Dataset pairs planned :   {planned_dataset_count}"
+            )
+        lines.append("")
+
+    if replication_summary is not None and not dry_run:
         transfer_text = (
             format_transfer_size(replication_summary.transferred_bytes)
             if replication_summary.transfer_measurement_complete
@@ -210,6 +236,9 @@ def log_final_run_summary(
     elapsed_seconds: float,
     logger: logging.Logger,
     replication_summary: Optional[ReplicationSummary] = None,
+    *,
+    dry_run: bool = False,
+    planned_dataset_count: Optional[int] = None,
 ) -> None:
     """Log the shared final summary to terminal and the optional .log file."""
 
@@ -221,6 +250,8 @@ def log_final_run_summary(
         app_config,
         elapsed_seconds,
         replication_summary,
+        dry_run=dry_run,
+        planned_dataset_count=planned_dataset_count,
     ).splitlines():
         logger.info("%s", line)
 
@@ -260,48 +291,61 @@ def log_startup_configuration(
     logger.info("")
     logger.info("The Date used for Log Files  :   %s", run_context.timestamp)
 
-    # Only this section is consumed by Syncerate. Do not echo unrelated INI
-    # sections into logs because a shared file may contain credentials for
-    # another application. Also suppress common secret-like option names in
-    # addition to Syncerate's known credential fields.
-    section = CONFIG_SECTION
+    # Log only the known Syncerate TOML tables. Unknown tables are ignored so a
+    # shared TOML file cannot accidentally expose another application's values.
+    # Password/credential-like keys are suppressed regardless of table.
     logger.info("")
     logger.info("----------")
     logger.info("")
-    logger.info("These are the imported variables in the config file")
-    logger.info('Omitting password/credential values from logging')
-    logger.info("")
-    logger.info(section)
-    logger.info("")
+    logger.info("These are the imported variables in the TOML config file")
+    logger.info("Omitting password/credential values from logging")
 
-    for option in app_config.raw_config.options(section):
-        if option in ["password", "mqtt_username", "mqtt_password"]:
+    for section_name in CONFIG_SECTIONS:
+        section = app_config.raw_config.get(section_name, {})
+        if not isinstance(section, dict) or not section:
             continue
 
-        if any(
-            marker in option
-            for marker in ["password", "secret", "token", "credential", "api_key", "apikey"]
-        ):
-            continue
-
-        if option in ["use_homeassistant", "homeassistant_available"]:
-            continue
-
-        if (
-            not (app_config.use_mqtt or app_config.mqtt_json_status)
-            and option in ["broker_address", "broker_port"]
-        ):
-            continue
-
-        if not app_config.use_mqtt and option in ["mqtt_topic", "mqtt_message"]:
-            continue
-
-        if not app_config.mqtt_json_status and option == "mqtt_json_topic":
-            continue
-
-        value = app_config.raw_config.get(section, option)
-        log_multiline_value(logger, f"{option} ", value)
         logger.info("")
+        logger.info("[%s]", section_name)
+        logger.info("")
+
+        for option, value in section.items():
+            option_lower = option.lower()
+            if option_lower in {"password", "mqtt_username", "mqtt_password"}:
+                continue
+
+            if any(
+                marker in option_lower
+                for marker in [
+                    "password",
+                    "secret",
+                    "token",
+                    "credential",
+                    "api_key",
+                    "apikey",
+                ]
+            ):
+                continue
+
+            if section_name == "home_assistant" and option in {
+                "Use_HomeAssistant",
+                "HomeAssistant_Available",
+            } and not app_config.use_home_assistant:
+                continue
+
+            if section_name == "mqtt":
+                if (
+                    not (app_config.use_mqtt or app_config.mqtt_json_status)
+                    and option in {"broker_address", "broker_port"}
+                ):
+                    continue
+                if not app_config.use_mqtt and option in {"mqtt_topic", "mqtt_message"}:
+                    continue
+                if not app_config.mqtt_json_status and option == "mqtt_json_topic":
+                    continue
+
+            log_multiline_value(logger, f"{option} ", str(value))
+            logger.info("")
 
     if app_config.syncoid_command.startswith("syncoid"):
         logger.info("The syncoid command is in use")

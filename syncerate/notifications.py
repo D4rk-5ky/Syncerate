@@ -6,9 +6,8 @@ import os
 import subprocess
 from typing import Any, Optional
 
-from .config import CONFIG_SECTION
-from .errors import EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
-from .logging_setup import format_final_run_summary
+from .errors import EXIT_DATASET_MISSING, EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
+from .logging_setup import format_final_run_summary, format_missing_dataset_failures
 from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
 
 
@@ -41,6 +40,9 @@ def run_summary_header_text(
     app_config: AppConfig,
     runtime_seconds: Optional[float],
     replication_summary: Optional[ReplicationSummary] = None,
+    *,
+    dry_run: bool = False,
+    planned_dataset_count: Optional[int] = None,
 ) -> str:
     """Return the shared run summary header used at the top of email bodies."""
 
@@ -52,6 +54,8 @@ def run_summary_header_text(
             app_config,
             runtime_seconds,
             replication_summary,
+            dry_run=dry_run,
+            planned_dataset_count=planned_dataset_count,
         )
         + "\n\n----------\n\n"
     )
@@ -113,6 +117,9 @@ def MailTo(
     BrokenPipeDatasets: Optional[list[DatasetPair]] = None,
     RuntimeSeconds: Optional[float] = None,
     ReplicationSummaryData: Optional[ReplicationSummary] = None,
+    DryRun: bool = False,
+    DryRunReportText: str = "",
+    DryRunDatasetCount: Optional[int] = None,
 ) -> None:
     """Build and send success, warning-success, and error mail variants.
 
@@ -134,6 +141,42 @@ def MailTo(
     log_file = run_context.log_file
     error_file = run_context.error_file
     output_file = run_context.output_file
+
+    def summary_header(
+        replication_summary: Optional[ReplicationSummary] = None,
+    ) -> str:
+        return run_summary_header_text(
+            app_config,
+            RuntimeSeconds,
+            replication_summary,
+            dry_run=DryRun,
+            planned_dataset_count=DryRunDatasetCount,
+        )
+
+    dry_run_subject_prefix = "DRY RUN - " if DryRun else ""
+
+    if Exit_Code == EXIT_OK and DryRun:
+        subject_suffix = "Attaching log" if logging_enabled else "Logs Disabled"
+        subject = (
+            "Successful Syncerate.py DRY RUN - No replication performed "
+            f"({subject_suffix})"
+        )
+        body = summary_header()
+        if DryRunReportText:
+            body += DryRunReportText + "\n"
+
+        attachment_files = None
+        if logging_enabled and log_file is not None and os.path.isfile(log_file):
+            attachment_files = [log_file]
+
+        mail_exit_code, stderr_output = send_mail(
+            subject,
+            body,
+            recipient,
+            attachment_files,
+        )
+        WasMailSent(mail_exit_code, stderr_output, logger)
+        return
 
     if Exit_Code == EXIT_OK:
         broken_pipe_datasets = BrokenPipeDatasets or []
@@ -196,11 +239,7 @@ def MailTo(
                 log_contents = opened_log.read()
 
             body = (
-                run_summary_header_text(
-                    app_config,
-                    RuntimeSeconds,
-                    ReplicationSummaryData,
-                )
+                summary_header(ReplicationSummaryData)
                 + warning_body
                 + "----------\n\n.log file\n\n----------\n\n"
                 + log_contents
@@ -219,11 +258,7 @@ def MailTo(
                 else "Successful Syncerate.py run - No errors found (Logs Disabled)"
             )
             body = (
-                run_summary_header_text(
-                    app_config,
-                    RuntimeSeconds,
-                    ReplicationSummaryData,
-                )
+                summary_header(ReplicationSummaryData)
                 + warning_body
             )
             if not BrokenPipeWarning:
@@ -238,17 +273,67 @@ def MailTo(
         WasMailSent(mail_exit_code, stderr_output, logger)
         return
 
+    if (
+        Exit_Code == EXIT_DATASET_MISSING
+        and ReplicationSummaryData is not None
+        and ReplicationSummaryData.has_missing_dataset_failure
+    ):
+        subject_base = dry_run_subject_prefix + "Error running Syncerate.py - Missing ZFS dataset or pool"
+        failure_text = format_missing_dataset_failures(ReplicationSummaryData)
+        continuation_text = (
+            "ContinueOnMissingDataset was enabled, so Syncerate continued with "
+            "the remaining configured dataset pairs after each recognized missing "
+            "dataset/pool error. "
+            if app_config.continue_on_missing_dataset
+            else
+            "ContinueOnMissingDataset was disabled, so Syncerate stopped the "
+            "configured dataset list after the first recognized missing dataset/pool error. "
+        )
+        body = (
+            summary_header(ReplicationSummaryData)
+            + continuation_text
+            + "The run is marked failed with exit code 8 because one or more "
+            + "ZFS datasets or pools were missing.\n\n"
+            + "Failed dataset pairs:\n"
+            + failure_text
+            + "\n"
+        )
+
+        if logging_enabled:
+            assert log_file is not None
+            assert error_file is not None
+            subject = subject_base + " (Attaching logs)"
+            attachment_files = [log_file, error_file]
+            if output_file is not None and os.path.isfile(output_file):
+                attachment_files.append(output_file)
+            mail_exit_code, stderr_output = send_mail(
+                subject,
+                body,
+                recipient,
+                attachment_files,
+            )
+        else:
+            subject = subject_base + " (Logs Disabled)"
+            mail_exit_code, stderr_output = send_mail(
+                subject,
+                body,
+                recipient,
+            )
+
+        WasMailSent(mail_exit_code, stderr_output, logger)
+        return
+
     if SynCoidFail is not None:
         if logging_enabled:
             assert log_file is not None
             assert error_file is not None
 
-            subject = "Error running Syncerate.py - Syncoid error occurred (Attaching logs)"
+            subject = dry_run_subject_prefix + "Error running Syncerate.py - Syncoid error occurred (Attaching logs)"
             attachment_files = [log_file, error_file]
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = run_summary_header_text(app_config, RuntimeSeconds)
+            body = summary_header()
             with open(error_file, "r", encoding="utf-8") as opened_error:
                 error_contents = opened_error.read()
             body += (
@@ -269,12 +354,12 @@ def MailTo(
                 attachment_files,
             )
         else:
-            subject_and_body = (
+            subject_and_body = dry_run_subject_prefix + (
                 "Error running Syncerate.py - Syncoid error occurred (Logs Disabled)"
             )
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
+                summary_header() + subject_and_body,
                 recipient,
             )
 
@@ -286,12 +371,12 @@ def MailTo(
             assert log_file is not None
             assert error_file is not None
 
-            subject = "Error sending MQTT message - (Attaching logs)"
+            subject = dry_run_subject_prefix + "Error sending MQTT message - (Attaching logs)"
             attachment_files = [log_file, error_file]
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = run_summary_header_text(app_config, RuntimeSeconds)
+            body = summary_header()
             with open(error_file, "r", encoding="utf-8") as opened_error:
                 error_contents = opened_error.read()
             body += (
@@ -312,10 +397,10 @@ def MailTo(
                 attachment_files,
             )
         else:
-            subject_and_body = "Error sending MQTT message - (Logs Disabled)"
+            subject_and_body = dry_run_subject_prefix + "Error sending MQTT message - (Logs Disabled)"
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
+                summary_header() + subject_and_body,
                 recipient,
             )
 
@@ -327,12 +412,12 @@ def MailTo(
             assert log_file is not None
             assert error_file is not None
 
-            subject = "Error running Syncerate.py - This was a script error (Attaching logs)"
+            subject = dry_run_subject_prefix + "Error running Syncerate.py - This was a script error (Attaching logs)"
             attachment_files = [log_file, error_file]
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = run_summary_header_text(app_config, RuntimeSeconds)
+            body = summary_header()
             with open(error_file, "r", encoding="utf-8") as opened_error:
                 error_contents = opened_error.read()
             body += (
@@ -353,12 +438,12 @@ def MailTo(
                 attachment_files,
             )
         else:
-            subject_and_body = (
+            subject_and_body = dry_run_subject_prefix + (
                 "Error running Syncerate.py - This was a script error (Logs Disabled)"
             )
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                run_summary_header_text(app_config, RuntimeSeconds) + subject_and_body,
+                summary_header() + subject_and_body,
                 recipient,
             )
 
@@ -386,13 +471,26 @@ def build_mqtt_status_payload(
     error_message: str = "",
     stderr_text: str = "",
     replication_summary: Optional[ReplicationSummary] = None,
+    dry_run: bool = False,
+    dry_run_dataset_pairs: Optional[list[DatasetPair]] = None,
 ) -> str:
     """Build the JSON status payload consumed by Home Assistant MQTT automations."""
 
     status = "success" if success else "failure"
     backup_name = app_config.backup_title or "Syncerate"
     skipped_datasets: list[dict[str, str]] = []
+    failed_datasets: list[dict[str, str]] = []
+    planned_datasets: list[dict[str, str]] = []
     broken_pipe_warning = False
+
+    if dry_run_dataset_pairs:
+        planned_datasets = [
+            {
+                "source": pair.source,
+                "destination": pair.destination,
+            }
+            for pair in dry_run_dataset_pairs
+        ]
 
     if replication_summary is not None:
         broken_pipe_warning = replication_summary.has_broken_pipe_warning
@@ -403,6 +501,14 @@ def build_mqtt_status_payload(
             }
             for pair in replication_summary.broken_pipe_failed_datasets
         ]
+        failed_datasets = [
+            {
+                "source": failure.dataset_pair.source,
+                "destination": failure.dataset_pair.destination,
+                "reason": "\n".join(failure.messages),
+            }
+            for failure in replication_summary.missing_dataset_failures
+        ]
 
     payload = {
         "status": status,
@@ -410,11 +516,14 @@ def build_mqtt_status_payload(
         "title": backup_name,
         "name": backup_name,
         "job": "syncerate",
+        "dry_run": bool(dry_run),
+        "planned_datasets": planned_datasets,
         "exit_code": int(exit_code),
         "error": error_message or "",
         "stderr": stderr_text or "",
         "warning": bool(broken_pipe_warning),
         "skipped_datasets": skipped_datasets,
+        "failed_datasets": failed_datasets,
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -428,8 +537,10 @@ def send_mqtt_messages(
     error_message: str = "",
     stderr_text: str = "",
     replication_summary: Optional[ReplicationSummary] = None,
+    dry_run: bool = False,
+    dry_run_dataset_pairs: Optional[list[DatasetPair]] = None,
 ) -> None:
-    """Publish legacy MQTT/HA success signals and independent JSON run status."""
+    """Publish real success signals, dry-run reports, or failure JSON."""
 
     try:
         from paho.mqtt import publish
@@ -444,19 +555,10 @@ def send_mqtt_messages(
             kind="mqtt",
         ) from exc
 
-    raw_config = app_config.raw_config
-    broker_address = raw_config.get(CONFIG_SECTION, "broker_address")
-    broker_port = raw_config.getint(CONFIG_SECTION, "broker_port")
-    mqtt_username = raw_config.get(
-        CONFIG_SECTION,
-        "mqtt_username",
-        fallback="",
-    ).strip()
-    mqtt_password = raw_config.get(
-        CONFIG_SECTION,
-        "mqtt_password",
-        fallback="",
-    )
+    broker_address = app_config.broker_address
+    broker_port = app_config.broker_port
+    mqtt_username = app_config.mqtt_username.strip()
+    mqtt_password = app_config.mqtt_password
 
     auth = None
     if mqtt_username:
@@ -467,21 +569,18 @@ def send_mqtt_messages(
 
     messages: list[dict[str, Any]] = []
     use_home_assistant = False
-    json_topic = ""
+    status_topic = ""
 
     # Preserve the historical MQTT behavior exactly. These are success-only
     # signals: the normal mqtt_message is retained, and enabling the old Home
     # Assistant integration additionally publishes retained availability=online.
-    if success and app_config.use_mqtt:
+    if success and app_config.use_mqtt and not dry_run:
         use_home_assistant = app_config.use_home_assistant
 
         if use_home_assistant:
             messages.append(
                 {
-                    "topic": raw_config.get(
-                        CONFIG_SECTION,
-                        "HomeAssistant_Available",
-                    ),
+                    "topic": app_config.home_assistant_available,
                     "payload": "online",
                     "retain": True,
                     "qos": 0,
@@ -490,17 +589,28 @@ def send_mqtt_messages(
 
         messages.append(
             {
-                "topic": raw_config.get(CONFIG_SECTION, "mqtt_topic"),
-                "payload": raw_config.get(CONFIG_SECTION, "mqtt_message"),
+                "topic": app_config.mqtt_topic,
+                "payload": app_config.mqtt_message,
                 "retain": True,
                 "qos": 0,
             }
         )
 
-    # JSON is an independent event channel. It never replaces either legacy
-    # success signal and retain is deliberately hard-coded off.
-    if app_config.mqtt_json_status:
-        json_topic = raw_config.get(CONFIG_SECTION, "mqtt_json_topic").strip()
+    # Prefer the dedicated JSON channel. Legacy-only MQTT still reports errors
+    # on a separate derived topic, so success/availability consumers keep their
+    # existing payloads. Neither failure path depends on the success switch.
+    # Events are never retained, so reconnecting consumers do not replay them.
+    if (
+        app_config.mqtt_json_status
+        or (not success and app_config.use_mqtt)
+        or (dry_run and success and app_config.use_mqtt)
+    ):
+        if app_config.mqtt_json_status:
+            status_topic = app_config.mqtt_json_topic.strip()
+        elif dry_run and success:
+            status_topic = app_config.mqtt_topic + "/dry-run"
+        else:
+            status_topic = app_config.mqtt_topic + "/error"
         mqtt_payload = build_mqtt_status_payload(
             app_config,
             success=success,
@@ -508,10 +618,12 @@ def send_mqtt_messages(
             error_message=error_message,
             stderr_text=stderr_text,
             replication_summary=replication_summary,
+            dry_run=dry_run,
+            dry_run_dataset_pairs=dry_run_dataset_pairs,
         )
         messages.append(
             {
-                "topic": json_topic,
+                "topic": status_topic,
                 "payload": mqtt_payload,
                 "retain": False,
                 "qos": 0,
@@ -528,21 +640,21 @@ def send_mqtt_messages(
             port=broker_port,
             auth=auth,
         )
-        if success and app_config.use_mqtt:
+        if success and app_config.use_mqtt and not dry_run:
             logger.info(
                 "Legacy MQTT success message published retained to %s",
-                raw_config.get(CONFIG_SECTION, "mqtt_topic"),
+                app_config.mqtt_topic,
             )
             if use_home_assistant:
                 logger.info(
                     "Home Assistant availability message published retained to %s",
-                    raw_config.get(CONFIG_SECTION, "HomeAssistant_Available"),
+                    app_config.home_assistant_available,
                 )
-        if app_config.mqtt_json_status:
+        if status_topic:
             logger.info(
                 "MQTT JSON status published non-retained to %s: %s",
-                json_topic,
-                "success" if success else "failure",
+                status_topic,
+                "dry-run success" if dry_run and success else ("success" if success else "failure"),
             )
     except Exception as exc:
         logger.exception("Failed publishing MQTT message(s)")
@@ -556,12 +668,15 @@ def send_mqtt_failure_status(
     error: SyncerateError,
     app_config: Optional[AppConfig],
     logger: logging.Logger,
+    replication_summary: Optional[ReplicationSummary] = None,
+    *,
+    dry_run: bool = False,
 ) -> None:
     """Best-effort failure JSON that never replaces the original application error."""
 
     if (
         app_config is None
-        or not app_config.mqtt_json_status
+        or not (app_config.use_mqtt or app_config.mqtt_json_status)
         or error.kind == "mqtt"
     ):
         return
@@ -574,6 +689,8 @@ def send_mqtt_failure_status(
             exit_code=error.exit_code,
             error_message=error.message,
             stderr_text=mqtt_error_output(error),
+            replication_summary=replication_summary,
+            dry_run=dry_run,
         )
     except SyncerateError:
         logger.exception(
@@ -587,6 +704,10 @@ def send_error_mail(
     run_context: Optional[RunContext],
     logger: logging.Logger,
     runtime_seconds: Optional[float] = None,
+    replication_summary: Optional[ReplicationSummary] = None,
+    *,
+    dry_run: bool = False,
+    dry_run_dataset_count: Optional[int] = None,
 ) -> None:
     """Send the matching error mail without allowing mail failure to mask exit code."""
 
@@ -594,13 +715,26 @@ def send_error_mail(
         return
 
     try:
-        if error.kind == "mqtt":
+        if error.kind == "dataset_missing":
+            MailTo(
+                app_config,
+                run_context,
+                logger,
+                Exit_Code=error.exit_code,
+                RuntimeSeconds=runtime_seconds,
+                ReplicationSummaryData=replication_summary,
+                DryRun=dry_run,
+                DryRunDatasetCount=dry_run_dataset_count,
+            )
+        elif error.kind == "mqtt":
             MailTo(
                 app_config,
                 run_context,
                 logger,
                 MQTT_Fail=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                DryRun=dry_run,
+                DryRunDatasetCount=dry_run_dataset_count,
             )
         elif error.kind == "syncoid":
             MailTo(
@@ -609,6 +743,8 @@ def send_error_mail(
                 logger,
                 SynCoidFail=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                DryRun=dry_run,
+                DryRunDatasetCount=dry_run_dataset_count,
             )
         else:
             MailTo(
@@ -617,6 +753,8 @@ def send_error_mail(
                 logger,
                 Exit_Code=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                DryRun=dry_run,
+                DryRunDatasetCount=dry_run_dataset_count,
             )
     except Exception:
         logger.exception("Additionally failed to send the error mail")

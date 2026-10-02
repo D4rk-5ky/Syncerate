@@ -1,3 +1,5 @@
+# With Use_MQTT enabled and MQTT_JSON_Status disabled, change the trigger topic
+# to your exact mqtt_topic plus /error. That topic carries failure JSON only.
 alias: Syncerate - MQTT JSON Status
 description: >-
   Handle Syncerate success, failure, or unknown reports from the dedicated

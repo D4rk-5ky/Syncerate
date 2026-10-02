@@ -1,3 +1,4 @@
+import contextlib
 import io
 import logging
 import shlex
@@ -8,17 +9,36 @@ from pathlib import Path
 from unittest import mock
 
 from syncerate.app import main, successfull_run
+from syncerate.cli import parse_arguments
 from syncerate.logging_setup import (
     format_runtime_duration,
     format_transfer_size,
     log_final_run_summary,
     log_startup_configuration,
 )
-from syncerate.models import ReplicationSummary
+from syncerate.models import DatasetPair, ReplicationSummary
 from tests.helpers import make_config, make_logger, no_logging_context, write_executable
 
 
 class AppAndLoggingTests(unittest.TestCase):
+    def test_cli_help_describes_every_application_flag(self):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            with self.assertRaises(SystemExit) as caught:
+                parse_arguments(["--help"])
+
+        self.assertEqual(caught.exception.code, 0)
+        help_text = stream.getvalue()
+        self.assertIn("--conf FILE", help_text)
+        self.assertIn("-c FILE", help_text)
+        self.assertIn("required Syncerate TOML configuration file", help_text)
+        self.assertIn("--dry-run", help_text)
+        self.assertIn("planned Syncoid commands without starting", help_text)
+        self.assertIn("runtime.DryRun = false", help_text)
+        self.assertIn("--version", help_text)
+        self.assertIn("Show the installed Syncerate version and exit.", help_text)
+        self.assertIn("Examples:", help_text)
+
     def test_runtime_duration_formats_hours_minutes_seconds_and_milliseconds(self):
         self.assertEqual(format_runtime_duration(3661.2344), "01:01:01.234")
         self.assertEqual(format_runtime_duration(-5), "00:00:00.000")
@@ -83,33 +103,17 @@ class AppAndLoggingTests(unittest.TestCase):
         self.assertIn("00:01:02.345", lines[runtime_index])
 
     def test_startup_multiline_comment_prefixes_every_physical_log_line(self):
-        import configparser
-
-        raw = configparser.RawConfigParser()
-        raw.read_string(
-            textwrap.dedent(
-                """
-                [Syncerate Config]
-                Mail = No
-                SystemAction = No
-                DateTime = %Y
-                LogDestination = No
-                BackupTitle = Nightly backup
-                BackupComment = First line
-                    Second line
-                    Third line
-                SourceListPath = source
-                DestListPath = dest
-                PassWord = No
-                SyncoidCommand = syncoid SourceDataSet DestDataSet
-                UseSSHAgent = No
-                RetryBrokenPipe = No
-                Use_MQTT = No
-                Use_HomeAssistant = No
-                MQTT_JSON_Status = No
-                """
-            )
-        )
+        raw = {
+            "backup": {
+                "BackupTitle": "Nightly backup",
+                "BackupComment": "First line\nSecond line\nThird line",
+            },
+            "syncoid": {"SyncoidCommand": "syncoid SourceDataSet DestDataSet"},
+            "ssh": {"PassWord": "No"},
+            "mail": {"Mail": "No"},
+            "logging": {"DateTime": "%Y", "LogDestination": "No"},
+            "runtime": {"SystemAction": "No"},
+        }
         cfg = make_config(
             raw_config=raw,
             backup_title="Nightly backup",
@@ -158,30 +162,56 @@ class AppAndLoggingTests(unittest.TestCase):
         mail_to.assert_called_once()
         system_action.assert_called_once()
 
-    def test_logging_omits_unrelated_sections_and_secret_like_options(self):
-        import configparser
 
-        raw = configparser.RawConfigParser()
-        raw.read_string(
-            textwrap.dedent(
-                """
-                [Syncerate Config]
-                Mail = No
-                SystemAction = No
-                DateTime = %Y
-                LogDestination = No
-                SourceListPath = source
-                DestListPath = dest
-                PassWord = top-secret
-                SyncoidCommand = syncoid SourceDataSet DestDataSet
-                custom_api_token = should-not-leak
-
-                [Other Application]
-                username = other-user
-                password = other-secret
-                """
-            )
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.MailTo")
+    def test_success_mail_can_be_disabled_without_disabling_system_action(
+        self, mail_to, system_action
+    ):
+        cfg = make_config(
+            mail_option="user@example.test",
+            send_mail_on_success=False,
+            system_option="echo done",
         )
+        successfull_run(
+            cfg,
+            no_logging_context(),
+            make_logger("success-mail-disabled"),
+            runtime_seconds=12.5,
+        )
+        mail_to.assert_not_called()
+        system_action.assert_called_once()
+
+    @mock.patch("syncerate.app.send_mqtt_messages")
+    def test_success_mqtt_can_be_disabled(self, send_mqtt_messages_mock):
+        cfg = make_config(
+            use_mqtt=True,
+            mqtt_json_status=True,
+            send_mqtt_on_success=False,
+        )
+        successfull_run(
+            cfg,
+            no_logging_context(),
+            make_logger("success-mqtt-disabled"),
+            runtime_seconds=12.5,
+        )
+        send_mqtt_messages_mock.assert_not_called()
+
+    def test_logging_omits_unrelated_sections_and_secret_like_options(self):
+        raw = {
+            "syncoid": {
+                "SyncoidCommand": "syncoid SourceDataSet DestDataSet",
+                "custom_api_token": "should-not-leak",
+            },
+            "ssh": {"PassWord": "top-secret"},
+            "mail": {"Mail": "No"},
+            "logging": {"DateTime": "%Y", "LogDestination": "No"},
+            "runtime": {"SystemAction": "No"},
+            "other_application": {
+                "username": "other-user",
+                "password": "other-secret",
+            },
+        }
         cfg = make_config(
             raw_config=raw,
             password_option="top-secret",
@@ -205,36 +235,237 @@ class AppAndLoggingTests(unittest.TestCase):
         script: str,
         source_text: str,
         dest_text: str,
-        extra: str = "",
+        overrides: dict[str, object] | None = None,
     ) -> Path:
+        import json
+
         source = directory / "source-list"
         dest = directory / "dest-list"
         source.write_text(source_text, encoding="utf-8")
         dest.write_text(dest_text, encoding="utf-8")
-        config = directory / "syncerate.cfg"
-        config.write_text(
-            textwrap.dedent(
-                f"""
-                [Syncerate Config]
-                Mail = No
-                SystemAction = No
-                DateTime = %Y-%m-%d_%H_%M_%S
-                LogDestination = No
-                SourceListPath = {source}
-                DestListPath = {dest}
-                PassWord = No
-                SyncoidCommand = {shlex.quote(script)} SourceDataSet DestDataSet
-                UseSSHAgent = No
-                RetryBrokenPipe = No
-                Use_MQTT = No
-                Use_HomeAssistant = No
-                MQTT_JSON_Status = No
-                {extra}
-                """
-            ),
-            encoding="utf-8",
-        )
+        config = directory / "syncerate.toml"
+
+        values: dict[str, dict[str, object]] = {
+            "backup": {"BackupTitle": "", "BackupComment": ""},
+            "syncoid": {
+                "SourceListPath": str(source),
+                "DestListPath": str(dest),
+                "SyncoidCommand": f"{shlex.quote(script)} SourceDataSet DestDataSet",
+            },
+            "ssh": {
+                "PassWord": "No",
+                "UseSSHAgent": False,
+                "SSHAgentKeyLifetimeSeconds": 3600,
+            },
+            "mail": {"Mail": "No", "SendMailOnSuccess": True},
+            "mqtt": {
+                "Use_MQTT": False,
+                "SendMQTTOnSuccess": True,
+                "broker_address": "",
+                "broker_port": 1883,
+                "mqtt_username": "",
+                "mqtt_password": "",
+                "mqtt_topic": "",
+                "mqtt_message": "",
+                "MQTT_JSON_Status": False,
+                "mqtt_json_topic": "",
+            },
+            "home_assistant": {
+                "Use_HomeAssistant": False,
+                "HomeAssistant_Available": "",
+            },
+            "logging": {
+                "DateTime": "%Y-%m-%d_%H_%M_%S",
+                "LogDestination": "No",
+            },
+            "runtime": {
+                "DryRun": False,
+                "SystemAction": "No",
+                "ContinueOnMissingDataset": False,
+                "ContinueWithoutResume": True,
+                "RetryBrokenPipe": False,
+                "BrokenPipeRetryCount": 1,
+                "BrokenPipeRetryWaitSeconds": 0,
+            },
+        }
+
+        for dotted_name, value in (overrides or {}).items():
+            section, option = dotted_name.split(".", 1)
+            values[section][option] = value
+
+        lines: list[str] = []
+        for section_name, options in values.items():
+            lines.append(f"[{section_name}]")
+            for option, value in options.items():
+                if isinstance(value, bool):
+                    rendered = "true" if value else "false"
+                elif isinstance(value, int):
+                    rendered = str(value)
+                else:
+                    rendered = json.dumps(str(value))
+                lines.append(f"{option} = {rendered}")
+            lines.append("")
+
+        config.write_text("\n".join(lines), encoding="utf-8")
         return config
+
+
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.private_ssh_agent")
+    @mock.patch("syncerate.app.resolve_password")
+    def test_config_dry_run_reports_plan_without_cli_flag(
+        self, resolve_password, private_agent, replications, system_action
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "must-not-run"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/data\n",
+                "backup/data\n",
+                {"runtime.DryRun": True},
+            )
+
+            stream = io.StringIO()
+            with mock.patch("sys.stdout", stream):
+                self.assertEqual(main(["--conf", str(config)]), 0)
+
+            self.assertFalse(marker.exists())
+            resolve_password.assert_not_called()
+            private_agent.assert_not_called()
+            replications.assert_not_called()
+            system_action.assert_not_called()
+            self.assertIn("Run mode        :   DRY RUN", stream.getvalue())
+
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.private_ssh_agent")
+    @mock.patch("syncerate.app.resolve_password")
+    def test_dry_run_reports_plan_without_executing_replication_or_post_action(
+        self, resolve_password, private_agent, replications, system_action
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "must-not-run"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/data\n",
+                "backup/data: --no-sync-snap\n",
+                {
+                    "ssh.PassWord": "Ask",
+                    "runtime.SystemAction": "echo must-not-run",
+                },
+            )
+
+            stream = io.StringIO()
+            with mock.patch("sys.stdout", stream):
+                self.assertEqual(main(["--conf", str(config), "--dry-run"]), 0)
+
+            self.assertFalse(marker.exists())
+            resolve_password.assert_not_called()
+            private_agent.assert_not_called()
+            replications.assert_not_called()
+            system_action.assert_not_called()
+            output = stream.getvalue()
+            self.assertIn("Dry run report", output)
+            self.assertIn("NO REPLICATION WAS PERFORMED", output)
+            self.assertIn("Dataset pairs planned :   1", output)
+            self.assertIn("pool/data -> backup/data", output)
+            self.assertIn("--no-sync-snap", output)
+            self.assertIn("Run mode        :   DRY RUN", output)
+
+    @mock.patch("syncerate.app.SystemAction")
+    @mock.patch("syncerate.app.MailTo")
+    @mock.patch("syncerate.app.send_mqtt_messages")
+    def test_dry_run_success_notifications_use_normal_success_switches(
+        self, mqtt, mail, system_action
+    ):
+        pair = DatasetPair("pool/data", "backup/data", ())
+        cfg = make_config(
+            mail_option="user@example.test",
+            use_mqtt=True,
+            system_option="echo must-not-run",
+            send_mail_on_success=False,
+            send_mqtt_on_success=False,
+        )
+        successfull_run(
+            cfg,
+            no_logging_context(),
+            make_logger("dry-success-switches-off"),
+            runtime_seconds=1.0,
+            dry_run=True,
+            dry_run_report="Dry run report",
+            dry_run_dataset_pairs=[pair],
+        )
+        mail.assert_not_called()
+        mqtt.assert_not_called()
+        system_action.assert_not_called()
+
+        enabled_cfg = make_config(
+            mail_option="user@example.test",
+            use_mqtt=True,
+            system_option="echo must-not-run",
+            send_mail_on_success=True,
+            send_mqtt_on_success=True,
+        )
+        successfull_run(
+            enabled_cfg,
+            no_logging_context(),
+            make_logger("dry-success-switches-on"),
+            runtime_seconds=1.0,
+            dry_run=True,
+            dry_run_report="Dry run report",
+            dry_run_dataset_pairs=[pair],
+        )
+        mqtt.assert_called_once()
+        self.assertTrue(mqtt.call_args.kwargs["dry_run"])
+        mail.assert_called_once()
+        self.assertTrue(mail.call_args.kwargs["DryRun"])
+        system_action.assert_not_called()
+
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.resolve_password")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_dry_run_preflight_failure_still_uses_failure_notifications(
+        self, mqtt, mail, password, replicate
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            script = write_executable(
+                directory / "fake.py",
+                "raise SystemExit('must not run')\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/a\n",
+                "backup/b\n",
+                {
+                    "mail.SendMailOnSuccess": False,
+                    "mqtt.SendMQTTOnSuccess": False,
+                },
+            )
+            self.assertEqual(main(["--conf", str(config), "--dry-run"]), 1)
+            password.assert_not_called()
+            replicate.assert_not_called()
+            mqtt.assert_called_once()
+            mail.assert_called_once()
+            self.assertEqual(mqtt.call_args.args[0].exit_code, 1)
+            self.assertTrue(mqtt.call_args.kwargs["dry_run"])
+            self.assertEqual(mail.call_args.args[0].exit_code, 1)
+            self.assertTrue(mail.call_args.kwargs["dry_run"])
 
     def test_main_success_path_with_fake_syncoid(self):
         with tempfile.TemporaryDirectory() as td:
@@ -251,6 +482,140 @@ class AppAndLoggingTests(unittest.TestCase):
             )
             self.assertEqual(main(["--conf", str(config)]), 0)
 
+    @mock.patch("syncerate.app.run_replications")
+    @mock.patch("syncerate.app.resolve_password")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_preflight_mismatch_stops_before_any_replication(self, mqtt, mail, password, replicate):
+        for sources, destinations in (
+            ("pool/good\npool/a\n", "backup/good\nbackup/b\n"),
+            ("pool/a\npool/b\n", "backup/a\n"),
+            ("pool/a/\n", "backup/a/\n"),
+        ):
+            with self.subTest(sources=sources, destinations=destinations):
+                mqtt.reset_mock(); mail.reset_mock()
+                with tempfile.TemporaryDirectory() as td:
+                    directory = Path(td)
+                    marker = directory / "must-not-run"
+                    script = write_executable(
+                        directory / "fake.py",
+                        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+                    )
+                    config = self.write_config(directory, script, sources, destinations)
+                    self.assertEqual(main(["--conf", str(config)]), 1)
+                    self.assertFalse(marker.exists())
+                    replicate.assert_not_called()
+                    password.assert_not_called()
+                    self.assertEqual(mqtt.call_args.args[0].exit_code, 1)
+                    self.assertEqual(mail.call_args.args[0].exit_code, 1)
+
+    @mock.patch("syncerate.app.successfull_run")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_resume_required_stops_list_and_uses_error_notifications(self, mqtt, mail, success):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "later-pair-ran"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                "import pathlib, sys, time\n"
+                "if sys.argv[1] == 'pool/a':\n"
+                "    print('WARN: ZFS resume feature not available on target machine', flush=True)\n"
+                "    time.sleep(10)\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n",
+            )
+            config = self.write_config(
+                directory, script, "pool/a\npool/b\n", "backup/a\nbackup/b\n",
+                {
+                    "runtime.ContinueWithoutResume": False,
+                    "mail.SendMailOnSuccess": False,
+                    "mqtt.SendMQTTOnSuccess": False,
+                },
+            )
+            self.assertEqual(main(["--conf", str(config)]), 4)
+            self.assertFalse(marker.exists())
+            success.assert_not_called()
+            mqtt.assert_called_once()
+            mail.assert_called_once()
+            self.assertEqual(mqtt.call_args.args[0].exit_code, 4)
+            self.assertEqual(mail.call_args.args[0].exit_code, 4)
+
+
+    @mock.patch("syncerate.app.successfull_run")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_main_missing_dataset_continues_list_then_reports_failure_code_8(
+        self,
+        mqtt_failure_mock,
+        error_mail_mock,
+        success_mock,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "good-ran"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                "import pathlib, sys\n"
+                f"marker = pathlib.Path({str(marker)!r})\n"
+                "if sys.argv[1].endswith('/missing'):\n"
+                "    print(\"cannot open 'pool/missing': dataset does not exist\", flush=True)\n"
+                "    sys.exit(2)\n"
+                "marker.write_text('yes')\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/missing\npool/good\n",
+                "backup/missing\nbackup/good\n",
+                {"runtime.ContinueOnMissingDataset": True},
+            )
+
+            self.assertEqual(main(["--conf", str(config)]), 8)
+            self.assertTrue(marker.exists())
+            success_mock.assert_not_called()
+            mqtt_failure_mock.assert_called_once()
+            error_mail_mock.assert_called_once()
+            summary = mqtt_failure_mock.call_args.kwargs["replication_summary"]
+            self.assertTrue(summary.has_missing_dataset_failure)
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
+
+    @mock.patch("syncerate.app.successfull_run")
+    @mock.patch("syncerate.app.send_error_mail")
+    @mock.patch("syncerate.app.send_mqtt_failure_status")
+    def test_main_missing_dataset_stops_list_by_default_and_reports_failure_code_8(
+        self,
+        mqtt_failure_mock,
+        error_mail_mock,
+        success_mock,
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            marker = directory / "good-ran"
+            script = write_executable(
+                directory / "fake_syncoid.py",
+                "import pathlib, sys\n"
+                f"marker = pathlib.Path({str(marker)!r})\n"
+                "if sys.argv[1].endswith('/missing'):\n"
+                "    print(\"cannot open 'pool/missing': dataset does not exist\", flush=True)\n"
+                "    sys.exit(2)\n"
+                "marker.write_text('yes')\n",
+            )
+            config = self.write_config(
+                directory,
+                script,
+                "pool/missing\npool/good\n",
+                "backup/missing\nbackup/good\n",
+            )
+
+            self.assertEqual(main(["--conf", str(config)]), 8)
+            self.assertFalse(marker.exists())
+            success_mock.assert_not_called()
+            mqtt_failure_mock.assert_called_once()
+            error_mail_mock.assert_called_once()
+            summary = mqtt_failure_mock.call_args.kwargs["replication_summary"]
+            self.assertTrue(summary.has_missing_dataset_failure)
+            self.assertEqual(len(summary.missing_dataset_failures), 1)
+
     def test_main_emits_final_runtime_summary(self):
         with tempfile.TemporaryDirectory() as td:
             directory = Path(td)
@@ -263,7 +628,10 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data\n",
-                "BackupTitle = Timer test\nBackupComment = First line\n    Second line",
+                {
+                    "backup.BackupTitle": "Timer test",
+                    "backup.BackupComment": "First line\nSecond line",
+                },
             )
             stream = io.StringIO()
             with mock.patch("sys.stdout", stream):
@@ -293,29 +661,13 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data\n",
-                "\n".join(
-                    [
-                        "Mail = user@example.test",
-                        f"LogDestination = {log_directory}",
-                        "BackupTitle = Mail timer test",
-                        "BackupComment = First line",
-                        "    Second line",
-                    ]
-                ),
+                {
+                    "mail.Mail": "user@example.test",
+                    "logging.LogDestination": str(log_directory),
+                    "backup.BackupTitle": "Mail timer test",
+                    "backup.BackupComment": "First line\nSecond line",
+                },
             )
-
-            # write_config supplies Mail/LogDestination defaults, so replace them
-            # rather than creating duplicate INI options.
-            config_text = config.read_text(encoding="utf-8")
-            config_text = config_text.replace("Mail = No", "Mail = user@example.test")
-            config_text = config_text.replace(
-                "LogDestination = No", f"LogDestination = {log_directory}"
-            )
-            config_text = config_text.replace(
-                "Mail = user@example.test\nLogDestination = " + str(log_directory) + "\n",
-                "",
-            )
-            config.write_text(config_text, encoding="utf-8")
 
             self.assertEqual(main(["--conf", str(config)]), 0)
             send_mail_mock.assert_called_once()
@@ -358,7 +710,7 @@ class AppAndLoggingTests(unittest.TestCase):
                 script,
                 "pool/data\n",
                 "backup/data\n",
-                "RetryBrokenPipe = YESS",
+                {"runtime.RetryBrokenPipe": "YESS"},
             )
             self.assertEqual(main(["--conf", str(config)]), 2)
             self.assertFalse(marker.exists())

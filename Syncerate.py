@@ -12,7 +12,7 @@ import sys
 from syncerate import VERSION, __version__
 from syncerate.app import log_syncerate_error, main, successfull_run
 from syncerate.cli import parse_arguments
-from syncerate.config import CONFIG_SECTION, load_app_config, option_is_enabled
+from syncerate.config import CONFIG_SECTIONS, load_app_config, option_is_enabled
 from syncerate.datasets import (
     load_dataset_pairs,
     missmatchinglists,
@@ -67,6 +67,7 @@ from syncerate.syncoid_runner import (
     effective_user_name,
     ensure_private_agent_identity,
     extract_ssh_key_path,
+    format_dry_run_report,
     log_command_debug,
     private_agent_has_identity,
     private_ssh_agent,

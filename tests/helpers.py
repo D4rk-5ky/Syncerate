@@ -1,6 +1,5 @@
 """Shared test helpers for Syncerate's dependency-free unittest suite."""
 
-import configparser
 import logging
 from pathlib import Path
 from typing import Any
@@ -24,11 +23,18 @@ def make_config(**overrides: Any) -> AppConfig:
 
     raw = overrides.pop("raw_config", None)
     if raw is None:
-        raw = configparser.RawConfigParser()
-        raw.add_section("Syncerate Config")
+        raw = {
+            "syncoid": {},
+            "ssh": {},
+            "mail": {},
+            "logging": {},
+            "runtime": {},
+            "mqtt": {},
+            "home_assistant": {},
+        }
 
     values = {
-        "config_path": "test.cfg",
+        "config_path": "test.toml",
         "raw_config": raw,
         "mail_option": "No",
         "system_option": "No",
@@ -41,13 +47,26 @@ def make_config(**overrides: Any) -> AppConfig:
         "destination_list_path": "dest-list",
         "password_option": "No",
         "syncoid_command": "syncoid SourceDataSet DestDataSet",
+        "dry_run": False,
+        "send_mail_on_success": True,
+        "send_mqtt_on_success": True,
         "mqtt_json_status": False,
         "use_home_assistant": False,
         "use_ssh_agent": False,
         "ssh_agent_key_lifetime_seconds": 3600,
         "retry_broken_pipe": False,
+        "continue_on_missing_dataset": False,
+        "continue_without_resume": True,
         "broken_pipe_retry_count": 1,
         "broken_pipe_retry_wait_seconds": 0,
+        "broker_address": "broker.example.test",
+        "broker_port": 1883,
+        "mqtt_username": "",
+        "mqtt_password": "",
+        "mqtt_topic": "syncerate/result",
+        "mqtt_message": "ON",
+        "mqtt_json_topic": "syncerate/status",
+        "home_assistant_available": "syncerate/available",
     }
     values.update(overrides)
     return AppConfig(**values)

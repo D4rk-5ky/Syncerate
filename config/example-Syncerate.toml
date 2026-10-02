@@ -1,0 +1,163 @@
+# Syncerate TOML configuration example
+#
+# Run with:
+#   ./Syncerate.py --conf /path/to/Syncerate.toml
+#
+# TOML booleans are native lowercase true/false values. Do not quote them.
+
+# ============================================================
+# BACKUP METADATA
+# ============================================================
+[backup]
+
+# Optional short name included in logs, email reports, and MQTT JSON status.
+BackupTitle = ""
+
+# Optional multiline description included in logs and email reports.
+# TOML multiline strings may span physical lines exactly as shown here.
+BackupComment = ""
+
+
+# ============================================================
+# SYNCOID / REPLICATION SETTINGS
+# ============================================================
+[syncoid]
+
+# Required source/destination dataset-list files. Blank lines and lines beginning
+# with # are ignored. Each file must contain at least one active dataset, and
+# final dataset names must match their paired destination before replication starts.
+SourceListPath = "/path/to/example-source-file"
+DestListPath = "/path/to/example-dest-file"
+
+# Required Syncoid command template.
+# Keep exactly one SourceDataSet and one DestDataSet placeholder.
+SyncoidCommand = "syncoid username@192.0.2.10:SourceDataSet DestDataSet --compress none --sshport 22 --sshkey /root/.ssh/syncerate --no-privilege-elevation"
+
+# ============================================================
+# SSH / CREDENTIAL SETTINGS
+# ============================================================
+[ssh]
+
+# Required password / SSH-key-passphrase handling:
+#   "No"  = do not provide a password/passphrase
+#   "Ask" = prompt securely when Syncerate starts
+#   other  = use this literal value as the password/passphrase
+PassWord = "No"
+
+# Optional isolated per-run ssh-agent for encrypted --sshkey identities.
+# Requires --sshkey in SyncoidCommand when enabled.
+UseSSHAgent = false
+
+# Maximum loaded key lifetime in seconds. Must be > 0.
+# Default when omitted: 3600.
+SSHAgentKeyLifetimeSeconds = 3600
+
+
+# ============================================================
+# MAIL SETTINGS
+# ============================================================
+[mail]
+
+# Required recipient address, or "No" to disable email completely.
+Mail = "No"
+
+# Controls success email for both real runs and dry runs.
+# Error email is still attempted when Mail is enabled even when this is false.
+# Default when omitted: true.
+SendMailOnSuccess = true
+
+
+# ============================================================
+# MQTT SETTINGS
+# ============================================================
+[mqtt]
+
+# Legacy retained MQTT success publishing.
+Use_MQTT = false
+
+# Controls MQTT success publishing for real runs and dry-run reports.
+# Failure MQTT is still attempted whenever Use_MQTT or MQTT_JSON_Status is enabled.
+# Default when omitted: true.
+SendMQTTOnSuccess = true
+
+# Shared broker settings used when either MQTT output is enabled.
+broker_address = "mqtt.example.com"
+broker_port = 1883
+mqtt_username = ""
+mqtt_password = ""
+
+# Legacy retained success topic/payload used when Use_MQTT = true.
+# Legacy-only failures use <mqtt_topic>/error; legacy-only dry-run success uses
+# <mqtt_topic>/dry-run. Those event messages are non-retained JSON.
+mqtt_topic = "home-assistant/syncerate/command"
+mqtt_message = "ON"
+
+# Independent structured JSON success/failure channel. May be enabled together
+# with legacy MQTT or by itself. JSON is always non-retained.
+MQTT_JSON_Status = false
+mqtt_json_topic = "homeassistant/syncerate/status"
+
+
+# ============================================================
+# HOME ASSISTANT SETTINGS
+# ============================================================
+[home_assistant]
+
+# Original Home Assistant availability integration tied to legacy Use_MQTT.
+Use_HomeAssistant = false
+HomeAssistant_Available = "home-assistant/syncerate/available"
+
+
+# ============================================================
+# LOGGING SETTINGS
+# ============================================================
+[logging]
+
+# Python strftime format used in log filenames.
+DateTime = "%Y-%m-%d_%H_%M_%S"
+
+# Directory for .log, .err, and .out files, or "No" for terminal-only logging.
+LogDestination = "No"
+
+
+# ============================================================
+# RUNTIME / SAFETY SETTINGS
+# ============================================================
+[runtime]
+
+# Application-level dry run.
+# false = normal replication run.
+# true  = validate config/dataset pairing and report exact planned commands, but
+#         do not request credentials, start ssh-agent/Syncoid, transfer data, or
+#         execute SystemAction. The --dry-run CLI flag can also force this on.
+DryRun = false
+
+# Optional command executed only after a successful real replication run.
+# Use "No" to disable it. It is always skipped in dry-run mode.
+SystemAction = "No"
+
+# Policy for a specifically recognized missing ZFS dataset or pool.
+# false (default when omitted) = record the error, stop before the next pair,
+#                               return exit code 8, and run failure reporting.
+# true = record the failed pair and continue later pairs. The final result still
+#        returns exit code 8 and failure reports include all recorded failures.
+# This option never converts missing data into success.
+ContinueOnMissingDataset = false
+
+# Syncoid's specific "ZFS resume feature not available" warning policy.
+# true  = log the warning and continue (default when omitted).
+# false = stop the run with exit code 4 and use normal failure reporting.
+ContinueWithoutResume = false
+
+# Dataset-level ordinary Broken Pipe retry handling.
+# false = preserve normal Syncoid exit-status handling (default).
+# true  = retry the affected dataset using the count/wait values below.
+RetryBrokenPipe = true
+
+# Number of retries allowed for each dataset after the first ordinary Broken Pipe.
+# Must be zero or a positive whole number. Default when omitted: 1.
+BrokenPipeRetryCount = 1
+
+# Whole seconds to wait before each ordinary Broken Pipe retry.
+# Must be zero or a positive whole number. Default when omitted: 10.
+BrokenPipeRetryWaitSeconds = 10
