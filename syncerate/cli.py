@@ -36,7 +36,9 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "configuration; a locked backup exits 13, lock setup failure exits 14. "
             "All pairs (including the final entry) must have matching final dataset "
             "names, otherwise nothing transfers (exit 1) and matching/mismatching "
-            "pairs are reported in failure mail, MQTT and terminal."
+            "pairs are reported in failure mail, MQTT and terminal. "
+            "Optional mqtt.LiveMQTTEnabled publishes independent HA Discovery, "
+            "live heartbeats and retained last results without affecting replication."
         ),
     )
     parser.add_argument(

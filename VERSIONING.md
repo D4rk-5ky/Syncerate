@@ -16,6 +16,17 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.51
+
+Previous version: `0.4.50`.
+
+- Added optional **independent per-TOML live MQTT reporting** with a canonical-TOML-plus-hostname stable topic ID, separate user-friendly `LiveBackupName` (fallback existing `BackupTitle`, then `.toml` stem), unique per-run ID, and non-retained `syncerate/<id>/status` heartbeats every 60 seconds by default. Multiple different TOML configurations can report simultaneously without sharing state; the original flock lock still prevents duplicate owners.
+- Added retained Home Assistant MQTT Discovery for eight expiring live sensors (running state, current pair, total/completed/failed counts, bytes from completed attempts, runtime and heartbeat timestamp) plus a non-expiring retained `syncerate/<id>/last_result` sensor for the last completed owner run. Retained discovery reappears after broker reconnect; status/events are deliberately **not retained**, so old RUNNING messages are not replayed after restart. HA live sensors expire after three configured heartbeat intervals (default 180 seconds).
+- Added optional non-retained per-backup `started`, `completed`, `failed`, and `duplicate_rejected` event notifications, with startup disabled by default, success/failure events enabled by default. A rejected duplicate (existing exit code 13) sends only a best-effort event, **never** overwriting the lock owner's status or retained last result. The existing failure mail/legacy JSON MQTT remains unchanged and is still attempted.
+- Added independent Paho-client MQTT delivery and heartbeat daemon thread, per-dataset callback integration, bounded shutdown grace, and reconnect handling. Missing Paho, broker outages and live publish failures are **best effort** and do not change replication exit codes, safety checks, retries, failure reporting, or SystemAction. Existing legacy MQTT publishing behavior is not modified.
+- Added seven `[mqtt]` options (schema/example now covers 38): `LiveMQTTEnabled`, `LiveMQTTDiscovery`, `LiveBackupName`, `LiveHeartbeatSeconds`, `LiveNotifyStart`, `LiveNotifySuccess`, `LiveNotifyFailure`. Updated `README.md` (current behavior only, original disclaimers intact), `--help`, function-by-function `commented_code_map.md`, `VERSIONING.md`, and `VERIFICATION.md`; added `config/HomeAssistant-Live-Backup-Alerts.yaml` for optional Pushover alerts on failures/duplicate rejects, stalled heartbeats while RUNNING and long-running backups. Added dedicated live-status and app-integration regression tests.
+- Updated package, source, builder expected version, test expectations and verified original files against the `0.4.50` ZIP. Preserved the old `dist/Syncerate` standalone binary (still reports 0.4.29); Python source or rebuilding is required to use this feature. No live ZFS, HA, mail or MQTT broker delivery was asserted.
+
 ## 0.4.50
 
 Previous version: `0.4.49`.

@@ -41,6 +41,13 @@ class AppConfig:
     mqtt_message: str = ""
     mqtt_json_topic: str = ""
     home_assistant_available: str = ""
+    live_mqtt_enabled: bool = False
+    live_mqtt_discovery: bool = True
+    live_backup_name: str = ""
+    live_heartbeat_seconds: int = 60
+    live_notify_start: bool = False
+    live_notify_success: bool = True
+    live_notify_failure: bool = True
 
     @property
     def mail_enabled(self) -> bool:

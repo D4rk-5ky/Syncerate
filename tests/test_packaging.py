@@ -35,7 +35,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('rm -rf -- "$BUILD_ROOT" "$FINAL_DIST"', script)
         self.assertIn('PYTHON_BIN="${PYTHON_BIN:-python3}"', script)
         self.assertIn('"$PYTHON_BIN" -m PyInstaller', script)
-        self.assertIn('EXPECTED_VERSION="0.4.50"', script)
+        self.assertIn('EXPECTED_VERSION="0.4.51"', script)
         self.assertIn('EXPECTED_VERSION_OUTPUT="$(basename "$EXECUTABLE") $EXPECTED_VERSION"', script)
         self.assertIn('[[ "$VERSION_OUTPUT" != "$EXPECTED_VERSION_OUTPUT" ]]', script)
         self.assertIn('"$EXECUTABLE" --help', script)
@@ -87,7 +87,7 @@ if [[ "${1:-}" == "-m" && "${2:-}" == "PyInstaller" ]]; then
     cat > "$distpath/Syncerate" <<'INNER'
 #!/usr/bin/env bash
 case "${1:-}" in
-    --version) echo "Syncerate 0.4.50" ;;
+    --version) echo "Syncerate 0.4.51" ;;
     --help) echo "help" ;;
     *) exit 0 ;;
 esac

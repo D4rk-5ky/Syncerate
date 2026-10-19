@@ -105,6 +105,33 @@ mqtt_message = "ON"
 MQTT_JSON_Status = false
 mqtt_json_topic = "homeassistant/syncerate/status"
 
+# OPTIONAL INDEPENDENT LIVE MONITORING (separate from legacy mail/MQTT success)
+# Disabled by default. When true, this requires the broker details above but
+# does not require Use_MQTT, MQTT_JSON_Status, or Use_HomeAssistant.
+# An unreachable broker or missing paho-mqtt never stops an otherwise valid backup.
+LiveMQTTEnabled = false
+
+# Publish retained Home Assistant MQTT Discovery configurations for one device
+# per canonical TOML path + hostname. Independent of the old Use_HomeAssistant.
+LiveMQTTDiscovery = true
+
+# Optional friendly name shown on the live device. Empty uses BackupTitle,
+# then the .toml filename. Renaming does not change the canonical-path identity.
+LiveBackupName = ""
+
+# Send non-retained heartbeat every N seconds (valid 10..3600, default 60).
+# HA considers live sensors stale after three intervals (180s by default).
+# The last completed result is published separately WITH MQTT retain=true.
+LiveHeartbeatSeconds = 60
+
+# Optional non-retained per-run MQTT events on syncerate/<backup-id>/events.
+# Start events default off to avoid noisy alerts. Finish/failure default on.
+# Failure events are also attempted on duplicate-launch rejection, without
+# modifying the active owner's running state or retained last result.
+LiveNotifyStart = false
+LiveNotifySuccess = true
+LiveNotifyFailure = true
+
 
 # ============================================================
 # HOME ASSISTANT SETTINGS

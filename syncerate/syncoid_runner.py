@@ -14,7 +14,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from getpass import getpass
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import pexpect
 
@@ -1398,6 +1398,7 @@ def run_replications(
     ssh_agent_session: Optional[SSHAgentSession] = None,
     *,
     summary: Optional[ReplicationSummary] = None,
+    progress_callback: Optional[Callable[[str, DatasetPair, ReplicationSummary], None]] = None,
 ) -> ReplicationSummary:
     """Run pairs and update shared statistics even if a fatal error interrupts the list."""
 
@@ -1407,6 +1408,8 @@ def run_replications(
 
     for dataset_pair in dataset_pairs:
         summary.attempted_datasets += 1
+        if progress_callback is not None:
+            progress_callback("started", dataset_pair, summary)
         syncoid_execute = build_syncoid_command(
             app_config.syncoid_command,
             dataset_pair.source,
@@ -1460,6 +1463,8 @@ def run_replications(
                 summary.transfer_measurement_complete
                 and result.transfer_measurement_complete
             )
+            if progress_callback is not None:
+                progress_callback("updated", dataset_pair, summary)
 
             if result.broken_pipe_detected:
                 child.close()
@@ -1519,6 +1524,8 @@ def run_replications(
                     messages=result.missing_dataset_or_pool_messages,
                 )
                 summary.missing_dataset_failures.append(failure)
+                if progress_callback is not None:
+                    progress_callback("failed", dataset_pair, summary)
 
                 logger.error("")
                 logger.error("----------")
@@ -1590,6 +1597,8 @@ def run_replications(
             # Only a genuine zero-exit pair counts as completed. Missing dataset
             # skips, retries and all fatal exits leave it in the failed count.
             summary.completed_datasets += 1
+            if progress_callback is not None:
+                progress_callback("completed", dataset_pair, summary)
             break
 
     return summary

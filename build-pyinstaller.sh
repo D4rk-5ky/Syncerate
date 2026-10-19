@@ -5,7 +5,7 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-EXPECTED_VERSION="0.4.50"
+EXPECTED_VERSION="0.4.51"
 BUILD_ROOT="$PROJECT_ROOT/.build"
 WORK_DIR="$BUILD_ROOT/pyinstaller-work"
 STAGING_DIST="$BUILD_ROOT/pyinstaller-dist"

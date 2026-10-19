@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.50`
+Current version: `0.4.51`
 
 ## ⚠️ Disclaimer / Liability
 
@@ -95,7 +95,7 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.50 source release. Rebuild with `build-pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
+**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.51 source release. Rebuild with `build-pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
 
 PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
 
@@ -171,7 +171,7 @@ Syncerate has four application flags. `--conf`/`-c` selects the required setting
 | `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate TOML configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. Every run takes a non-blocking, exclusive per-file `flock` before starting work. |
 | `--dry-run` | No | Still acquires the same per-TOML lock as a real run. Forces dry-run on even when `[runtime].DryRun = false` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.50` for the 0.4.50 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.50. The flag exits without starting a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.51` for the 0.4.51 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.51. The flag exits without starting a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -233,7 +233,7 @@ Use this to see the executable's current syntax and examples. No `--conf` argume
 ./dist/Syncerate --version
 ```
 
-No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.50 build.
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.51 build.
 
 Run the packaged regression suite after installation or modification with:
 
@@ -439,6 +439,13 @@ BrokenPipeRetryWaitSeconds = 10
 | `[mqtt]` | `mqtt_message` | When `Use_MQTT = true` | Legacy retained success payload. The key must exist; an empty payload is allowed. |
 | `[mqtt]` | `MQTT_JSON_Status` | No | Boolean; defaults to `false`. Independently enables structured non-retained success/failure JSON. |
 | `[mqtt]` | `mqtt_json_topic` | When `MQTT_JSON_Status = true` | Dedicated JSON topic, distinct from enabled legacy/availability topics. |
+| `[mqtt]` | `LiveMQTTEnabled` | No | Boolean, default `false`. Enables independent best-effort live MQTT, per-TOML status and last-result channels; does not depend on `Use_MQTT` or `MQTT_JSON_Status`. Requires broker address/valid port when enabled. |
+| `[mqtt]` | `LiveMQTTDiscovery` | No | Boolean, default `true`. Publishes retained Home Assistant MQTT Discovery configs for one device per backup. |
+| `[mqtt]` | `LiveBackupName` | No | Optional friendly name; falls back to `BackupTitle`, then TOML file stem. Never used as the unique identity or safety lock key. |
+| `[mqtt]` | `LiveHeartbeatSeconds` | No | Integer `10..3600`, default `60`; HA live sensors become unavailable after three missed intervals (180 seconds by default). |
+| `[mqtt]` | `LiveNotifyStart` | No | Boolean, default `false`; enable an optional non-retained `started` MQTT event. |
+| `[mqtt]` | `LiveNotifySuccess` | No | Boolean, default `true`; send a non-retained `completed` event on success. Retained last result is always published while live monitoring is enabled. |
+| `[mqtt]` | `LiveNotifyFailure` | No | Boolean, default `true`; send non-retained `failed` and `duplicate_rejected` events. Retained last result is always published by the lock-owning run. |
 | `[home_assistant]` | `Use_HomeAssistant` | No | Boolean; defaults to `false`. Enables the legacy retained `online` availability publication when legacy MQTT is also enabled. |
 | `[home_assistant]` | `HomeAssistant_Available` | When HA integration is enabled | Availability topic. |
 | `[logging]` | `DateTime` | Yes | Python `strftime` pattern used in log filenames. |
@@ -447,11 +454,97 @@ BrokenPipeRetryWaitSeconds = 10
 | `[runtime]` | `SystemAction` | Yes | Trusted shell command run only after successful real replication, or string `"No"` to disable. Always skipped in dry-run. |
 | `[runtime]` | `ContinueOnMissingDataset` | No | Boolean; defaults to `false`. `false` records the first recognized missing dataset/pool and stops before the next pair. `true` records the failure and continues later pairs. **Either mode still ends in failure with exit `8` and failure reporting.** |
 
-The loader has a regression-audited schema containing exactly these 31 supported options. Tests compare the loader's actual option accesses to that schema and compare the shipped `example-Syncerate.toml` to the same schema, so a script option cannot be added without also being represented in the TOML example. Unknown extra TOML tables are ignored by startup-configuration logging; only known Syncerate tables are logged, and credential-like keys are suppressed.
+The loader has a regression-audited schema containing exactly these 38 supported options. Tests compare the loader's actual option accesses to that schema and compare the shipped `example-Syncerate.toml` to the same schema, so a script option cannot be added without also being represented in the TOML example. Unknown extra TOML tables are ignored by startup-configuration logging; only known Syncerate tables are logged, and credential-like keys are suppressed.
 
 `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` are runtime policy settings and must be placed under `[runtime]`. Syncerate rejects these names when they are left under `[syncoid]`, preventing a misplaced setting from being silently ignored and replaced by its fallback value.
 
-When MQTT is enabled, broker address, broker port, and the topics required by the enabled channels are validated before replication starts. Required text settings may not be empty; use the documented string `"No"` value where that is the supported disable control.
+When any MQTT feature is enabled (including independent live status), broker address, broker port, and the topics required by the enabled legacy channels are validated before replication starts. Required text settings may not be empty; use the documented string `"No"` value where that is the supported disable control.
+
+## Optional live status, MQTT heartbeats and automatic Home Assistant Discovery
+
+Enable this independently for each `.toml` configuration using the same `[mqtt]`
+broker details already used by Syncerate. **It is disabled by default.**
+
+```toml
+[backup]
+BackupTitle = "NUC Docker Backup"
+
+[mqtt]
+Use_MQTT = false
+MQTT_JSON_Status = false
+broker_address = "192.0.2.5"
+broker_port = 1883
+mqtt_username = ""
+mqtt_password = ""
+LiveMQTTEnabled = true
+LiveMQTTDiscovery = true
+LiveBackupName = ""           # optional override of BackupTitle
+LiveHeartbeatSeconds = 60      # 10..3600 seconds
+LiveNotifyStart = false        # optional event: started
+LiveNotifySuccess = true       # optional event: completed
+LiveNotifyFailure = true       # optional events: failed, duplicate_rejected
+```
+
+Live MQTT is **separate from** `Use_MQTT`, `MQTT_JSON_Status`, `SendMQTTOnSuccess`,
+and the old `[home_assistant].Use_HomeAssistant` retained availability signal.
+Existing mail and MQTT success/failure reporting remains unchanged. Live MQTT
+uses a separate Paho client and a background heartbeat thread; broker outage,
+missing optional `paho-mqtt`, or a live-status publishing exception only causes
+a warning. It does **not** fail, delay a dataset, or skip replication. A short
+best-effort delivery window at shutdown helps fast runs publish their result;
+network failure may still cause monitoring gaps. A `SIGKILL` or power failure
+cannot publish a final result; use heartbeat expiry to detect it.
+
+Each backup gets a stable ID derived from **hostname + full resolved TOML path**.
+Config aliases pointing to the same TOML share its ID. A different TOML or host
+uses a different ID even if its friendly `BackupTitle` matches. Names do not
+control locking. Topic paths are:
+
+| Topic | Retained? | Content |
+|---|---|---|
+| `syncerate/<backup_id>/status` | **No** | JSON running heartbeat every N seconds; immediate dataset starts and completion/progress and final `success`/`failed` (then expires). Includes `run_id`, backup name, current source → destination pair, total/completed/failed counts, transferred bytes from finished attempts, and runtime. |
+| `syncerate/<backup_id>/last_result` | **Yes** | Last completed **owner** run's final JSON result, success/failure, exit code, error, counters and end time. Safe to read after restart; **not** overwritten when a duplicate start is rejected. |
+| `syncerate/<backup_id>/events` | **No** | Optional `started`, `completed`, `failed`, or `duplicate_rejected` event (configured independently). |
+| `homeassistant/sensor/syncerate_<backup_id>/<entity>/config` | **Yes** | Automatic MQTT Discovery for eight live sensors plus the separate last-result sensor. |
+
+The initial live status is `running`; while Syncoid works on an individual
+pair, `current_dataset` shows that pair and the counters reflect the last
+completed attempt. For a long-running individual pair, transferred bytes may
+not increase until the transfer attempt finishes; **this is not byte-level
+progress or an estimated transfer percentage**. Failed counts reflect attempted
+but not completed pairs; untouched entries never count as failed.
+
+Home Assistant MQTT Discovery creates one device per backup with live status,
+current dataset, total/completed/failed dataset counts, bytes, elapsed runtime,
+heartbeat timestamp, and retained last result. Live sensors use
+`expire_after = LiveHeartbeatSeconds * 3`; the retained last-result sensor has
+**no expiry**. A stale heartbeat makes live sensors unavailable (unknown
+interruption), not conclusively `failed`. Stale live status is expected a few
+minutes *after* a normal completion; use last result for historical outcome.
+
+**Home Assistant/Pushover alert examples:** `config/HomeAssistant-Live-Backup-Alerts.yaml`
+includes optional failure/duplicate alerts, heartbeat-missing-while-running
+and long-runtime alerts. Change the example `notify.pushover` service and the
+example status entity IDs to your own discovered device/entity IDs. A Pushover
+notification requires Home Assistant's notification integration; Syncerate
+itself does not directly call Pushover. To avoid false alarms, the stale alert
+triggers only on a live status transition **from `running` to `unavailable`**;
+`success`/`failed` subsequently expiring is normal. MQTT Discovery and
+notifications require working MQTT integration in Home Assistant.
+
+**Safelock behavior:** only the successful TOML lock owner publishes `status`
+and `last_result`. A duplicate launch exits with existing failure code 13,
+attempts the existing configured mail/legacy failure MQTT and can publish an
+extra non-retained `duplicate_rejected` event. It never changes the owner's
+RUNNING state, last successful result, or lock. A failure establishing the lock
+(exit 14) similarly never claims the owner topics.
+
+**Operational limits:** Per-host MQTT IDs assume stable hostnames and canonical
+TOML paths. Renaming/moving the TOML or changing host name changes HA device
+identity (previous Discovery entries must be removed manually). A broker
+restart/network failure can cause missed events; retained last results are
+republished on MQTT reconnect while the running process is alive. There is no
+cross-host lock or real-time MQTT guarantee.
 
 ## Syncoid command templates
 

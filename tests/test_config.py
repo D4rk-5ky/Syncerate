@@ -96,7 +96,7 @@ class ConfigTests(unittest.TestCase):
             for option in raw.get(section, {})
         }
         self.assertEqual(actual, expected)
-        self.assertEqual(len(expected), 31)
+        self.assertEqual(len(expected), 38)
 
     def test_loader_option_accesses_match_documented_schema(self):
         project_root = Path(__file__).resolve().parents[1]
@@ -137,7 +137,7 @@ class ConfigTests(unittest.TestCase):
             for option in options
         }
         self.assertEqual(accessed, documented)
-        self.assertEqual(len(accessed), 31)
+        self.assertEqual(len(accessed), 38)
 
     def test_valid_minimal_config_loads(self):
         cfg = self.load_text(BASE)

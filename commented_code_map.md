@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.50`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.51`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -18,6 +18,7 @@ syncerate/
 ├── errors.py
 ├── logging_setup.py
 ├── locking.py
+├── live_status.py
 ├── models.py
 ├── notifications.py
 ├── syncoid_runner.py
@@ -29,6 +30,8 @@ tests/
 ├── test_config.py
 ├── test_datasets.py
 ├── test_locking.py
+├── test_live_app_integration.py
+├── test_live_status.py
 ├── test_notifications.py
 ├── test_packaging.py
 ├── test_syncoid_runner.py
@@ -41,7 +44,7 @@ The dependency direction is intentionally one-way:
 Syncerate.py
     -> syncerate.app
         -> cli / config / locking / datasets / logging_setup
-        -> notifications / syncoid_runner / system_actions
+        -> live_status / notifications / syncoid_runner / system_actions
             -> models / errors
 ```
 
@@ -86,7 +89,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.50"
+VERSION = "0.4.51"
 __version__ = VERSION
 ```
 
@@ -146,6 +149,161 @@ Stores the canonical `.toml.lock` pathname and the locked, open descriptor. The 
 Idempotently closes the file descriptor; normal completion, `main()`'s `finally`, and OS process teardown release the kernel lock. Intentionally **does not unlink the lock inode**, because deletion while a process holds a file lock permits a second process to create and lock a different inode for the very same configuration.
 
 For multi-hosts or unusual shared/network mounts, `flock` propagation needs independent operator verification. Different `.toml` configs pointing to the same ZFS destination are intentionally **not mutually exclusive**. As a separate existing logging constraint, different configs sharing an identical `LogDestination`/`DateTime` value may use matching log filenames; operators should configure separate log directories for simultaneous jobs.
+
+## `syncerate/live_status.py` — optional per-backup MQTT/HA monitor
+
+All functions in this module are independent of legacy notification publishing.
+Only the lock-owning run initializes `LiveBackupMonitor`. An error in optional
+live reporting is logged but cannot change exit codes, retry policy, dataset
+preflight validation, locked-run safety, mail, or legacy MQTT behavior.
+
+### `utc_timestamp()`
+
+Produces timezone-aware UTC ISO-8601 strings for event, heartbeat and result
+metadata, allowing sensors on different hosts to be compared reliably.
+
+### `backup_identity(config_path, hostname=None)`
+
+Resolves the canonical TOML path (including symlink aliases), gets the hostname,
+produces a short topic-safe hostname/config stem and appends 12 hex digits from a
+SHA-256 hash of host plus full canonical path. The display name does not affect
+identity; different hosts and directories get independent topics.
+
+### `discovery_messages(monitor)`
+
+Creates **nine retained** Home Assistant MQTT Discovery messages: eight live
+sensors (status, current dataset, total/completed/failed datasets, transferred
+bytes, elapsed seconds and heartbeat timestamp), plus one retained-last-result
+sensor. Live sensors use `expire_after=3*LiveHeartbeatSeconds` to detect a lost
+heartbeat; last result is not expired. All sensors share one device identifier
+based on the backup's stable ID. Returns no messages when discovery is disabled.
+
+### `LiveBackupMonitor.__init__(config, logger, *, dry_run=False)`
+
+Builds a per-process/run UUID, topics, initial `running` state, timestamp,
+mutable counters guarded by a short local threading lock, connection status,
+and a stop event. No network call is made in the constructor.
+
+### `LiveBackupMonitor._publish(topic, payload, *, retain=False, qos=0)`
+
+Queues a message only when the background MQTT connection is available; never
+waits for broker acknowledgement or raises a replication-visible error. Logs
+queue/publish failures. The final result/discovery use QoS1 and retain; live
+status and events are not retained.
+
+### `LiveBackupMonitor._payload()`
+
+Copies counters under the local lock and adds current monotonic runtime, backup
+name and ID, host, run ID, dry-run marker and UTC heartbeat timestamp, encoded
+as JSON. No password, full TOML, SSH key or Syncoid command is transmitted.
+
+### `LiveBackupMonitor._heartbeat()`
+
+Background daemon thread that waits the configured N seconds, then publishes
+fresh non-retained status until the stop event is set. It never calls ZFS or
+changes Syncoid state.
+
+### `LiveBackupMonitor._on_connect(client, userdata, flags, reason_code, properties)`
+
+Paho v2 callback. On a successful broker connection or reconnect, republishes
+retained Discovery config and the current non-retained state. Optionally emits
+the start event at most once, and re-emits a completed retained result if
+available. Broker rejection/callback exceptions are logged nonfatally.
+
+### `LiveBackupMonitor._on_disconnect(client, userdata, disconnect_flags, reason_code, properties)`
+
+Clears broker-connected state so a temporarily unreachable broker cannot be
+mistaken for a successful publication. Automatic Paho reconnect remains active.
+
+### `LiveBackupMonitor._event(event_type, **fields)`
+
+Creates a non-retained JSON event on the backup's dedicated events topic for
+optional start, completion, failure or duplicate reporting. Include backup
+identity, unique run ID, UTC timestamp and applicable error/exit information.
+
+### `LiveBackupMonitor.start()`
+
+Lazily imports optional Paho MQTT, creates a v2 persistent client with existing
+broker credentials, configures bounded reconnect delays, starts its network
+loop and independent heartbeat daemon. Any initialization error merely warns;
+the backup proceeds even if live MQTT support is unavailable.
+
+### `LiveBackupMonitor.progress(stage, pair, summary)`
+
+Runner callback called when a pair starts, finishes a transfer attempt,
+completes or is skipped due to missing data. Copies the existing exact dataset
+counters and most recently measured transfer total; no extra ZFS work and no
+new timeout/retry behavior. Sends an immediate status update after non-start
+stages (including the start of a new pair), in addition to periodic heartbeats.
+
+### `LiveBackupMonitor.planned(total)`
+
+Publishes the validated dataset count after the original preflight check; a
+mismatch never starts replication but can still be reported as a final failure.
+
+### `LiveBackupMonitor.finish(status, exit_code, *, error="", summary=None)`
+
+Idempotently snapshots final counters, stops heartbeats, publishes non-retained
+terminal state and retained `last_result`, and optionally emits a non-retained
+completion/failure event. A short bounded delivery grace period helps fast
+runs; monitoring failures never replace real replication/notification errors.
+
+### `LiveBackupMonitor.stop()`
+
+Stops the heartbeat thread and releases the Paho network loop/client in the
+application `finally` block, before releasing the TOML lock; prevents a
+completed job from continuing to send a running heartbeat.
+
+### `publish_duplicate_event(config, logger, *, reason, exit_code)`
+
+Best-effort one-shot event attempted **only** when lock acquisition fails.
+Uses an independent daemon sender with a one-second maximum wait. Critically
+publishes ONLY a non-retained `duplicate_rejected` event, never live status,
+Discovery or retained last-result topics, so the lock owner remains RUNNING.
+
+### `app.main()` and `syncoid_runner.run_replications()` integration
+
+`main()` owns the monitor **only after** successfully acquiring `BackupLock`,
+starts it before preflight and stops it before releasing the lock. All normal
+success/dry-run and known/unexpected error boundaries call `finish()`. Lock
+rejections never initialize the owner monitor; their independent event is
+optional and cannot overwrite the current owner's state. The runner gains an
+optional `progress_callback(stage, dataset_pair, summary)` keyword argument
+with a default of `None`; existing calling code is unchanged unless live
+monitoring is enabled. It records existing counters, without changing
+replication, resume, ENOSPC, Broken Pipe or missing-dataset handling.
+
+## `config/HomeAssistant-Live-Backup-Alerts.yaml`
+
+Optional Home Assistant automation examples, not loaded by Syncerate itself.
+The wildcard `syncerate/+/events` MQTT trigger can dispatch failure and duplicate
+notifications through the user's `notify.pushover` service. The live status
+sensor trigger uses `from: running` and `to: unavailable` to avoid raising a
+false interruption alarm when a completed sensor expires normally. An optional
+four-hour running-state duration trigger can highlight a backup that takes
+unusually long. Replace the example entity IDs and notification service name;
+these automations are separate from Syncerate's own success/failure mail path.
+
+## `tests/test_live_status.py`
+
+The `LiveStatusTests` methods verify the individual guarantees:
+
+- `test_identity_distinguishes_host_and_directory_and_resolves_symlinks()`: path/host identity independence and same-path alias stability.
+- `make_connected()`: constructs a fake connected MQTT client with isolated message capture to avoid an actual broker.
+- `test_ha_discovery_is_retained_unique_and_live_expires()`: discovery entity/topic names, per-device grouping, live sensor expiry and absence of last-result expiry.
+- `test_progress_and_end_result_retention_and_event_controls()`: current dataset and counters, retained final result, non-retained status and exactly-once terminal event.
+- `test_failure_retains_result_and_does_not_claim_unattempted_are_failed()`: partial-attempt failure statistics and failure event exit code.
+- `test_opt_out_discovery_and_events()`: optional Discovery/events disabled without suppressing last result.
+- `test_unavailable_broker_is_best_effort_even_if_start_fails()`: missing Paho cannot abort the run or delay the shutdown indefinitely.
+- `test_background_paho_client_start_publishes_discovery_then_live_state()`: fake Paho v2 network setup, credentials, callbacks, startup event and graceful cleanup.
+- `test_duplicate_event_never_writes_live_or_last_result()`: rejection event cannot overwrite the lock owner's live status/result.
+- `test_broker_credentials_required_for_live_only_and_option_validation()`: live-only broker validation, heartbeats and documented defaults.
+
+The `FakeClient` methods `__init__()`, `publish()`, `disconnect()`, and `loop_stop()` provide deterministic simulated MQTT queueing and teardown; no network request occurs.
+
+## `tests/test_live_app_integration.py`
+
+The `LiveAppIntegrationTests` methods are ` _files()` (constructs safe test TOML and source/destination list files), `test_monitor_instantiated_after_lock_only_and_finished_on_dry_run()` (lifecycle and real lock order), `test_failed_preflight_produces_live_failed_result_but_never_replicates()` (no transfer for mismatched names), `test_live_progress_callback_flows_into_runner_without_changing_legacy_defaults()` (optional runner injection without changing normal callers), and `test_duplicate_start_never_creates_status_monitor_or_releases_owner()` (no owner publications from rejected launches). Test patching replaces actual replication and MQTT delivery to avoid production side effects.
 
 ## `syncerate/models.py`
 
@@ -252,7 +410,7 @@ Ordered tuple derived from `CONFIG_OPTION_LOCATIONS`, so startup logging follows
 
 ### `CONFIG_OPTION_LOCATIONS`
 
-Single schema map assigning every supported configuration key to its owning table. Regression tests compare both `load_app_config()`'s actual helper-based option accesses and `config/example-Syncerate.toml` against this map exactly, preventing a supported option from being added to code without also being represented in the example. It currently contains 31 options.
+Single schema map assigning every supported configuration key to its owning table. Regression tests compare both `load_app_config()`'s actual helper-based option accesses and `config/example-Syncerate.toml` against this map exactly, preventing a supported option from being added to code without also being represented in the example. It currently contains 38 options.
 
 ### `option_is_enabled(value)`
 
@@ -884,7 +1042,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Creates `dist/README.md` with the standalone-delivery explanation, expected `dist/Syncerate` path, `./build-pyinstaller.sh` command, and source-vs-generated-binary warning.
 - Counts final top-level `dist/` entries and fails unless there are exactly two: `dist/Syncerate` and `dist/README.md`; it rejects any unexpected third entry and rechecks both expected files.
 - Uses an exit trap to remove the generated `.build/` directory on success or failure.
-- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.50`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.51`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -915,7 +1073,7 @@ The packaged `tests/` directory uses only Python `unittest` plus Syncerate's exi
 - `ConfigTests`: groups TOML loader/schema validation tests.
 - `load_text()`: writes temporary TOML text and returns the validated `AppConfig`.
 - `test_shipped_example_config_loads()`: verifies the shipped TOML example parses and validates.
-- `test_shipped_example_contains_every_supported_config_option()`: compares the example's tables/keys exactly with `CONFIG_OPTION_LOCATIONS`, currently locking all 31 supported settings into the example.
+- `test_shipped_example_contains_every_supported_config_option()`: compares the example's tables/keys exactly with `CONFIG_OPTION_LOCATIONS`, currently locking all 38 supported settings into the example.
 - `test_loader_option_accesses_match_documented_schema()`: AST-audits `load_app_config()` helper calls and requires every actually accessed option to match the same 31-key schema, closing the gap between code and example.
 - `test_valid_minimal_config_loads()`: verifies required minimal TOML plus documented defaults.
 - `test_continue_on_missing_dataset_defaults_false_and_requires_toml_boolean()`: locks safe default false and native-Boolean validation for `[runtime].ContinueOnMissingDataset`.
@@ -987,7 +1145,7 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
 - `Syncerate.spec`, `build-pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
-- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.50 executable and is not imported by source-mode tests; rebuild it with `build-pyinstaller.sh` for this release.
+- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.51 executable and is not imported by source-mode tests; rebuild it with `build-pyinstaller.sh` for this release.
 - `dist/README.md`: tracked delivery-folder note explaining the expected standalone output and build command; it is the only non-executable file allowed in `dist/`.
 - `config/example-Syncerate.toml`: complete 31-option categorized TOML example kept synchronized exactly with `CONFIG_OPTION_LOCATIONS`.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
