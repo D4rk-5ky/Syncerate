@@ -34,6 +34,13 @@ CONFIG_OPTION_LOCATIONS = {
         "mqtt_message",
         "MQTT_JSON_Status",
         "mqtt_json_topic",
+        "LiveMQTTEnabled",
+        "LiveMQTTDiscovery",
+        "LiveBackupName",
+        "LiveHeartbeatSeconds",
+        "LiveNotifyStart",
+        "LiveNotifySuccess",
+        "LiveNotifyFailure",
     ),
     "home_assistant": ("Use_HomeAssistant", "HomeAssistant_Available"),
     "logging": ("DateTime", "LogDestination"),
@@ -283,6 +290,15 @@ def load_app_config(config_path: str) -> AppConfig:
         fallback=True,
     )
     mqtt_json_status = _boolean(mqtt, "mqtt", "MQTT_JSON_Status")
+    live_mqtt_enabled = _boolean(mqtt, "mqtt", "LiveMQTTEnabled")
+    live_mqtt_discovery = _boolean(mqtt, "mqtt", "LiveMQTTDiscovery", fallback=True)
+    live_backup_name = _optional_text(mqtt, "mqtt", "LiveBackupName")
+    live_heartbeat_seconds = _integer(mqtt, "mqtt", "LiveHeartbeatSeconds", fallback=60)
+    live_notify_start = _boolean(mqtt, "mqtt", "LiveNotifyStart")
+    live_notify_success = _boolean(mqtt, "mqtt", "LiveNotifySuccess", fallback=True)
+    live_notify_failure = _boolean(mqtt, "mqtt", "LiveNotifyFailure", fallback=True)
+    if not 10 <= live_heartbeat_seconds <= 3600:
+        raise ValueError("mqtt.LiveHeartbeatSeconds must be between 10 and 3600 seconds")
     use_home_assistant = _boolean(
         home_assistant,
         "home_assistant",
@@ -306,7 +322,7 @@ def load_app_config(config_path: str) -> AppConfig:
         "HomeAssistant_Available",
     )
 
-    if use_mqtt or mqtt_json_status:
+    if use_mqtt or mqtt_json_status or live_mqtt_enabled:
         if not broker_address:
             raise ValueError(
                 "mqtt.broker_address must be configured when MQTT publishing is enabled"
@@ -384,4 +400,11 @@ def load_app_config(config_path: str) -> AppConfig:
         mqtt_message=mqtt_message,
         mqtt_json_topic=mqtt_json_topic,
         home_assistant_available=home_assistant_available,
+        live_mqtt_enabled=live_mqtt_enabled,
+        live_mqtt_discovery=live_mqtt_discovery,
+        live_backup_name=live_backup_name,
+        live_heartbeat_seconds=live_heartbeat_seconds,
+        live_notify_start=live_notify_start,
+        live_notify_success=live_notify_success,
+        live_notify_failure=live_notify_failure,
     )

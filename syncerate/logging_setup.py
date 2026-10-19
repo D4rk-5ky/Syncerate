@@ -10,7 +10,7 @@ from .config import CONFIG_SECTIONS
 from .models import AppConfig, ReplicationSummary, RunContext
 
 
-def create_run_context(app_config: AppConfig) -> RunContext:
+def create_run_context(app_config: AppConfig, *, suffix: str = "") -> RunContext:
     """Create the timestamp and optional log paths for this invocation."""
 
     timestamp = datetime.datetime.now().strftime(app_config.datetime_format)
@@ -27,7 +27,7 @@ def create_run_context(app_config: AppConfig) -> RunContext:
     destination = app_config.log_destination
     assert destination is not None
 
-    prefix = destination + "Syncerate-" + timestamp
+    prefix = destination + "Syncerate-" + timestamp + suffix
     return RunContext(
         timestamp=timestamp,
         log_destination=destination,
@@ -218,17 +218,45 @@ def format_final_run_summary(
             )
         lines.append("")
 
-    if replication_summary is not None and not dry_run:
-        transfer_text = (
-            format_transfer_size(replication_summary.transferred_bytes)
-            if replication_summary.transfer_measurement_complete
-            else "Unavailable"
-        )
+    if not dry_run:
+        if replication_summary is not None:
+            transfer_text = (
+                format_transfer_size(replication_summary.transferred_bytes)
+                if replication_summary.transfer_measurement_complete
+                else "Unavailable"
+            )
+        else:
+            # A preflight failure cannot establish how much ZFS data moved.
+            transfer_text = "Unavailable"
         lines.append(f"Data transferred :   {transfer_text}")
-        lines.append("")
 
+    total_datasets = (
+        planned_dataset_count if dry_run else
+        replication_summary.total_datasets if replication_summary is not None else None
+    )
+    if total_datasets is None:
+        lines.append("Total datasets   :   Unavailable")
+    else:
+        lines.append(f"Total datasets   :   {total_datasets}")
+    lines.append(
+        f"Completed datasets :   {0 if dry_run or replication_summary is None else replication_summary.completed_datasets}"
+    )
+    lines.append(
+        f"Failed datasets  :   {0 if dry_run or replication_summary is None else replication_summary.failed_datasets}"
+    )
+    lines.append("")
     lines.append(f"Total runtime   :   {format_runtime_duration(elapsed_seconds)}")
-    return "\n".join(lines)
+
+    # Put one blank line between every populated summary line, including
+    # multiline backup comments. Preserve existing empty lines so deliberate
+    # spacing inside user-provided comments is not discarded. Because email
+    # and logging use this formatter, both get exactly the same layout.
+    spaced_lines: list[str] = []
+    for line in lines:
+        if line and spaced_lines and spaced_lines[-1]:
+            spaced_lines.append("")
+        spaced_lines.append(line)
+    return "\n".join(spaced_lines)
 
 
 def log_final_run_summary(

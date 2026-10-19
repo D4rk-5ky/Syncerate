@@ -1,0 +1,59 @@
+# OPTIONAL EXAMPLES, not automatically installed. Copy individual automation
+# blocks into Home Assistant Automations YAML, and change notify.pushover to
+# your own Pushover notification service. Enable LiveMQTTEnabled=true first.
+# HA MQTT integration with Discovery must be configured and MQTT connected.
+# Trigger 1: any Syncerate failed/completed/rejected per-backup event.
+# A duplicate rejection DOES NOT change the active run's status/result topics.
+- alias: "Syncerate - MQTT failure event to Pushover"
+  description: "Send a Pushover for any failed or duplicate-rejected backup"
+  mode: queued
+  triggers:
+    - trigger: mqtt
+      topic: "syncerate/+/events"
+  conditions:
+    - condition: template
+      value_template: >-
+        {{ trigger.payload_json.event | default('') in ['failed', 'duplicate_rejected'] }}
+  actions:
+    - action: notify.pushover
+      data:
+        title: "Syncerate backup failure"
+        message: >-
+          {{ trigger.payload_json.backup_name | default('Unknown backup') }}:
+          {{ trigger.payload_json.event }}
+          (exit {{ trigger.payload_json.exit_code | default('unknown') }}).
+          {{ trigger.payload_json.error | default('') }}
+
+# Trigger 2: heartbeat disappeared ONLY while the backup was RUNNING.
+# IMPORTANT: after normal success/failure, the non-retained status also expires;
+# don't alert merely because a finished backup later becomes unavailable.
+# Replace ENTITY_ID with the discovered backup's actual status sensor entity_id.
+- alias: "Syncerate - running heartbeat missing"
+  mode: single
+  triggers:
+    - trigger: state
+      entity_id: sensor.syncerate_REPLACE_WITH_REAL_BACKUP_ID_status
+      from: "running"
+      to: "unavailable"
+  actions:
+    - action: notify.pushover
+      data:
+        title: "Syncerate heartbeat lost"
+        message: >-
+          Live status for {{ trigger.to_state.name }} stopped updating while
+          running. Check host, broker, network and Syncoid; the result is not
+          automatically considered a confirmed backup failure.
+
+# Trigger 3: long-running backup. Replace ENTITY_ID and tune 4-hour threshold.
+- alias: "Syncerate - backup running more than four hours"
+  mode: single
+  triggers:
+    - trigger: state
+      entity_id: sensor.syncerate_REPLACE_WITH_REAL_BACKUP_ID_status
+      to: "running"
+      for: "04:00:00"
+  actions:
+    - action: notify.pushover
+      data:
+        title: "Syncerate long-running backup"
+        message: "{{ trigger.to_state.name }} has been running for over four hours."

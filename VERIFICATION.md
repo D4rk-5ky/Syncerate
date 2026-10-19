@@ -1,75 +1,21 @@
-# Syncerate 0.4.42 verification
+# Syncerate 0.4.51 verification
 
-Baseline used for this release: supplied `Syncerate-0.4.41.zip`.
+## Baseline, scope, and package preservation
 
-Baseline archive SHA-256:
+Baseline: supplied `Syncerate-0.4.50.zip`, **46 regular files**. This release adds the optional independent per-backup live MQTT/HA monitor, per-TOML identity/display label, heartbeat-based liveness, retained last-result topic, HA Discovery, configurable optional events and Home Assistant/Pushover alert examples. Existing legacy mail/MQTT, replication, safety and locking semantics have not been intentionally changed. All 46 original archive file paths and required contents are accounted for in `PACKAGE_MANIFEST.json`; no original files are deleted. There are four new files: `syncerate/live_status.py`, `tests/test_live_status.py`, `tests/test_live_app_integration.py`, and `config/HomeAssistant-Live-Backup-Alerts.yaml`.
 
-```text
-76d3ce251c358536540e8add5fda1cffa0a2277087ef13794555438d6f995274
-```
+## Checks performed
 
-## Runtime-category move verified
+- **176 total passing unit/integration tests.** All **123 non-Syncoid tests** passed, run in their component suites; includes nine live-status tests, four new app-lifecycle tests, and the unchanged application, CLI, locking, configuration, mail/MQTT, packaging, dataset-validation, system-action tests. All **53 Syncoid-runner tests** passed when run individually. The original 20-second limit caused six subprocess timeouts, but **all six passed on retry with a 90-second timeout**, including the out-of-space, missing dataset, credential, and resume cases. The combined Pexpect test suite did not complete as one uninterrupted run; no such result is claimed.
+- New tests cover canonical TOML path and hostname ID uniqueness, symlink aliases, retained HA Discovery, non-retained live status/events, `expire_after` liveness, independent retained last result, per-pair dataset summary updates, success/failure/dry-run lifecycle, best-effort Paho import failure, separate optional start/completion/failure event toggles, per-TOML duplicate event isolation, and broker-only configuration validation without legacy MQTT.
+- Real source CLI checks with temporary data/configs and `LiveMQTTEnabled=true`: `--dry-run` returned **0** with no `paho-mqtt` installed (warning only), and an invalid final dataset name returned **1**, preserved the mismatch report and started no transfer. One more real dry-run with fake dataset files confirmed existing preflight/lock semantics. Unit tests mock the Paho client and notifications; they do not assert real broker delivery.
+- All **28** application/test Python source files parsed/compiled in memory successfully; `bash -n build-pyinstaller.sh` succeeded. Source `python -B Syncerate.py --version` reported `Syncerate.py 0.4.51`; `--help` enumerated the CLI flags and mentioned the live monitor. The shipped TOML contains exactly **38** options and matches the loader's schema; all Boolean/integer keys have validation. The optional Home Assistant automation YAML parsed as three example automations.
+- `README.md` contains both of the requested disclaimer sections, explains current usage only, and describes all CLI switches and TOML options, MQTT retention, stale heartbeat behavior and the optional Home Assistant/Pushover automation templates. `VERSIONING.md` records the code changes, and `commented_code_map.md` explains functions/commands, including the new module and new tests.
+- The release ZIP's manifest records original and release SHA-256 hashes and Unix modes, excludes the manifest's self-hash, and is cross-checked against the original zip. All original files are present. Python caches, bytecode, generated `.toml.lock`, staging and temporary files are excluded.
 
-- `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` moved from `[syncoid]` to `[runtime]` in `CONFIG_OPTION_LOCATIONS`, `load_app_config()`, the shipped example, README, tests, and code map.
-- `[syncoid]` now owns only `SourceListPath`, `DestListPath`, and `SyncoidCommand`.
-- `[runtime]` now owns `DryRun`, `SystemAction`, `ContinueOnMissingDataset`, `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`.
-- The shipped `config/example-Syncerate.toml` uses the requested explicit values: `ContinueWithoutResume = false`, `RetryBrokenPipe = true`, `BrokenPipeRetryCount = 1`, and `BrokenPipeRetryWaitSeconds = 10`.
-- Fallback behavior when options are omitted is unchanged: `ContinueWithoutResume` defaults to `true`, `RetryBrokenPipe` defaults to `false`, retry count defaults to `1`, and retry wait defaults to `10`.
-- A migration guard rejects these four names when left under `[syncoid]` and reports that they moved to `[runtime]`, preventing old-category values from being silently ignored.
-- `ContinueOnMissingDataset` remains under `[runtime]`, still defaults to `false`, and retains its existing failure-reporting behavior.
+## Environment and functional limitations
 
-## Configuration/documentation audits
-
-- The authoritative schema contains exactly 31 supported settings.
-- The shipped TOML example contains exactly the same 31 settings in the same assigned tables.
-- README mentions every supported configuration option name.
-- All 32 fenced TOML examples in README parse successfully with `tomllib`.
-- AST-to-code-map audit found 242 production/test class/function definitions and all 242 are represented in `commented_code_map.md`.
-
-## Functional checks
-
-- `python3 -m compileall -q Syncerate.py syncerate tests` passed.
-- `bash -n build_pyinstaller.sh` passed.
-- `python3 Syncerate.py --version` reports `Syncerate.py 0.4.42`.
-- `python3 Syncerate.py --help` works and continues to document `--conf/-c`, `--dry-run`, and `--version`.
-- Importing `Syncerate` and `syncerate` is silent and returns success.
-- Executable modes remain set on `Syncerate.py`, `build_pyinstaller.sh`, and `dist/Syncerate`.
-
-## Regression suite
-
-All **133/133** regression tests passed:
-
-- 23 `test_app_and_logging` tests;
-- 28 `test_config` tests;
-- 8 `test_datasets` tests;
-- 20 `test_notifications` tests;
-- 3 `test_packaging` tests;
-- 48 `test_syncoid_runner` tests;
-- 3 `test_system_actions` tests.
-
-The Syncoid process tests were run in bounded groups. The first two 16-test groups passed. The final 16-test group reached the execution-time ceiling after 13 tests had completed without failure; the final four tests were then rerun separately and all passed, overlapping one already-completed test so every test in the module was explicitly covered.
-
-## Package comparison and cleanup
-
-- Baseline regular project files (excluding generated bytecode/cache): 41.
-- Release regular project files (excluding generated bytecode/cache): 41.
-- No project file is intentionally added or removed for this release.
-- Required original assets remain preserved, including Home Assistant examples/screenshots and the existing standalone executable.
-- Generated `__pycache__`, `.pyc`, `.pyo`, build-cache, and temporary verification files are removed before packaging.
-- `PACKAGE_MANIFEST.json` is regenerated against the supplied 0.4.41 archive/tree using SHA-256 hashes and Unix modes; its own release hash is excluded to avoid self-reference.
-
-## Standalone executable limitation
-
-The preserved `dist/Syncerate` executable still reports:
-
-```text
-Syncerate 0.4.29
-```
-
-It is an original project file and is **not** a 0.4.42 executable. In this verification environment, Pexpect is available, but PyInstaller and Paho MQTT are not installed. A truthful 0.4.42 standalone executable therefore could not be rebuilt here. Use the 0.4.42 Python source on Python 3.11+ or rebuild `dist/Syncerate` on a compatible Linux system using `build_pyinstaller.sh` and `requirements-build.txt`.
-
-## What was not fully tested
-
-No live ZFS pool, real Syncoid replication, remote SSH host, production MQTT broker/Home Assistant instance, local mail server/delivery path, or real post-success `SystemAction` was exercised. Those paths are covered by regression tests using controlled fake child processes and mocked/stubbed external integrations.
-
-The PyInstaller build itself was not run because required build modules are unavailable in this environment. Platform-specific behavior of a newly rebuilt frozen executable therefore remains to be verified on the target build host.
+- **Not tested against live OpenZFS/Syncoid replication, SSH, an actual MQTT broker, live Home Assistant Discovery, or real mail/Pushover delivery.** Paho MQTT is not installed in this environment: live MQTT on real equipment requires `paho-mqtt` 2.1.0 or equivalent compatible 2.x, with the broker configured and available. The unit tests use fake clients/transports instead.
+- Heartbeat-based HA `expire_after` detection can also indicate broker/network failure, not necessarily a crashed backup. After normal completion, expiring the old live sensors is expected; the retained last-result sensor records the final result. A power outage/SIGKILL cannot guarantee a final result publication. Current transferred bytes come from **finished Syncoid attempts**, not per-byte live streaming. Short jobs can finish before the background MQTT client connects; they attempt a bounded best-effort delivery and may lose events when the broker is down.
+- The persistent per-TOML POSIX flock is unchanged. Different TOML paths targeting the same ZFS destination are independent and could still conflict; separate host locking/shared network-mount behavior has not been tested. Do not delete a live `.toml.lock` inode.
+- The shipped `dist/Syncerate` executable is preserved from the original source ZIP and **still reports 0.4.29**. It does **not** contain the new live monitoring nor prior 0.4.50 fixes. Build inputs and version checks were updated to 0.4.51, but a real PyInstaller executable was not built because optional build dependencies were unavailable here. Run the 0.4.51 Python source, or install `requirements-build.txt` and rebuild using `./build-pyinstaller.sh` on a compatible Linux host.

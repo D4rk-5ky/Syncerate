@@ -2,12 +2,16 @@
 
 import logging
 import time
+import os
+import uuid
 from typing import Optional, Sequence
 
 from .cli import parse_arguments
 from .config import load_app_config
-from .datasets import load_dataset_pairs
+from .datasets import load_dataset_pairs, format_dataset_validation_report
 from .errors import EXIT_DATASET_MISSING, EXIT_OK, EXIT_SCRIPT_ERROR, SyncerateError
+from .locking import BackupLock
+from .live_status import LiveBackupMonitor, publish_duplicate_event
 from .logging_setup import (
     create_run_context,
     get_console_logger,
@@ -255,6 +259,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     replication_summary: Optional[ReplicationSummary] = None
     dataset_pairs: Optional[list[DatasetPair]] = None
     dry_run = False
+    backup_lock: Optional[BackupLock] = None
+    live_monitor: Optional[LiveBackupMonitor] = None
     started_at = time.monotonic()
 
     try:
@@ -270,11 +276,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 kind="script",
             ) from exc
 
+        # This must precede logging, dataset processing, SSH, and Syncoid.
+        # Only the owner holds the lock until all notifications have finished.
+        backup_lock = BackupLock.acquire(app_config.config_path)
+
         run_context = create_run_context(app_config)
         logger = get_logger(run_context)
+        if app_config.live_mqtt_enabled:
+            live_monitor = LiveBackupMonitor(app_config, logger, dry_run=dry_run)
+            live_monitor.start()
 
         log_startup_configuration(app_config, run_context, logger)
         dataset_pairs = load_dataset_pairs(app_config, logger)
+        # Keep this object across runner exceptions so the failure email can
+        # report completed, failed and untouched dataset pairs accurately.
+        replication_summary = ReplicationSummary(total_datasets=len(dataset_pairs))
+        if live_monitor is not None:
+            live_monitor.planned(len(dataset_pairs))
 
         if dry_run:
             report_text = format_dry_run_report(app_config, dataset_pairs)
@@ -298,6 +316,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 dry_run_report=report_text,
                 dry_run_dataset_pairs=dataset_pairs,
             )
+            if live_monitor is not None:
+                live_monitor.finish("success", EXIT_OK, summary=replication_summary)
             return EXIT_OK
 
         password = resolve_password(app_config, logger)
@@ -310,6 +330,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 password,
                 logger,
                 ssh_agent_session=ssh_agent_session,
+                summary=replication_summary,
+                **({"progress_callback": live_monitor.progress} if live_monitor is not None else {}),
             )
         if replication_summary.has_missing_dataset_failure:
             failure_details = format_missing_dataset_failures(replication_summary)
@@ -328,17 +350,46 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             replication_summary,
             runtime_seconds=runtime_seconds,
         )
+        if live_monitor is not None:
+            live_monitor.finish("success", EXIT_OK, summary=replication_summary)
         return EXIT_OK
 
     except SyncerateError as error:
+        if error.kind in ("locked", "lock_error") and app_config is not None:
+            # Never open the active run's timestamped logs in "w" mode.
+            # Rejected launches need isolated .log/.err files for failure mail.
+            try:
+                suffix = f"-lock-rejected-{os.getpid()}-{uuid.uuid4().hex}"
+                run_context = create_run_context(app_config, suffix=suffix)
+                logger = get_logger(run_context)
+            except Exception:
+                # Even if per-run log files cannot be opened, use the normal
+                # no-logging mail path rather than silently suppressing mail.
+                run_context = RunContext(
+                    timestamp="", log_destination=None,
+                    log_file=None, error_file=None, output_file=None,
+                )
+                logger = get_console_logger()
         if logger is None:
             logger = get_console_logger()
 
         log_syncerate_error(error, logger)
+        # An invalid dataset list is a preflight failure: all unattempted
+        # pairs are still unattempted, not failed replication operations.
+        if error.dataset_validation_report is not None:
+            replication_summary = ReplicationSummary(
+                total_datasets=error.dataset_validation_report.source_count
+            )
         runtime_seconds = time.monotonic() - started_at
-        completed_failure_summary = (
-            replication_summary if error.kind == "dataset_missing" else None
-        )
+        completed_failure_summary = replication_summary
+        if (
+            completed_failure_summary is not None
+            and completed_failure_summary.failed_datasets
+            and error.kind != "dataset_missing"
+        ):
+            # A fatal child error can interrupt the pv stream before it returns
+            # its final counter. Do not label a partial byte count as complete.
+            completed_failure_summary.transfer_measurement_complete = False
         log_final_run_summary(
             app_config,
             runtime_seconds,
@@ -368,6 +419,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 len(dataset_pairs) if dry_run and dataset_pairs is not None else None
             ),
         )
+        # Keep the actionable mismatches as the last terminal/log output,
+        # after the run summary and any notification delivery diagnostics.
+        if live_monitor is not None:
+            live_monitor.finish("failed", error.exit_code, error=error.message,
+                                summary=completed_failure_summary)
+        elif error.kind in ("locked", "lock_error") and app_config is not None:
+            publish_duplicate_event(app_config, logger, reason=error.message,
+                                    exit_code=error.exit_code)
+        if error.dataset_validation_report is not None:
+            logger.error("")
+            logger.error("========== DATASET VALIDATION FAILURE ==========")
+            for line in format_dataset_validation_report(error.dataset_validation_report).splitlines():
+                logger.error("%s", line)
+            logger.error("========== END DATASET VALIDATION FAILURE ==========")
         return error.exit_code
 
     except Exception:
@@ -382,10 +447,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             kind="script",
         )
         runtime_seconds = time.monotonic() - started_at
+        if replication_summary is not None and replication_summary.failed_datasets:
+            replication_summary.transfer_measurement_complete = False
         log_final_run_summary(
             app_config,
             runtime_seconds,
             logger,
+            replication_summary,
             dry_run=dry_run,
             planned_dataset_count=(
                 len(dataset_pairs) if dry_run and dataset_pairs is not None else None
@@ -395,6 +463,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             unexpected_error,
             app_config,
             logger,
+            replication_summary=replication_summary,
             dry_run=dry_run,
         )
         send_error_mail(
@@ -403,9 +472,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             run_context,
             logger,
             runtime_seconds=runtime_seconds,
+            replication_summary=replication_summary,
             dry_run=dry_run,
             dry_run_dataset_count=(
                 len(dataset_pairs) if dry_run and dataset_pairs is not None else None
             ),
         )
+        if live_monitor is not None:
+            live_monitor.finish("failed", EXIT_SCRIPT_ERROR, error=unexpected_error.message,
+                                summary=replication_summary)
         return EXIT_SCRIPT_ERROR
+
+    finally:
+        if live_monitor is not None:
+            live_monitor.stop()
+        # Kernel closes lock FDs on crash/kill; normal completion keeps the
+        # lock through error reporting, mail, MQTT, and SystemAction.
+        if backup_lock is not None:
+            backup_lock.release()

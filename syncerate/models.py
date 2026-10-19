@@ -41,6 +41,13 @@ class AppConfig:
     mqtt_message: str = ""
     mqtt_json_topic: str = ""
     home_assistant_available: str = ""
+    live_mqtt_enabled: bool = False
+    live_mqtt_discovery: bool = True
+    live_backup_name: str = ""
+    live_heartbeat_seconds: int = 60
+    live_notify_start: bool = False
+    live_notify_success: bool = True
+    live_notify_failure: bool = True
 
     @property
     def mail_enabled(self) -> bool:
@@ -75,6 +82,26 @@ class DatasetPair:
     source: str
     destination: str
     extra_arguments: tuple[str, ...]
+
+@dataclass(frozen=True)
+class DatasetComparison:
+    """Preflight comparison for one aligned line, including an unmatched line."""
+
+    line_number: int
+    source: Optional[str]
+    destination: Optional[str]
+    reason: str = ""
+
+
+@dataclass
+class DatasetValidationReport:
+    """Every match and mismatch from a pre-transfer source/destination audit."""
+
+    source_count: int
+    destination_count: int
+    matches: list[DatasetComparison] = field(default_factory=list)
+    mismatches: list[DatasetComparison] = field(default_factory=list)
+
 
 @dataclass
 class SyncoidAttemptResult:
@@ -121,6 +148,18 @@ class ReplicationSummary:
     missing_dataset_failures: list[MissingDatasetFailure] = field(default_factory=list)
     transferred_bytes: int = 0
     transfer_measurement_complete: bool = True
+    # None means the source/destination list could not be validated yet.
+    total_datasets: Optional[int] = None
+    # A retried dataset counts once. An attempted pair that did not complete
+    # successfully is failed; untouched later pairs are not counted as failed.
+    attempted_datasets: int = 0
+    completed_datasets: int = 0
+
+    @property
+    def failed_datasets(self) -> int:
+        """Count attempted pairs without a successful replication outcome."""
+
+        return max(0, self.attempted_datasets - self.completed_datasets)
 
     @property
     def has_broken_pipe_warning(self) -> bool:

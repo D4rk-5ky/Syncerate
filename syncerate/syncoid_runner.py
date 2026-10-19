@@ -6,6 +6,7 @@ import os
 import pwd
 import re
 import shlex
+import signal
 import shutil
 import stat
 import subprocess
@@ -13,7 +14,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from getpass import getpass
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import pexpect
 
@@ -23,6 +24,7 @@ from .errors import (
     EXIT_CONNECTION_TIMEOUT,
     EXIT_LIST_ERROR,
     EXIT_OK,
+    EXIT_OUT_OF_SPACE,
     EXIT_PASSWORD_DENIED,
     EXIT_REPEATED_PATTERN,
     EXIT_SCRIPT_ERROR,
@@ -79,6 +81,18 @@ _ZFS_MISSING_DATASET_OR_POOL_TEXT = (
 _ZFS_MISSING_DATASET_OR_POOL_RE = re.compile(
     _ZFS_MISSING_DATASET_OR_POOL_TEXT, re.IGNORECASE
 )
+# Match definitive, non-warning ZFS ENOSPC diagnostics from receive/create/write.
+# A full line boundary prevents explanatory/debug text or partial output from
+# triggering a destructive interruption of a still-healthy replication.
+_ZFS_OUT_OF_SPACE_TEXT = (
+    r"[ \t]*(?:"
+    r"cannot receive(?: (?:resume|incremental|new filesystem|full) stream)?"
+    r"|cannot (?:create|write to) " + _ZFS_NAME
+    + r"):[ \t]*(?:out of space|no space left on device)[ \t]*"
+)
+_ZFS_OUT_OF_SPACE_RE = re.compile(_ZFS_OUT_OF_SPACE_TEXT, re.IGNORECASE)
+
+
 _SYNCOID_MISSING_DATASET_WARNING_RE = re.compile(
     r"WARN(?:ING)?[ \t]*:?[ \t]+Skipping dataset \(dataset no longer exists\):"
     r"[ \t]+[^@#\r\n]+\.\.\.[ \t]*", re.IGNORECASE
@@ -303,6 +317,67 @@ def log_failure_output_lines(
     logger.error("%s", heading)
     for line in physical_lines:
         logger.error("%s", line)
+
+def fail_out_of_space(child: Any, logger: logging.Logger, diagnostic: str) -> None:
+    """Stop the failed Syncoid pipeline and raise a fatal, not-retriable error.
+
+    Pexpect launches Syncoid in its own session.  If that isolation is still
+    verifiable, signal *only* that process group so Syncoid's mbuffer/ssh/zfs
+    descendants cannot outlive the failed receive.  Otherwise fall back to
+    terminating only the known child, never an unrelated process group.
+    """
+
+    diagnostic = diagnostic.strip()
+    logger.error("Fatal ZFS out-of-space error: %s", diagnostic)
+    log_failure_output_lines(
+        logger,
+        safe_text(getattr(child, "before", "")),
+        heading="Syncoid/ZFS/mbuffer output leading up to the out-of-space failure:",
+    )
+    captured_output = safe_text(getattr(child, "before", ""))
+    own_group = False
+    child_pid = getattr(child, "pid", None)
+    if isinstance(child_pid, int) and child_pid > 0:
+        try:
+            own_group = os.getpgid(child_pid) == child_pid and os.getsid(child_pid) == child_pid
+        except ProcessLookupError:
+            # Syncoid may have exited between matching the line and cleanup.
+            pass
+        except OSError:
+            logger.exception("Could not verify Syncoid process-group isolation")
+
+    if own_group:
+        try:
+            os.killpg(child_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            logger.exception("Could not signal the failed Syncoid process group")
+
+    try:
+        child.terminate(force=True)
+    except Exception:
+        logger.exception("Could not terminate the out-of-space Syncoid child")
+
+    if own_group:
+        # TERM can leave child pipelines behind even after Syncoid has exited.
+        # The verified, dedicated Pexpect session is the only group targeted.
+        try:
+            os.killpg(child_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            logger.exception("Could not finish cleaning up the failed Syncoid process group")
+
+    close_child_logfile(child, logger)
+    raise SyncerateError(
+        f"ZFS receive/write failed because the destination ran out of space: {diagnostic}",
+        EXIT_OUT_OF_SPACE,
+        kind="known_child",
+        child_before=captured_output,
+        child_warning=diagnostic,
+    )
+
 
 def send_secret(
     child: Any,
@@ -942,7 +1017,8 @@ def ssh_command(
     PATTERN_BROKEN_PIPE = 10
     PATTERN_ZFS_MISSING_DATASET_OR_POOL = 11
     PATTERN_PASSWORD = 12
-    PATTERN_MISSING_DATASET_FINISH_TIMEOUT = 13
+    PATTERN_ZFS_OUT_OF_SPACE = 13
+    PATTERN_MISSING_DATASET_FINISH_TIMEOUT = 14
 
     # Match a warning prefix before any prompt/error on the same line, then
     # consume that entire line. Warnings cannot be mistaken for nested errors.
@@ -960,6 +1036,7 @@ def ssh_command(
         r"(?i)broken pipe",
         r"(?im)(?:^|[\r\n])" + _ZFS_MISSING_DATASET_OR_POOL_TEXT + r"(?=[\r\n])",
         r"(?im)(?:^|[\r\n])[^\r\n]*\bpassword:\s*$",
+        r"(?im)(?:^|[\r\n])" + _ZFS_OUT_OF_SPACE_TEXT + r"(?=[\r\n])",
         pexpect.TIMEOUT,
     ]
 
@@ -1104,9 +1181,11 @@ def ssh_command(
                     heading="Additional Syncoid/ZFS/mbuffer output before the failed attempt exited:",
                 )
 
-            # A final diagnostic need not have a newline. Match the entire
-            # remaining line, using the same narrow rules as the live matcher.
+            # A final diagnostic need not have a newline. Preserve fatal
+            # ENOSPC even if Syncoid exits before emitting its line ending.
             for line in safe_text(child.before).splitlines():
+                if _ZFS_OUT_OF_SPACE_RE.fullmatch(line):
+                    fail_out_of_space(child, logger, line)
                 if _ZFS_MISSING_DATASET_OR_POOL_RE.fullmatch(line):
                     missing_dataset_or_pool_detected = True
                     message = line.strip()
@@ -1240,6 +1319,11 @@ def ssh_command(
                 )
             continue
 
+        elif index == PATTERN_ZFS_OUT_OF_SPACE:
+            # This is fatal regardless of RetryBrokenPipe, resume recovery,
+            # or ContinueOnMissingDataset. Never start the next dataset.
+            fail_out_of_space(child, logger, safe_text(child.after))
+
         elif index == PATTERN_PASSWORD:
             if password is None:
                 die(
@@ -1312,12 +1396,20 @@ def run_replications(
     password: Optional[str],
     logger: logging.Logger,
     ssh_agent_session: Optional[SSHAgentSession] = None,
+    *,
+    summary: Optional[ReplicationSummary] = None,
+    progress_callback: Optional[Callable[[str, DatasetPair, ReplicationSummary], None]] = None,
 ) -> ReplicationSummary:
-    """Run all dataset pairs and return accumulated warnings/deferred failures."""
+    """Run pairs and update shared statistics even if a fatal error interrupts the list."""
 
-    summary = ReplicationSummary()
+    if summary is None:
+        summary = ReplicationSummary()
+    summary.total_datasets = len(dataset_pairs)
 
     for dataset_pair in dataset_pairs:
+        summary.attempted_datasets += 1
+        if progress_callback is not None:
+            progress_callback("started", dataset_pair, summary)
         syncoid_execute = build_syncoid_command(
             app_config.syncoid_command,
             dataset_pair.source,
@@ -1371,6 +1463,8 @@ def run_replications(
                 summary.transfer_measurement_complete
                 and result.transfer_measurement_complete
             )
+            if progress_callback is not None:
+                progress_callback("updated", dataset_pair, summary)
 
             if result.broken_pipe_detected:
                 child.close()
@@ -1430,6 +1524,8 @@ def run_replications(
                     messages=result.missing_dataset_or_pool_messages,
                 )
                 summary.missing_dataset_failures.append(failure)
+                if progress_callback is not None:
+                    progress_callback("failed", dataset_pair, summary)
 
                 logger.error("")
                 logger.error("----------")
@@ -1498,6 +1594,11 @@ def run_replications(
                     logger=logger,
                 )
 
+            # Only a genuine zero-exit pair counts as completed. Missing dataset
+            # skips, retries and all fatal exits leave it in the failed count.
+            summary.completed_datasets += 1
+            if progress_callback is not None:
+                progress_callback("completed", dataset_pair, summary)
             break
 
     return summary

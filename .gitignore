@@ -24,9 +24,13 @@ __pycache__/
 .ruff_cache/
 
 # Build and packaging caches
+.build/
 build/
-dist/
 *.egg-info/
+
+# dist/ is delivery-only: keep its README, ignore generated binaries/output.
+dist/*
+!dist/README.md
 
 # Temporary files
 *.tmp
@@ -36,3 +40,6 @@ dist/
 # Local editor files
 .vscode/
 .idea/
+
+# Kernel-backed per-TOML safelock files; never remove while running
+*.toml.lock

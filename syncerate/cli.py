@@ -11,7 +11,7 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Replicate matching source/destination ZFS dataset pairs "
+            "Prevalidate every source/destination dataset name before replicating matched ZFS pairs "
             "sequentially with Syncoid."
         ),
         epilog=(
@@ -31,7 +31,14 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         required=True,
         help=(
             "Path to the required Syncerate TOML configuration file. "
-            "Relative paths are resolved from the current working directory."
+            "Relative paths are resolved from the current working directory. "
+            "An exclusive .toml.lock file prevents concurrent runs of the same "
+            "configuration; a locked backup exits 13, lock setup failure exits 14. "
+            "All pairs (including the final entry) must have matching final dataset "
+            "names, otherwise nothing transfers (exit 1) and matching/mismatching "
+            "pairs are reported in failure mail, MQTT and terminal. "
+            "Optional mqtt.LiveMQTTEnabled publishes independent HA Discovery, "
+            "live heartbeats and retained last results without affecting replication."
         ),
     )
     parser.add_argument(
@@ -41,6 +48,7 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "Validate configuration and dataset pairing, then print/log the exact "
             "planned Syncoid commands without starting Syncoid, prompting for "
             "credentials, starting a private ssh-agent, or running SystemAction. "
+            "This still acquires the same per-TOML lock as a real run. "
             "This forces dry-run on even when runtime.DryRun = false in the config. "
             "Configured success notifications follow SendMailOnSuccess and "
             "SendMQTTOnSuccess; configured failures still notify normally."
