@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from syncerate.app import main, successfull_run
-from syncerate.errors import SyncerateError
+from syncerate.errors import EXIT_OUT_OF_SPACE, SyncerateError
 from syncerate.models import DatasetPair, MissingDatasetFailure, ReplicationSummary
 from syncerate.notifications import (
     MailTo,
@@ -93,6 +93,55 @@ class NotificationTests(unittest.TestCase):
             self.assertIn("pool/nopool -> backup/nopool", body)
             self.assertIn("ContinueOnMissingDataset was enabled", body)
             self.assertIn("exit code 8", body)
+
+    @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
+    @mock.patch("syncerate.app.SystemAction")
+    def test_resumed_receive_out_of_space_reports_failure_mail_and_mqtt_even_with_success_off(
+        self, action, mail
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            visited = directory / 'visited'
+            source, dest = directory / 'source', directory / 'destination'
+            source.write_text('pool/data\npool/later\n')
+            dest.write_text('backup/data\nbackup/later\n')
+            script = write_executable(
+                directory / 'fake.py',
+                'import pathlib, sys, time\n'
+                f"with pathlib.Path({str(visited)!r}).open('a') as file: file.write(sys.argv[1] + '\\n')\n"
+                'if sys.argv[1] == "pool/data":\n'
+                '    print("INFO: Resuming interrupted zfs send/receive", flush=True)\n'
+                '    print("mbuffer: warning: HOME environment variable not set - unable to find defaults file", flush=True)\n'
+                '    print("cannot receive resume stream: out of space", flush=True)\n'
+                '    time.sleep(30)\n',
+            )
+            cfg = self.mqtt_config(
+                source_list_path=str(source), destination_list_path=str(dest),
+                syncoid_command=f'{shlex.quote(script)} SourceDataSet DestDataSet',
+                mail_option='user@example.test', use_mqtt=True,
+                send_mail_on_success=False, send_mqtt_on_success=False,
+                continue_on_missing_dataset=True, retry_broken_pipe=True,
+                system_option='must-not-run',
+            )
+            with mock.patch('syncerate.app.load_app_config', return_value=cfg):
+                self.assertEqual(main(['-c', 'mocked.toml']), EXIT_OUT_OF_SPACE)
+            self.assertEqual(visited.read_text().splitlines(), ['pool/data'])
+            action.assert_not_called()
+            self.publish.assert_called_once()
+            messages = self.publish.call_args.args[0]
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(messages[0]['topic'], 'syncerate/result/error')
+            self.assertFalse(messages[0]['retain'])
+            payload = json.loads(messages[0]['payload'])
+            self.assertEqual(payload['status'], 'failure')
+            self.assertFalse(payload['success'])
+            self.assertEqual(payload['exit_code'], EXIT_OUT_OF_SPACE)
+            self.assertIn('out of space', payload['error'])
+            self.assertIn('cannot receive resume stream: out of space', payload['stderr'])
+            mail.assert_called_once()
+            subject, body = mail.call_args.args[:2]
+            self.assertIn('ZFS destination out of space', subject)
+            self.assertIn('cannot receive resume stream: out of space', body)
 
     def test_error_publish_routing_ignores_success_switch(self):
         error = SyncerateError("connection refused", 7, child_warning="SSH detail")
@@ -272,7 +321,11 @@ class NotificationTests(unittest.TestCase):
             header,
         )
         self.assertIn("Backup comment  :   First line", header)
-        self.assertIn("Second line\n\nTotal runtime   :   00:01:02.345", header)
+        self.assertIn(
+            "Second line\n\nData transferred :   Unavailable\n"
+            "Total datasets   :   Unavailable\nCompleted datasets :   0\n"
+            "Failed datasets  :   0\n\nTotal runtime   :   00:01:02.345", header
+        )
 
     def test_run_summary_email_header_includes_transferred_size(self):
         cfg = make_config(backup_title="Nightly backup")
@@ -280,9 +333,105 @@ class NotificationTests(unittest.TestCase):
         header = run_summary_header_text(cfg, 62.345, summary)
         self.assertIn("Data transferred :   2.00 GB", header)
         self.assertIn(
-            "Data transferred :   2.00 GB\n\nTotal runtime   :   00:01:02.345",
+            "Data transferred :   2.00 GB\nTotal datasets   :   Unavailable\n"
+            "Completed datasets :   0\nFailed datasets  :   0\n\n"
+            "Total runtime   :   00:01:02.345",
             header,
         )
+
+    @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
+    def test_failure_mail_has_counts_then_error_and_inline_attached_logs(self, send_mail_mock):
+        from syncerate.models import RunContext
+        with tempfile.TemporaryDirectory() as td:
+            directory = Path(td)
+            log_file = directory / 'syncerate.log'
+            error_file = directory / 'syncerate.err'
+            output_file = directory / 'syncerate.out'
+            log_file.write_text('INFO: prior operation\n', encoding='utf-8')
+            error_file.write_text('ERROR: failed to receive ZFS stream\n', encoding='utf-8')
+            output_file.write_text('cannot receive resume stream: out of space\n', encoding='utf-8')
+            context = RunContext('test', td, str(log_file), str(error_file), str(output_file))
+            cfg = make_config(mail_option='user@example.test')
+            summary = ReplicationSummary(total_datasets=3, attempted_datasets=2,
+                                         completed_datasets=1, transfer_measurement_complete=False)
+            send_error_mail(
+                SyncerateError('out of space', 12, kind='known_child'),
+                cfg, context, make_logger('failure-mail-order'),
+                runtime_seconds=65.321, replication_summary=summary,
+            )
+            send_mail_mock.assert_called_once()
+            subject, body, recipient, attachments = send_mail_mock.call_args.args
+            self.assertIn('out of space', subject)
+            self.assertEqual(recipient, 'user@example.test')
+            self.assertEqual(attachments, [str(log_file), str(error_file), str(output_file)])
+            ordered = [
+                'Data transferred :   Unavailable', 'Total datasets   :   3',
+                'Completed datasets :   1', 'Failed datasets  :   1',
+                'Total runtime   :   00:01:05.321',
+                'Failure reason: out of space', '.err file',
+                'failed to receive ZFS stream', '.out file',
+                'cannot receive resume stream: out of space',
+            ]
+            offsets = [body.index(value) for value in ordered]
+            self.assertEqual(offsets, sorted(offsets), body)
+
+    @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
+    def test_missing_dataset_failure_inlines_logs_and_attaches_files(self, send_mail_mock):
+        from syncerate.models import RunContext
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td)
+            log_file, err_file, out_file = (folder / name for name in ('run.log', 'run.err', 'run.out'))
+            log_file.write_text('overall application log\n')
+            err_file.write_text('source dataset does not exist\n')
+            out_file.write_text('syncoid captured output\n')
+            cfg = make_config(mail_option='user@example.test')
+            summary = ReplicationSummary(
+                total_datasets=2, attempted_datasets=1,
+                missing_dataset_failures=[MissingDatasetFailure(
+                    DatasetPair('pool/missing', 'backup/missing', ()),
+                    ('cannot open pool/missing',),
+                )],
+            )
+            send_error_mail(
+                SyncerateError('ZFS dataset missing', 8, kind='dataset_missing'),
+                cfg, RunContext('t', td, str(log_file), str(err_file), str(out_file)),
+                make_logger('missing-error-logs'), runtime_seconds=5,
+                replication_summary=summary,
+            )
+            subject, body, recipient, attachments = send_mail_mock.call_args.args
+            self.assertEqual(attachments, [str(log_file), str(err_file), str(out_file)])
+            self.assertIn('Missing ZFS dataset or pool', subject)
+            self.assertEqual(recipient, 'user@example.test')
+            self.assertIn('Total datasets   :   2', body)
+            self.assertIn('Failed datasets  :   1', body)
+            self.assertLess(body.index('Total runtime   :'), body.index('Failed dataset pairs:'))
+            self.assertLess(body.index('Failed dataset pairs:'), body.index('.err file'))
+            self.assertIn('source dataset does not exist', body)
+            self.assertIn('syncoid captured output', body)
+
+    @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
+    def test_syncoid_failed_mail_preserves_counts_with_logging_disabled(self, send_mail_mock):
+        cfg = make_config(mail_option='user@example.test')
+        summary = ReplicationSummary(total_datasets=4, attempted_datasets=3,
+                                     completed_datasets=2, transfer_measurement_complete=False)
+        send_error_mail(SyncerateError('exit status 2', 2, kind='syncoid'),
+                        cfg, no_logging_context(), make_logger('syncoid-failure-counts'),
+                        runtime_seconds=12.0, replication_summary=summary)
+        body = send_mail_mock.call_args.args[1]
+        self.assertLess(body.index('Failed datasets  :   1'), body.index('Failure reason: exit status 2'))
+        self.assertLess(body.index('Total runtime   :'), body.index('Failure reason: exit status 2'))
+
+    @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
+    def test_success_mail_shows_completed_counts_without_logging(self, send_mail_mock):
+        summary = ReplicationSummary(total_datasets=4, attempted_datasets=4,
+                                     completed_datasets=4, transferred_bytes=1024**2)
+        MailTo(make_config(mail_option='user@example.test'), no_logging_context(),
+               make_logger('success-count-mail'), Exit_Code=0,
+               RuntimeSeconds=75.1, ReplicationSummaryData=summary)
+        body = send_mail_mock.call_args.args[1]
+        self.assertIn('Data transferred :   1.00 MB\nTotal datasets   :   4\n'
+                      'Completed datasets :   4\nFailed datasets  :   0\n\n'
+                      'Total runtime   :   00:01:15.100', body)
 
     def test_json_success_payload_includes_warning_and_skipped_pairs(self):
         pair = DatasetPair("pool/a", "backup/a", ())

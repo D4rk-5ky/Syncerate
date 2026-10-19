@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.44`
+Current version: `0.4.48`
 
 ## ⚠️ Disclaimer / Liability
 
@@ -95,7 +95,7 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.44 source release. Rebuild with `build-pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
+**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.48 source release. Rebuild with `build-pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
 
 PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
 
@@ -138,16 +138,40 @@ cp config/example-Syncerate.toml config/Syncerate.toml
 
 Create source and destination list files, then edit `config/Syncerate.toml` with their paths and the Syncoid command to run.
 
+## Per-TOML safe lock (prevents overlapping backups)
+
+Syncerate automatically prevents two copies using the **same resolved TOML file** from running simultaneously. This is always enabled for both normal and `--dry-run` executions; no new TOML option or command-line flag is required.
+
+For a configuration file at `/srv/syncerate/config/nightly.toml`, Syncerate creates/reuses:
+
+```text
+/srv/syncerate/config/nightly.toml.lock
+```
+
+The identity is the **filename and full canonical directory path** of the `.toml` file, not its `BackupTitle`, list contents, ZFS destination, or the command line's spelling of the path. Relative paths, absolute paths and symlinks resolving to the same TOML share a lock. Different TOML files (including identically named files in different directories) have independent locks and can run at the same time, **even if they point at the same ZFS destination**. Do not deliberately run different configs targeting the same writable destination unless you have checked that this is safe; this is **per-config** protection, not a global ZFS-pool or dataset lock. For simultaneous configurations, also set **different `LogDestination` directories** (or ensure log filenames cannot collide); the existing timestamp-only log naming can otherwise overlap when two different configs share a directory and time format.
+
+A run must be able to **create/read/write the `.toml.lock` file in the TOML directory**. Keep the TOML and its directory in a secure, writable location for the Syncerate service account. When the TOML directory is read-only, inaccessible, or contains an unsafe lock-file symlink, the backup stops *without* running unlocked (exit **14**). In multi-user setups, ensure accounts can safely access the same lock file; permissions may require an agreed service account. This uses Linux/POSIX `fcntl.flock` and is designed for processes sharing the **same host and lock filesystem**; locks on shared network filesystems or across different hosts/containers without a common compatible flock implementation are not guaranteed.
+
+If another process already holds that lock, the second process:
+
+1. **Immediately returns failure exit code `13`**, without attempting credentials, dataset lists, Syncoid, ZFS changes, or a system action. It does not terminate or release the first process's lock.
+2. Attempts the normal non-retained failure MQTT status when `Use_MQTT` or `MQTT_JSON_Status` is enabled (using the existing configured JSON or `/error` topic).
+3. Attempts an error email when `[mail].Mail` specifies a recipient, **even if** `SendMailOnSuccess` or `SendMQTTOnSuccess` are disabled. Failure mail starts with the final run summary, then states the lock error, and embeds/attaches the duplicate run's separate `.err`/`.log` files when file logging is enabled.
+
+The failure notification includes the TOML path and the lock filename. The rejection's log filenames have a unique `-lock-rejected-...` suffix so a second launch **cannot truncate the active run's log files**, even when the normal log timestamp format is only accurate to a minute/day. A lock-rejection run reports zero completed/failed datasets and `Total datasets: Unavailable` because it never reads the dataset list.
+
+**Do not delete a `.toml.lock` file while a backup might be running.** The file intentionally remains on disk, including after successful completion; the **kernel lock**, not the existence of the file or a PID written inside it, indicates that a run is active. The OS automatically releases it when Syncerate exits, crashes or is killed, and the next run safely reuses the same inode. The `.lock` file is ignored by Git. External cleanup scripts must not remove it during execution.
+
 ## Command-line options
 
 Syncerate has four application flags. `--conf`/`-c` selects the required settings file. Normal versus dry-run behavior is normally selected by `DryRun` inside that file; `--dry-run` is an optional one-way override that forces dry-run on. `--help` and `--version` exit directly from the argument parser and therefore do not start runtime work.
 
 | Option | Required | What it does |
 | --- | --- | --- |
-| `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate TOML configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. |
-| `--dry-run` | No | Forces dry-run on even when `[runtime].DryRun = false` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
+| `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate TOML configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. Every run takes a non-blocking, exclusive per-file `flock` before starting work. |
+| `--dry-run` | No | Still acquires the same per-TOML lock as a real run. Forces dry-run on even when `[runtime].DryRun = false` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.44` for the 0.4.44 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.44. The flag exits without starting a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.48` for the 0.4.48 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.48. The flag exits without starting a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -209,7 +233,7 @@ Use this to see the executable's current syntax and examples. No `--conf` argume
 ./dist/Syncerate --version
 ```
 
-No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.44 build.
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.48 build.
 
 Run the packaged regression suite after installation or modification with:
 
@@ -573,7 +597,11 @@ For successful runs, Syncerate also reports `Data transferred`. It reads the byt
 
 Syncerate deliberately does **not** guess a transfer size from Syncoid's rounded `(~ size)` estimates. If a transfer starts but a usable `pv` byte counter cannot be observed—for example because `--quiet` suppresses progress, `pv` is unavailable, or custom `--pv-options` replace the normal byte-counter output—the final success summary reports `Data transferred :   Unavailable`.
 
-The final run summary writes `Final run summary`, inserts one blank line, repeats `BackupTitle` and `BackupComment` when configured with another blank line between the title and comment for readability, inserts another blank line after the comment, then prints the transfer total (for completed real replication summaries), inserts one blank line, and prints elapsed time as `HH:MM:SS.mmm`. It is written to the normal logger **before the success email is built**, so the `.log` file attached/copied into the email already contains the final summary. Real success email bodies use the same transfer/runtime summary. A successful dry run instead includes `Run mode : DRY RUN (no replication performed)`, the planned dataset-pair count, and runtime; it deliberately has no `Data transferred` line because no data is sent. Ordinary interrupted error paths include metadata/runtime but do not claim a complete transfer total. Dry-run failures are likewise marked `DRY RUN` in the summary and notification path. The missing-dataset/pool failure path follows `[runtime].ContinueOnMissingDataset`: with `false`, Syncerate records the first recognized missing dataset/pool and stops before the next pair; with `true`, it records each such failure and continues later configured pairs. Either mode still ends with exit code `8` and failure reporting. A continue-enabled run that reaches the end of the configured list may include the measured transfer total in that failure summary. `--help` and `--version` do not produce a runtime summary.
+The final run summary is the **same layout in terminal logging and both success/failure email bodies**. Following optional title/comment lines, the real-run statistics appear in this order: `Data transferred`, `Total datasets`, `Completed datasets`, `Failed datasets` (each on its own line), then a blank line and `Total runtime` (`HH:MM:SS.mmm`). The summary is written to `.log` before either email is constructed; success mail also embeds its `.log` and attaches `.log`/`.out` when enabled.
+
+Each source/destination **pair counts as one dataset** in these statistics. `Total datasets` is the number of validated configured pairs, not the number of Syncoid attempts or ZFS child datasets. `Completed datasets` counts pairs that actually finished with Syncoid exit status `0`; a Broken Pipe retry still counts the same pair at most once. `Failed datasets` counts attempted pairs that did not finish successfully, including recognized missing-dataset skips and a current pair that aborted because of ENOSPC or another fatal error. Pairs not yet started are **not** counted as failed. Thus `completed + failed` may be less than `total` if the run stops early. Failures before dataset-list validation show `Total datasets : Unavailable` rather than inventing a count. Errors before any replication begins show zero completed and zero failed datasets.
+
+When a fatal replication error interrupts an in-progress stream, `Data transferred` is marked `Unavailable` because the final byte measurement may not have reached the application. Missing-dataset failures that complete their processing can retain the observed transfer total; the usual incomplete-measurement rule still applies. A successful dry run instead labels itself `DRY RUN`, prints the planned-pair count plus total/completed/failed statistics (zero completed/failed), and omits `Data transferred` because **no data is sent**. Error notifications in dry-run mode are still marked as dry run. The missing-dataset/pool failure path continues or stops as directed by `[runtime].ContinueOnMissingDataset`, always preserving exit code `8`. `--help` and `--version` do not run a backup and have no final summary.
 
 Example:
 
@@ -586,6 +614,9 @@ Backup comment  :   Replicate selected datasets to the backup pool
                     Second comment line
 
 Data transferred :   18.47 GB
+Total datasets   :   12
+Completed datasets :   12
+Failed datasets  :   0
 
 Total runtime   :   01:23:45.678
 ```
@@ -609,7 +640,9 @@ SendMailOnSuccess = true
 
 `SendMailOnSuccess` defaults to `true` when omitted. Set it to `false` when you want email only for failures. The switch applies to both real successful runs and successful dry-run reports. It does not suppress error mail: as long as `Mail` contains a recipient, handled Syncerate errors still attempt to send their normal error email. A successful dry-run email is explicitly marked `DRY RUN`, states that no replication was performed, and contains the planned-command report.
 
-A working local `mail` command is required for delivery. Syncerate can send real-success, dry-run-success, Syncoid-error, script-error, and MQTT-error messages. Real success email bodies begin with the same final run summary used in terminal/file logging: `Final run summary`, a blank line, backup title, a blank line, multiline backup comment, another blank line, `Data transferred`, another blank line, and `Total runtime`. Dry-run success mail uses the same dry-run summary, clearly says that no replication was performed, and includes the exact planned-command report; it does not claim a transfer total. Ordinary interrupted error emails include the same metadata/runtime but omit transfer totals because the replication list did not complete. A failure that occurs while dry-run mode is active is clearly marked `DRY RUN` and is still attempted even when `SendMailOnSuccess = false`. Missing-dataset/pool failures from real replication are reported separately. With `[runtime].ContinueOnMissingDataset = false`, Syncerate records the first recognized missing dataset/pool, stops before the next pair, and sends an exit-code-`8` failure mail. With it set to `true`, Syncerate records each recognized missing dataset/pool, continues later configured pairs, and still sends an exit-code-`8` failure mail after processing ends. The failure mail lists recorded failed pairs plus the matched ZFS/Syncoid message; a continue-enabled run that reaches the end may also include the completed-list transfer total. When file logging is enabled, relevant `.log`, `.err`, and `.out` files are attached when available. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not replace the replication result.
+A working local `mail` command is required for delivery. Syncerate can send real-success, dry-run-success, Syncoid-error, script-error, and MQTT-error messages. Both successful and failed real-run emails begin with the same final run summary, including the total/completed/failed dataset counters below the transfer line and above runtime. The **failure reason comes after the summary**, followed (with file logging enabled) by the `.err` and available `.out` contents in the **email message body**, while the `.log`, `.err`, and available `.out` are also attached **as files**. This applies to missing-dataset failure mails as well as ordinary fatal Syncoid, ZFS and script errors. Without file logging, the failure reason still appears after the summary, but no files can be attached. Missing dataset/pool reports also include the failed pair list and relevant ZFS messages.
+
+Dry-run success mail instead identifies `DRY RUN`, records the number of planned datasets and zero completed/failed, and includes the exact planned commands; it does not claim transferred data. Error notifications in dry-run mode remain marked as dry run. With `[runtime].ContinueOnMissingDataset = false`, Syncerate records the first recognized missing dataset/pool, stops before the next pair, and sends an exit-code-`8` failure mail. With it set to `true`, it records each recognized failure, continues later configured pairs, and still sends an exit-code-`8` failure mail at the end. `SendMailOnSuccess = false` suppresses success mail **only**; configured failure email is still attempted. Mail delivery is best-effort: a missing `mail` executable, attachment/read failure, or non-zero mail-command result is logged and does not replace the replication result.
 
 ## Syncoid warnings and resume support
 
@@ -937,8 +970,17 @@ sudo zfs list -t snapshot
 | Preflight list length/name mismatch, empty list, or trailing slash | Stop with exit `1` before any Syncoid command starts. |
 | Syncoid reports a specifically recognized missing dataset/pool during execution | Record that pair and its raw failure context. For a definitive non-warning ZFS missing-data error, give Syncoid up to 5 seconds to unwind; if it remains stuck, stop only that already-failed attempt. With `ContinueOnMissingDataset = false` (default), stop the configured dataset list after recording the failure. With `true`, continue to later pairs. Recognized missing-data handling still requires matching runtime evidence plus an accepted exit/cleanup state; an exit code by itself never enables this path. |
 | One or more missing-data failures were recorded | Return exit `8`, attempt enabled error mail/MQTT with failed pairs and reasons, and skip successful-run system actions. With continuation enabled, this happens after the remaining list completes; with it disabled, it happens immediately after the first recorded missing-data pair returns to the application layer. |
+| ZFS reports a definitive `cannot receive ...: out of space` or other supported non-warning ENOSPC diagnostic | Immediately stop the failed Syncoid process and its verified dedicated process group; return exit `12` without retrying or executing later dataset pairs. Attempt configured failure mail and/or MQTT regardless of success-notification switches. |
 | Authentication, connection, other recognized fatal errors, or unrelated nonzero exits | Stop the list; retain their error handling. |
 | Ordinary Broken Pipe retries are exhausted | Stop with exit `2`; attempt enabled error notifications. |
+
+### Destination out-of-space failures
+
+Syncerate treats full-line, non-warning OpenZFS diagnostics including `cannot receive resume stream: out of space`, `cannot receive incremental stream: out of space`, `cannot receive new filesystem stream: out of space`, `cannot receive: no space left on device`, and supported ZFS create/write errors as immediately fatal. It detects them even when they arrive in chunks, or at process EOF without a final newline. Generic warnings or text merely mentioning `out of space` do not activate this handler. This is output-based detection, **not** a separate preflight free-space check; unrecognized/localized messages follow the normal Syncoid exit path.
+
+When one of these errors is detected, Syncerate captures the ZFS error and surrounding `mbuffer`/Syncoid output, attempts to stop the current Syncoid process and subprocesses in its verified dedicated process group, closes the output logfile, and returns **exit code `12`**. It does not retry that pair or start another pair, even when `RetryBrokenPipe = true` or `ContinueOnMissingDataset = true`. No success notifications or `SystemAction` run. If `Mail` is enabled, error mail is attempted with an out-of-space subject and the diagnostic in the body even with logging disabled. If `Use_MQTT` or `MQTT_JSON_Status` is enabled, a non-retained JSON failure event is attempted on the configured error/status topic with exit code `12`, `status: failure`, and ZFS detail in `error`/`stderr`. `SendMailOnSuccess` and `SendMQTTOnSuccess` do not suppress those failure events. Notification delivery itself remains best-effort and is not proof the broker/mail system received it.
+
+Before restarting a failed replication, investigate available destination pool/dataset space, quotas and reservations with `zpool list` and `zfs list -o name,used,avail,quota,refquota`. Make sufficient space available safely and verify any resumable receive state. Do not delete snapshots or reset an interrupted receive without understanding the recovery consequences.
 
 The missing-data exception requires specific runtime evidence. It recognizes complete English OpenZFS missing dataset/pool diagnostics from open/import operations, missing destination parents/pools during create operations, and explicit missing destinations reported by receive operations. Syncoid's `CRITICAL ERROR:` and property-query wrappers are supported. It also recognizes the exact disappeared-dataset skip warning, because Syncoid can emit that message without setting a nonzero exit code.
 
@@ -967,5 +1009,8 @@ The rules were checked against [Syncoid's implementation](https://github.com/jim
 | `9` | The same monitored output pattern repeated too many times. |
 | `10` | MQTT dependency or publishing failure. |
 | `11` | Reserved for system-action failures; the current system-action runner logs failures without returning this code. |
+| `12` | Explicit ZFS receive/create/write `out of space` or `No space left on device` failure. Stop without Broken Pipe retry or missing-dataset continuation; attempt configured failure notifications. |
+| `13` | The selected TOML file is already locked by another Syncerate process. Duplicate launch stops and attempts configured failure email/MQTT. |
+| `14` | The per-TOML lock file could not be safely created, opened, or used. Syncerate refuses to run without a lock, and attempts configured failure email/MQTT. |
 
 Non-zero Syncoid exit codes not handled by a specific rule are returned unchanged and may overlap the application codes above. Signal termination is reported as `128 + signal number`.

@@ -6,7 +6,10 @@ import os
 import subprocess
 from typing import Any, Optional
 
-from .errors import EXIT_DATASET_MISSING, EXIT_MQTT_ERROR, EXIT_OK, SyncerateError
+from .errors import (
+    EXIT_BACKUP_LOCKED, EXIT_LOCK_ERROR, EXIT_DATASET_MISSING, EXIT_MQTT_ERROR,
+    EXIT_OK, EXIT_OUT_OF_SPACE, SyncerateError,
+)
 from .logging_setup import format_final_run_summary, format_missing_dataset_failures
 from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
 
@@ -120,6 +123,7 @@ def MailTo(
     DryRun: bool = False,
     DryRunReportText: str = "",
     DryRunDatasetCount: Optional[int] = None,
+    ErrorMessage: str = "",
 ) -> None:
     """Build and send success, warning-success, and error mail variants.
 
@@ -152,6 +156,20 @@ def MailTo(
             dry_run=DryRun,
             planned_dataset_count=DryRunDatasetCount,
         )
+
+    def inline_failure_logs() -> str:
+        """Include the same .err/.out content in the body as in attachments."""
+
+        if not logging_enabled:
+            return ""
+        assert error_file is not None
+        with open(error_file, "r", encoding="utf-8") as opened_error:
+            contents = opened_error.read()
+        body = "----------\n\n.err file\n\n----------\n\n" + contents + "\n\n"
+        if output_file is not None and os.path.isfile(output_file):
+            with open(output_file, "r", encoding="utf-8") as opened_output:
+                body += "----------\n\n.out file\n" + opened_output.read()
+        return body
 
     dry_run_subject_prefix = "DRY RUN - " if DryRun else ""
 
@@ -296,8 +314,9 @@ def MailTo(
             + "ZFS datasets or pools were missing.\n\n"
             + "Failed dataset pairs:\n"
             + failure_text
-            + "\n"
+            + "\n\n"
         )
+        body += inline_failure_logs()
 
         if logging_enabled:
             assert log_file is not None
@@ -333,19 +352,10 @@ def MailTo(
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = summary_header()
-            with open(error_file, "r", encoding="utf-8") as opened_error:
-                error_contents = opened_error.read()
-            body += (
-                "----------\n\n.err file\n\n----------\n\n"
-                + error_contents
-                + "\n\n"
-            )
-
-            if output_file is not None and os.path.isfile(output_file):
-                with open(output_file, "r", encoding="utf-8") as opened_output:
-                    output_contents = opened_output.read()
-                body += "----------\n\n.out file\n" + output_contents
+            body = summary_header(ReplicationSummaryData)
+            if ErrorMessage:
+                body += f"Failure reason: {ErrorMessage}\n\n"
+            body += inline_failure_logs()
 
             mail_exit_code, stderr_output = send_mail(
                 subject,
@@ -359,7 +369,9 @@ def MailTo(
             )
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                summary_header() + subject_and_body,
+                summary_header(ReplicationSummaryData)
+                + (f"Failure reason: {ErrorMessage}\n\n" if ErrorMessage else "")
+                + subject_and_body,
                 recipient,
             )
 
@@ -376,19 +388,10 @@ def MailTo(
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = summary_header()
-            with open(error_file, "r", encoding="utf-8") as opened_error:
-                error_contents = opened_error.read()
-            body += (
-                "----------\n\n.err file\n\n----------\n\n"
-                + error_contents
-                + "\n\n"
-            )
-
-            if output_file is not None and os.path.isfile(output_file):
-                with open(output_file, "r", encoding="utf-8") as opened_output:
-                    output_contents = opened_output.read()
-                body += "----------\n\n.out file\n" + output_contents
+            body = summary_header(ReplicationSummaryData)
+            if ErrorMessage:
+                body += f"Failure reason: {ErrorMessage}\n\n"
+            body += inline_failure_logs()
 
             mail_exit_code, stderr_output = send_mail(
                 subject,
@@ -400,7 +403,9 @@ def MailTo(
             subject_and_body = dry_run_subject_prefix + "Error sending MQTT message - (Logs Disabled)"
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                summary_header() + subject_and_body,
+                summary_header(ReplicationSummaryData)
+                + (f"Failure reason: {ErrorMessage}\n\n" if ErrorMessage else "")
+                + subject_and_body,
                 recipient,
             )
 
@@ -408,28 +413,26 @@ def MailTo(
         return
 
     if Exit_Code is not None and Exit_Code != EXIT_OK:
+        failure_subject = (
+            "Error running Syncerate.py - ZFS destination out of space"
+            if Exit_Code == EXIT_OUT_OF_SPACE
+            else "Error running Syncerate.py - Backup already running"
+            if Exit_Code == EXIT_BACKUP_LOCKED
+            else "Error running Syncerate.py - Backup lock unavailable"
+            if Exit_Code == EXIT_LOCK_ERROR
+            else "Error running Syncerate.py - This was a script error"
+        )
+        error_details = f"Failure reason: {ErrorMessage}\n\n" if ErrorMessage else ""
         if logging_enabled:
             assert log_file is not None
             assert error_file is not None
 
-            subject = dry_run_subject_prefix + "Error running Syncerate.py - This was a script error (Attaching logs)"
+            subject = dry_run_subject_prefix + failure_subject + " (Attaching logs)"
             attachment_files = [log_file, error_file]
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = summary_header()
-            with open(error_file, "r", encoding="utf-8") as opened_error:
-                error_contents = opened_error.read()
-            body += (
-                "----------\n\n.err file\n\n----------\n\n"
-                + error_contents
-                + "\n\n"
-            )
-
-            if output_file is not None and os.path.isfile(output_file):
-                with open(output_file, "r", encoding="utf-8") as opened_output:
-                    output_contents = opened_output.read()
-                body += "----------\n\n.out file\n" + output_contents
+            body = summary_header(ReplicationSummaryData) + error_details + inline_failure_logs()
 
             mail_exit_code, stderr_output = send_mail(
                 subject,
@@ -438,12 +441,10 @@ def MailTo(
                 attachment_files,
             )
         else:
-            subject_and_body = dry_run_subject_prefix + (
-                "Error running Syncerate.py - This was a script error (Logs Disabled)"
-            )
+            subject_and_body = dry_run_subject_prefix + failure_subject + " (Logs Disabled)"
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                summary_header() + subject_and_body,
+                summary_header(ReplicationSummaryData) + error_details + subject_and_body,
                 recipient,
             )
 
@@ -722,6 +723,7 @@ def send_error_mail(
                 logger,
                 Exit_Code=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                ErrorMessage=error.message,
                 ReplicationSummaryData=replication_summary,
                 DryRun=dry_run,
                 DryRunDatasetCount=dry_run_dataset_count,
@@ -733,6 +735,8 @@ def send_error_mail(
                 logger,
                 MQTT_Fail=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                ReplicationSummaryData=replication_summary,
+                ErrorMessage=error.message,
                 DryRun=dry_run,
                 DryRunDatasetCount=dry_run_dataset_count,
             )
@@ -743,6 +747,8 @@ def send_error_mail(
                 logger,
                 SynCoidFail=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                ReplicationSummaryData=replication_summary,
+                ErrorMessage=error.message,
                 DryRun=dry_run,
                 DryRunDatasetCount=dry_run_dataset_count,
             )
@@ -753,8 +759,10 @@ def send_error_mail(
                 logger,
                 Exit_Code=error.exit_code,
                 RuntimeSeconds=runtime_seconds,
+                ReplicationSummaryData=replication_summary,
                 DryRun=dry_run,
                 DryRunDatasetCount=dry_run_dataset_count,
+                ErrorMessage=error.message,
             )
     except Exception:
         logger.exception("Additionally failed to send the error mail")

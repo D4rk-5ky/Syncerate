@@ -21,12 +21,15 @@ from syncerate.datasets import (
     read_dataset_list,
 )
 from syncerate.errors import (
+    EXIT_BACKUP_LOCKED,
+    EXIT_LOCK_ERROR,
     EXIT_CONNECTION_REFUSED,
     EXIT_CONNECTION_TIMEOUT,
     EXIT_DATASET_MISSING,
     EXIT_LIST_ERROR,
     EXIT_MQTT_ERROR,
     EXIT_OK,
+    EXIT_OUT_OF_SPACE,
     EXIT_PASSWORD_DENIED,
     EXIT_REPEATED_PATTERN,
     EXIT_SCRIPT_ERROR,

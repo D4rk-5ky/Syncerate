@@ -16,6 +16,50 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.48
+
+Previous version: `0.4.47`.
+
+- Added `syncerate/locking.py` with an atomic, non-blocking Linux/POSIX `flock(LOCK_EX|LOCK_NB)` on a persistent `<canonical-TOML-filename>.lock` in the TOML file's directory. Relative and symlink aliases to one config share a lock, whereas different TOML full paths can run simultaneously (even with equal basenames). The lock is acquired immediately after validated configuration loading, before run logs, dataset lists, authentication, SSH, Syncoid or any system action. Both real runs and `--dry-run` require it.
+- Held the owner file descriptor through the full success/failure reporting path and `SystemAction`; `finally` releases it on ordinary returns/errors, while the operating system releases it after crashes/`SIGKILL`. The file is deliberately not unlinked after release, preventing the classic inode unlink/recreate parallel-lock race. File-symlink and hardlink safety guards reject unsafe lock objects, and inability to create or use a lock is fatal rather than silently disabling the protection.
+- Added `EXIT_BACKUP_LOCKED = 13` when that TOML's backup is already running, and `EXIT_LOCK_ERROR = 14` for errors establishing the lock. Both follow the existing top-level failure handlers, attempt configured mail/MQTT regardless of `SendMailOnSuccess`/`SendMQTTOnSuccess`, and cannot start another backup or release the owner's lock. Failure mail identifies the lock problem after the final run summary and retains embedded `.err` and available `.out` content plus attached logs. MQTT uses the existing non-retained failure JSON channel.
+- Gave rejected runs separately suffixed log paths (`-lock-rejected-<pid>-<random-token>`) to avoid overwriting an active run's timestamped `.log`/`.err` files; preserve best-effort email without attachments if rejection logs cannot be created. `syncerate/logging_setup.py` now accepts an optional suffix. No existing configurations or per-dataset replication/retry behavior changed; this does not attempt to lock shared ZFS destination datasets across **different** configurations or machines.
+- Updated `--help`, both public exit-code exports, full current-use README, config example comments, code/function map, package test expectations, current-version strings, verification record, `.gitignore` (ignore `*.toml.lock`), and new dedicated OS-level/process/notification regression tests. Original 0.4.47 source file manifest was preserved and compared with SHA-256; the bundled `dist/Syncerate` remains the original 0.4.29 executable and **must be rebuilt** to use the lock feature.
+
+## 0.4.47
+
+Previous version: `0.4.46`.
+
+- Added a shared final summary row for `Total datasets`, `Completed datasets`, and `Failed datasets`, directly after `Data transferred` and before `Total runtime`, for real success and failure mail as well as console/`.log` output. For dry runs, the planned-pair total and zero completed/failed are reported without claiming a real transfer.
+- Extended `ReplicationSummary` with configured total and per-pair attempted/completed counters plus a derived `failed_datasets` property. Retries count as one pair; recognized missing-dataset skips and fatal current-pair errors count as failed; later untouched pairs do not count as failed. When list validation did not finish, total is `Unavailable`.
+- Kept a caller-owned summary alive through `run_replications()` exceptions, so fatal ENOSPC, signal, SSH and Syncoid errors do not erase statistics from earlier pairs. Fatal in-progress transfers have `Data transferred : Unavailable` where the final `pv` bytes cannot be trusted; no changes to retry/continuation/error exit policy.
+- Reused the existing mail summary formatter for all mail outcomes, including Syncoid and MQTT failures, and consolidated duplicate `.err`/`.out` inline text formatting. Error reason follows final summary/runtime; failed mail continues to attach `.log`/`.err`/available `.out`, and missing-dataset email also embeds `.err`/`.out` in the body.
+- Updated current-use README, code/function/test map, build expected version, verification record and the original-file hash-checked package manifest. Added regression tests for fatal partial lists, successful counts, failure mail ordering and attached/embedded logs. Configuration schema/defaults and operational safety policies are unchanged.
+- Preserved the old original `dist/Syncerate` binary (reports 0.4.29); source must be run with Python or rebuilt using `./build-pyinstaller.sh` after installing build requirements.
+
+## 0.4.46
+
+Previous version: `0.4.45`.
+
+- Fixed a stuck interrupted/resumed Syncoid receive after OpenZFS prints `cannot receive resume stream: out of space`: the existing pattern monitor previously had no explicit fatal ENOSPC match and could wait forever for the child/pipeline to finish.
+- Added narrowly anchored, full-line, case-insensitive ZFS `out of space` / `No space left on device` diagnostics for receive, create and write, with support for chunked output and final lines at EOF. Generic warning/debug/explanatory text does not trigger an unintended kill.
+- Re-exported `EXIT_OUT_OF_SPACE` through the compatibility `Syncerate.py` entry point. Added `fail_out_of_space()` to record the diagnosis/context in error logging and terminate the failed Syncoid attempt. Only a process group verified as Pexpect's own session/group is signaled, to stop remaining same-group Syncoid/SSH/mbuffer/ZFS subprocesses without targeting an unrelated group. Returns new, explicit `EXIT_OUT_OF_SPACE = 12` immediately; no retry, no subsequent dataset, no successful-run action, regardless of `RetryBrokenPipe`, `ContinueOnMissingDataset` or resume settings.
+- Reused the existing top-level `SyncerateError` failure notification route. Configured error MQTT still uses the non-retained JSON failure channel, and enabled mail still attempts delivery even with success-notification switches disabled. Generic error emails now include the specific error text; ENOSPC mail has a dedicated, informative subject and includes the ZFS diagnostic when logging is disabled.
+- Added regression tests for the reported hung receive/mbuffer/progress sequence, supported ENOSPC variants, false-positive prevention, output chunking/EOF, and end-to-end mail/MQTT failure routing with success notifications disabled. No extra runtime configuration flags or defaults were introduced; retained the fully documented 31-key example.
+- Updated the source version, build/version smoke-test expectations, current-use README, code/function map, verification report, and file manifest. Preserved the older 0.4.29 `dist/Syncerate` artifact from the previous archive rather than misrepresenting it as the fixed application; use the current Python source or rebuild the standalone binary on a configured machine.
+
+## 0.4.45
+
+Previous version: `0.4.44`.
+
+- Audited the complete supplied 0.4.44 source archive, including its configuration schema, command-line entry point, process/notification safety paths, tests, README, code map, PyInstaller packaging, and old standalone binary. This release intentionally leaves ZFS/Syncoid commands, credentials, retry policies, notifications, and runtime safety semantics unchanged.
+- Advanced the authoritative source version to `0.4.45` in `syncerate/__init__.py`, the checked-in PyInstaller version guard, the packaging regression's expected output, and the current-use/code-map documentation. The source `--version` flag now reports `Syncerate.py 0.4.45`.
+- Added `tests/test_cli_contract.py` to exercise source `--version` and `--help` without a config or runtime side effects, required `--conf/-c`, unknown-flag rejection, and one-way `--dry-run` argument parsing.
+- Kept the existing 31-key, fully commented TOML example unchanged because it already exactly matches the loader's authoritative supported schema; no configuration option or fallback changed.
+- Preserved the supplied `dist/Syncerate` binary as an original source-archive artifact; it still reports `Syncerate 0.4.29` and **must not** be used as a 0.4.45 binary. Added an explicit warning to the shipped `dist/README.md` and clarified the rebuild requirement in README/code map. A real PyInstaller rebuild depends on optional build requirements unavailable in this environment.
+- Updated `README.md` to describe only current application use and retained both supplied disclaimers; refreshed `commented_code_map.md` for the CLI smoke tests and release-specific packaging/version behavior.
+- Updated `VERIFICATION.md` with tests actually run and remaining environment limitations, and regenerated `PACKAGE_MANIFEST.json` with per-file SHA-256 hashes and mode bits relative to the exact supplied 0.4.44 archive. Packaged all original files plus the new tests in a clean 0.4.45 ZIP.
+
 ## 0.4.44
 
 Previous version: `0.4.43`.

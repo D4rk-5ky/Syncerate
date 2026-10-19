@@ -1,5 +1,6 @@
 import logging
 import shlex
+import time
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from syncerate.errors import (
     EXIT_DATASET_MISSING,
+    EXIT_OUT_OF_SPACE,
     EXIT_PASSWORD_DENIED,
     EXIT_REPEATED_PATTERN,
     EXIT_WARNING,
@@ -123,6 +125,137 @@ class SyncoidRunnerTests(unittest.TestCase):
                 None,
                 logger if logger is not None else make_logger("fake-run"),
             )
+
+    def test_out_of_space_on_resumed_receive_stops_hung_attempt_without_retry(self):
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            counter = td_path / "attempts"
+            later = td_path / "later-ran"
+            script = write_executable(
+                td_path / "fake.py",
+                "import pathlib, sys, time\n"
+                f"counter = pathlib.Path({str(counter)!r})\n"
+                f"later = pathlib.Path({str(later)!r})\n"
+                "if sys.argv[1] == 'pool/later':\n"
+                "    later.write_text('yes')\n"
+                "else:\n"
+                "    counter.write_text(counter.read_text() + 'x' if counter.exists() else 'x')\n"
+                "    print('INFO: Resuming interrupted zfs send/receive from remote:pool/data to backup/data', flush=True)\n"
+                "    print('mbuffer: warning: HOME environment variable not set - unable to find defaults file', flush=True)\n"
+                "    print('720  B 0:00:01 [ 688  B/s] [> ] 1% ETA 0:01:04', end='\\r', flush=True)\n"
+                "    print('cannot receive resume stream: out of space', flush=True)\n"
+                "    print('720  B 0:00:02 [0,00 B/s] [> ] 1%', flush=True)\n"
+                "    time.sleep(30)\n",
+            )
+            cfg = make_config(
+                syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet",
+                retry_broken_pipe=True,
+                broken_pipe_retry_count=2,
+                broken_pipe_retry_wait_seconds=0,
+                continue_on_missing_dataset=True,
+            )
+            started = time.monotonic()
+            with self.assertRaises(SyncerateError) as caught:
+                run_replications(
+                    cfg,
+                    no_logging_context(),
+                    [DatasetPair('pool/data', 'backup/data', ()),
+                     DatasetPair('pool/later', 'backup/later', ())],
+                    None,
+                    make_logger('space-no-retry'),
+                )
+            self.assertLess(time.monotonic() - started, 5.0)
+            self.assertEqual(caught.exception.exit_code, EXIT_OUT_OF_SPACE)
+            self.assertEqual(caught.exception.kind, 'known_child')
+            self.assertIn('out of space', caught.exception.child_warning)
+            self.assertEqual(counter.read_text(), 'x')
+            self.assertFalse(later.exists())
+
+    def test_failed_resume_retains_partial_dataset_statistics(self):
+        from syncerate.models import ReplicationSummary
+        with tempfile.TemporaryDirectory() as td:
+            script = write_executable(
+                Path(td) / "fake.py",
+                "import sys, time\n"
+                "if sys.argv[1] == 'pool/second':\n"
+                "    print('cannot receive resume stream: out of space', flush=True)\n"
+                "    time.sleep(30)\n",
+            )
+            cfg = make_config(syncoid_command=f"{shlex.quote(script)} SourceDataSet DestDataSet")
+            pairs = [DatasetPair(f"pool/{name}", f"backup/{name}", ())
+                     for name in ("first", "second", "unattempted")]
+            summary = ReplicationSummary(total_datasets=len(pairs))
+            with self.assertRaises(SyncerateError) as caught:
+                run_replications(cfg, no_logging_context(), pairs, None,
+                                 make_logger("partial-space-statistics"), summary=summary)
+            self.assertEqual(caught.exception.exit_code, EXIT_OUT_OF_SPACE)
+            self.assertEqual(summary.total_datasets, 3)
+            self.assertEqual(summary.attempted_datasets, 2)
+            self.assertEqual(summary.completed_datasets, 1)
+            self.assertEqual(summary.failed_datasets, 1)
+
+    def test_out_of_space_stops_pipeline_subprocess_in_same_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td) / 'pipeline-kept-running'
+            script = write_executable(
+                Path(td) / 'fake.py',
+                'import subprocess, sys, time\n'
+                'subprocess.Popen([sys.executable, "-c", '
+                f'"import time; from pathlib import Path; time.sleep(1.0); Path({str(marker)!r}).touch()"' 
+                '])\n'
+                "print('cannot receive resume stream: out of space', flush=True)\n"
+                'time.sleep(30)\n',
+            )
+            cfg = make_config(
+                syncoid_command=f'{shlex.quote(script)} SourceDataSet DestDataSet',
+            )
+            with self.assertRaises(SyncerateError) as caught:
+                run_replications(
+                    cfg, no_logging_context(),
+                    [DatasetPair('pool/data', 'backup/data', ())],
+                    None, make_logger('space-child-group'),
+                )
+            self.assertEqual(caught.exception.exit_code, EXIT_OUT_OF_SPACE)
+            time.sleep(1.25)
+            self.assertFalse(marker.exists(), 'Orphaned pipeline descendant continued after fatal receive failure')
+
+    def test_out_of_space_line_variants_fail_and_unrelated_warnings_do_not(self):
+        for message in (
+            'cannot receive resume stream: out of space',
+            'cannot receive incremental stream: out of space',
+            'cannot receive new filesystem stream: out of space',
+            'cannot receive: no space left on device',
+            "cannot create 'backup/data': out of space",
+            "cannot write to 'backup/data': No space left on device",
+        ):
+            with self.subTest(message=message):
+                with self.assertRaises(SyncerateError) as caught:
+                    self.run_fake(f"print({message!r}, flush=True)\n")
+                self.assertEqual(caught.exception.exit_code, EXIT_OUT_OF_SPACE)
+                self.assertIn(message, caught.exception.message)
+
+        for harmless in (
+            'WARNING: cannot receive resume stream: out of space',
+            'DEBUG: cannot receive resume stream: out of space',
+            'cannot receive resume stream: out of space in older logs',
+            'out of space',
+        ):
+            with self.subTest(harmless=harmless):
+                summary = self.run_fake(f"print({harmless!r}, flush=True)\n")
+                self.assertFalse(summary.has_missing_dataset_failure)
+
+    def test_out_of_space_split_into_chunks_or_without_final_newline(self):
+        for final_newline in (True, False):
+            with self.subTest(final_newline=final_newline):
+                body = (
+                    "import sys, time\n"
+                    "for part in ('cannot receive resume ', 'stream: out ', 'of space'):\n"
+                    "    sys.stdout.write(part); sys.stdout.flush(); time.sleep(0.02)\n"
+                    + ("print('', flush=True)\n" if final_newline else "")
+                )
+                with self.assertRaises(SyncerateError) as caught:
+                    self.run_fake(body)
+                self.assertEqual(caught.exception.exit_code, EXIT_OUT_OF_SPACE)
 
     def test_missing_destroy_message_does_not_mask_unrelated_nonzero_exit(self):
         with self.assertRaises(SyncerateError) as cm:

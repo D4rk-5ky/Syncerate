@@ -98,8 +98,11 @@ class AppAndLoggingTests(unittest.TestCase):
         self.assertLess(second_line_index, transferred_index)
         self.assertEqual(lines[transferred_index - 1], "")
         self.assertIn("1.50 GB", lines[transferred_index])
-        self.assertEqual(lines[transferred_index + 1], "")
-        self.assertEqual(runtime_index, transferred_index + 2)
+        self.assertEqual(lines[transferred_index + 1], "Total datasets   :   Unavailable")
+        self.assertEqual(lines[transferred_index + 2], "Completed datasets :   0")
+        self.assertEqual(lines[transferred_index + 3], "Failed datasets  :   0")
+        self.assertEqual(lines[transferred_index + 4], "")
+        self.assertEqual(runtime_index, transferred_index + 5)
         self.assertIn("00:01:02.345", lines[runtime_index])
 
     def test_startup_multiline_comment_prefixes_every_physical_log_line(self):
@@ -578,6 +581,7 @@ class AppAndLoggingTests(unittest.TestCase):
             summary = mqtt_failure_mock.call_args.kwargs["replication_summary"]
             self.assertTrue(summary.has_missing_dataset_failure)
             self.assertEqual(len(summary.missing_dataset_failures), 1)
+            self.assertEqual((summary.total_datasets, summary.completed_datasets, summary.failed_datasets), (2, 1, 1))
 
     @mock.patch("syncerate.app.successfull_run")
     @mock.patch("syncerate.app.send_error_mail")
@@ -615,6 +619,7 @@ class AppAndLoggingTests(unittest.TestCase):
             summary = mqtt_failure_mock.call_args.kwargs["replication_summary"]
             self.assertTrue(summary.has_missing_dataset_failure)
             self.assertEqual(len(summary.missing_dataset_failures), 1)
+            self.assertEqual((summary.total_datasets, summary.completed_datasets, summary.failed_datasets), (2, 0, 1))
 
     def test_main_emits_final_runtime_summary(self):
         with tempfile.TemporaryDirectory() as td:
@@ -675,7 +680,11 @@ class AppAndLoggingTests(unittest.TestCase):
 
             self.assertIn("Final run summary\n\nBackup title    :   Mail timer test\n\nBackup comment  :   First line", body)
             self.assertIn("Backup comment  :   First line", body)
-            self.assertIn("Second line\n\nData transferred :   0.00 KB\n\nTotal runtime   :", body)
+            self.assertIn(
+                "Second line\n\nData transferred :   0.00 KB\n"
+                "Total datasets   :   1\nCompleted datasets :   1\n"
+                "Failed datasets  :   0\n\nTotal runtime   :", body
+            )
             copied_log = body.split(".log file", 1)[1]
             self.assertIn("Data transferred :   0.00 KB", copied_log)
             self.assertIn("Total runtime   :", copied_log)

@@ -40,3 +40,6 @@ dist/*
 # Local editor files
 .vscode/
 .idea/
+
+# Kernel-backed per-TOML safelock files; never remove while running
+*.toml.lock

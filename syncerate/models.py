@@ -121,6 +121,18 @@ class ReplicationSummary:
     missing_dataset_failures: list[MissingDatasetFailure] = field(default_factory=list)
     transferred_bytes: int = 0
     transfer_measurement_complete: bool = True
+    # None means the source/destination list could not be validated yet.
+    total_datasets: Optional[int] = None
+    # A retried dataset counts once. An attempted pair that did not complete
+    # successfully is failed; untouched later pairs are not counted as failed.
+    attempted_datasets: int = 0
+    completed_datasets: int = 0
+
+    @property
+    def failed_datasets(self) -> int:
+        """Count attempted pairs without a successful replication outcome."""
+
+        return max(0, self.attempted_datasets - self.completed_datasets)
 
     @property
     def has_broken_pipe_warning(self) -> bool:

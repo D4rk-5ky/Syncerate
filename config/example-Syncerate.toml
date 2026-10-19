@@ -4,6 +4,9 @@
 #   ./Syncerate.py --conf /path/to/Syncerate.toml
 #
 # TOML booleans are native lowercase true/false values. Do not quote them.
+# A per-config .toml.lock file will be created alongside the actual TOML.
+# The TOML directory must be writable; the lock cannot be disabled for safety.
+# Different TOML paths use different locks, even if ZFS destinations overlap.
 
 # ============================================================
 # BACKUP METADATA

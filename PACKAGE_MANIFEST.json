@@ -1,29 +1,35 @@
 {
-  "version": "0.4.44",
-  "previous_version": "0.4.43",
-  "source_archive": "Syncerate-0.4.43.zip",
-  "source_archive_sha256": "5b85b205ec2813e18532e942e0f9132b186ffa952f01f682b2c16553092b6ef3",
-  "original_file_count": 41,
-  "release_file_count": 42,
+  "version": "0.4.48",
+  "previous_version": "0.4.47",
+  "source_archive": "Syncerate-0.4.47.zip",
+  "source_archive_sha256": "7147bbd83098a09867521313ade2373d3c3d4fde53fce316c5e35884c8222710",
+  "original_file_count": 43,
+  "release_file_count": 45,
   "added": [
-    "build-pyinstaller.sh",
-    "dist/README.md"
+    "syncerate/locking.py",
+    "tests/test_locking.py"
   ],
-  "removed": [
-    "build_pyinstaller.sh"
-  ],
+  "removed": [],
   "modified": [
     ".gitignore",
-    "PACKAGE_MANIFEST.json",
     "README.md",
+    "Syncerate.py",
     "VERIFICATION.md",
     "VERSIONING.md",
+    "build-pyinstaller.sh",
     "commented_code_map.md",
+    "config/example-Syncerate.toml",
+    "dist/README.md",
     "syncerate/__init__.py",
+    "syncerate/app.py",
+    "syncerate/cli.py",
+    "syncerate/errors.py",
+    "syncerate/logging_setup.py",
+    "syncerate/notifications.py",
     "tests/test_packaging.py"
   ],
   "unchanged": [
-    "Syncerate.py",
+    "PACKAGE_MANIFEST.json",
     "Syncerate.spec",
     "_config.yaml",
     "_layouts/default.html",
@@ -32,24 +38,19 @@
     "config/HomeAssistant Automation - 2.png",
     "config/HomeAssistant-Automation-For-MQTT-JSON.yaml",
     "config/HomeAssistant-Configuration-For-MQTT.yaml",
-    "config/example-Syncerate.toml",
     "config/example-dest-file",
     "config/example-source-file",
     "dist/Syncerate",
     "requirements-build.txt",
-    "syncerate/app.py",
-    "syncerate/cli.py",
     "syncerate/config.py",
     "syncerate/datasets.py",
-    "syncerate/errors.py",
-    "syncerate/logging_setup.py",
     "syncerate/models.py",
-    "syncerate/notifications.py",
     "syncerate/syncoid_runner.py",
     "syncerate/system_actions.py",
     "tests/__init__.py",
     "tests/helpers.py",
     "tests/test_app_and_logging.py",
+    "tests/test_cli_contract.py",
     "tests/test_config.py",
     "tests/test_datasets.py",
     "tests/test_notifications.py",
@@ -58,187 +59,20 @@
   ],
   "self_hash_excluded": "PACKAGE_MANIFEST.json",
   "original_files": {
-    "VERSIONING.md": {
-      "sha256": "69ee1b845111ee88457cdb06b229d54e109d029e080554451728c66c19a73a5c",
-      "mode": "0644"
-    },
-    "syncerate/notifications.py": {
-      "sha256": "9fe491374a21ef4febf1d7d99d1453b5c928bf553e89af7063c0b0c46cadd56b",
-      "mode": "0644"
-    },
-    "syncerate/cli.py": {
-      "sha256": "71e893a3407b91accc9767d7a1461b0f7e60df8968cce1e8212ba973283a96fd",
-      "mode": "0644"
-    },
-    "syncerate/models.py": {
-      "sha256": "aba86e0a8d589c9653df420bb9b364b149e5b2ae88d64e181c9bb9ab3f9585c8",
-      "mode": "0644"
-    },
-    "syncerate/logging_setup.py": {
-      "sha256": "2d86b905d186b7410c402e2fe904a5c152a5f3b60806fd1fb8d10e6d32ff549a",
-      "mode": "0644"
-    },
-    "syncerate/config.py": {
-      "sha256": "99a75ba98a5e84098fa5d1630a32ae55b2bb851d8fedb68af2e0a42089914b7a",
-      "mode": "0644"
-    },
-    "syncerate/app.py": {
-      "sha256": "6269aa8966edd0b65ff2d9f3d6ab15a06100956bbaad8d102845d185952400f9",
-      "mode": "0644"
-    },
-    "syncerate/__init__.py": {
-      "sha256": "75d7310ea443f3b43dfa27820b5e111c4cd0308a35863ce33e4529bbdf4e9ae6",
-      "mode": "0644"
-    },
-    "syncerate/datasets.py": {
-      "sha256": "a21dc0eebffc8366a1e7364021af6d2088b3a17851cf49b3c6a0d80861e19c06",
-      "mode": "0644"
-    },
-    "syncerate/syncoid_runner.py": {
-      "sha256": "e713a257d712a7353ff0e1eeea49f19c452062d9024597249120e60f61d45113",
-      "mode": "0644"
-    },
-    "syncerate/errors.py": {
-      "sha256": "f83fee742141b5f95947d5fba0385a653f6d2289d9ec5062a0926fea3cfed3ad",
-      "mode": "0644"
-    },
-    "syncerate/system_actions.py": {
-      "sha256": "71b9e5772208b2c06fa04562bdb731fd91465e8579cd37aa5ff1e53b9f90220b",
-      "mode": "0644"
-    },
-    "requirements-build.txt": {
-      "sha256": "0f67636ffd456dfdb08022dbb6eed777edee5c801d0a2574cf1c75c7b4ceb16c",
-      "mode": "0644"
-    },
-    "_layouts/default.html": {
-      "sha256": "c0c1951a0e3c383429e710129c5a0ed94c58f68085982706c6a145595bf5373f",
-      "mode": "0644"
-    },
-    "commented_code_map.md": {
-      "sha256": "803dacc9b286ae56988ac07ce6531bdec797c5fe4b5275ada35d313fc047b01d",
-      "mode": "0644"
-    },
-    "Syncerate.spec": {
-      "sha256": "82acb2520b98dfc156e3917d548727f46227854c5f15382065f4afae65d5a7f2",
-      "mode": "0644"
-    },
-    "_config.yaml": {
-      "sha256": "bf18ada068955a80463a3dcf6bf14a4b093c36a0ead9c4f307c74a86149f4946",
-      "mode": "0644"
-    },
-    "README.md": {
-      "sha256": "7bc071e88627c790346f82d715c37ed315d842dd775b54320ad8262edcd3d0d3",
-      "mode": "0644"
-    },
-    "dist/Syncerate": {
-      "sha256": "03fb943defa8b5b3be04663f8131704be807f523bf4d197f85e07be2c3f934bb",
-      "mode": "0755"
-    },
-    "config/HomeAssistant Automation - 1.png": {
-      "sha256": "685d6fb83a1f63259bb15fb3ceb7b5d68b95d97e547bccbf8bbce389497dd843",
-      "mode": "0644"
-    },
-    "config/example-Syncerate.toml": {
-      "sha256": "e61fe2192d4487c2702a6921eab50e53b0c4801074ad5d612c2bfc0d43b6514c",
-      "mode": "0644"
-    },
-    "config/HomeAssistant Automation - 2.png": {
-      "sha256": "988bcd0ff3a540c27f518c5a0cc6e58c5754fab40ed1cb36232cff102294d2e4",
-      "mode": "0644"
-    },
-    "config/HomeAssistant-Configuration-For-MQTT.yaml": {
-      "sha256": "e862544bce508a5c069888b3f2e976a080cfee9e4f23695fdb201fd724e39b64",
-      "mode": "0644"
-    },
-    "config/HomeAssistant-Automation-For-MQTT-JSON.yaml": {
-      "sha256": "38c575e8a7b9e75596b387f79b32d0931632499419029fc6501dfa1689aabcda",
-      "mode": "0644"
-    },
-    "config/example-dest-file": {
-      "sha256": "3b99b9924c0377172c9e1641ca64cb1f9c6f9e80fa86d02a40e6f97f7552d8bb",
-      "mode": "0644"
-    },
-    "config/example-source-file": {
-      "sha256": "2a47677fde743e70b26d70c749a90ceadfa18d2c91adfffe2e5264387aeaba6e",
-      "mode": "0644"
-    },
-    "config/Daily backup at cheapest time - Continue on error without losing progress": {
-      "sha256": "89d3c612fdb5bc8fdab7bd1999c84ee782038e3b780d4179bb30741c01c2fcb4",
-      "mode": "0644"
-    },
-    ".gitignore": {
-      "sha256": "7706f9138d6b7db24ab46f92c3336ebc78cef3456bae465c3f9ac56e4d3e10bb",
-      "mode": "0644"
-    },
-    "PACKAGE_MANIFEST.json": {
-      "sha256": "24ebd1f1e54edc3d7fb1a0560e8bc6f6fcda44f794f681b4781daa863fa0f9da",
-      "mode": "0644"
-    },
-    "VERIFICATION.md": {
-      "sha256": "0d6eaafc482f2d9328525e62d441e6efd028c40d2881ef943a23e932e9ee8951",
-      "mode": "0644"
-    },
-    "Syncerate.py": {
-      "sha256": "e0478f9c7c3a6b9bc5f220409be4a6dd15e66ba6e2e330d70f4d187a018fed80",
-      "mode": "0755"
-    },
-    "tests/test_notifications.py": {
-      "sha256": "0f78d489fa88d7ce53f3828f3127ac74f9c847324a31c38e9d0a20f956755ac4",
-      "mode": "0644"
-    },
-    "tests/__init__.py": {
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "mode": "0644"
-    },
-    "tests/test_datasets.py": {
-      "sha256": "6056589cedd4e6167f11126f839fbdafd3945fcd90b849e680091f11a09f405f",
-      "mode": "0644"
-    },
-    "tests/test_syncoid_runner.py": {
-      "sha256": "383d9442db4ea8a6a94466a45e43aa664be6c825cb84b92d0fe3d6dd31eb2ee7",
-      "mode": "0644"
-    },
-    "tests/test_system_actions.py": {
-      "sha256": "567e333e15d210f54f9232487bb47702ef4f47d84fdb9bab3941730bcfb2e25f",
-      "mode": "0644"
-    },
-    "tests/helpers.py": {
-      "sha256": "47467414ce9ff769c675226bbca9f855b66c3e360d8f6864ef4244af7f11eaf7",
-      "mode": "0644"
-    },
-    "tests/test_config.py": {
-      "sha256": "4c4b7d19eec8399d446e84b38d991726bad95d197027e0c33fd1cb069d530e5b",
-      "mode": "0644"
-    },
-    "tests/test_packaging.py": {
-      "sha256": "d60b755489965a982f0d6c9448d435009f57fbb7d6d149d91e324bcc23afb266",
-      "mode": "0644"
-    },
-    "tests/test_app_and_logging.py": {
-      "sha256": "b1d2285bfa4d8a84c43cfc1306fee5357de9a488d8905d8b5fb6e3ecaacf132b",
-      "mode": "0644"
-    },
-    "build_pyinstaller.sh": {
-      "sha256": "ddadceec6c75bff095eb250d589461354c3601f6c0967fd5d1c69ea8c6a27091",
-      "mode": "0755"
-    }
-  },
-  "release_files": {
     ".gitignore": {
       "sha256": "aa1892ddd32c6f20cf201af749267bd1a2224ff3ee051f56e62eafd88419e441",
       "mode": "0644"
     },
     "PACKAGE_MANIFEST.json": {
-      "sha256": null,
-      "mode": "0644",
-      "note": "release hash intentionally excluded because this file describes itself"
+      "sha256": "6cd1659e9af80c9b9f35193760c7f3f76b7889dea77cd9c7f11c1378ad125e2a",
+      "mode": "0644"
     },
     "README.md": {
-      "sha256": "3806bc6802b2be0a692b953e91d21b4324709b6af02c48068fa99b5a430be729",
+      "sha256": "f9f7cc2203e43a6001a85e8f8b6b15985e4ae11a533a19a289fd94f8718c8f68",
       "mode": "0644"
     },
     "Syncerate.py": {
-      "sha256": "e0478f9c7c3a6b9bc5f220409be4a6dd15e66ba6e2e330d70f4d187a018fed80",
+      "sha256": "ee9c99011dedbfa36f4589e21a78c07538f4679f90d4957882944c89979169d9",
       "mode": "0755"
     },
     "Syncerate.spec": {
@@ -246,11 +80,11 @@
       "mode": "0644"
     },
     "VERIFICATION.md": {
-      "sha256": "c454f29c4e0b5e542f515930f7c5c583f5d171992802ae5ec575b866697116cd",
+      "sha256": "1f90d66f8628a5063bfe805815930c997584be42603833bae492121450fe559e",
       "mode": "0644"
     },
     "VERSIONING.md": {
-      "sha256": "186eeac8f2799f578785a33dd95b7a904f50c602ee37ac967437cfe1a5082221",
+      "sha256": "28191f03619b954df1f39cced0e1fb9d6845faed02d8f2d408544d97a3f3ca16",
       "mode": "0644"
     },
     "_config.yaml": {
@@ -262,11 +96,11 @@
       "mode": "0644"
     },
     "build-pyinstaller.sh": {
-      "sha256": "0a9003917cf6f00c82ebe8993be81835868c6173b02964213c7c57184cf354b6",
+      "sha256": "6e0e1e00acc4111c15adce488e0bd83067e76e73b0a65b96dd54d899b41ba247",
       "mode": "0755"
     },
     "commented_code_map.md": {
-      "sha256": "a2012aa11c8a0fe8ea23a8bafb7254180ed3b1a1483b8ce31bdd6b81a1ed33fd",
+      "sha256": "3070b9cbeaa8d737848fabb70ec332f8999dde85e0f3f115aa32c62fab8d8621",
       "mode": "0644"
     },
     "config/Daily backup at cheapest time - Continue on error without losing progress": {
@@ -302,7 +136,7 @@
       "mode": "0644"
     },
     "dist/README.md": {
-      "sha256": "b876e05bd21f70d9046f259615dda2fc20ae2ca835be803e2f02a4de6bd3efca",
+      "sha256": "4a45ee7c8af900d040ebe18be453a3b6cd2f0c3cd24a61ca40ea9a34a5c815c1",
       "mode": "0644"
     },
     "dist/Syncerate": {
@@ -314,11 +148,11 @@
       "mode": "0644"
     },
     "syncerate/__init__.py": {
-      "sha256": "c05e7c265c766e11ba5023685173d6c1162adc5039c320da274027be1ba6ac17",
+      "sha256": "37b46512e8cc3b7c184174abc12f58b3f6eaeb1aa3b0cd935473b1fdc3fb12c0",
       "mode": "0644"
     },
     "syncerate/app.py": {
-      "sha256": "6269aa8966edd0b65ff2d9f3d6ab15a06100956bbaad8d102845d185952400f9",
+      "sha256": "576b0346a1ee28f6b1b382baa4e44ad4fe52f08aa0adac8e77c74e96b1685496",
       "mode": "0644"
     },
     "syncerate/cli.py": {
@@ -334,23 +168,23 @@
       "mode": "0644"
     },
     "syncerate/errors.py": {
-      "sha256": "f83fee742141b5f95947d5fba0385a653f6d2289d9ec5062a0926fea3cfed3ad",
+      "sha256": "be81fe964ac3e07cc4c0b5f32ba1effa4be2347e7bd84d04a932548d148a4ef6",
       "mode": "0644"
     },
     "syncerate/logging_setup.py": {
-      "sha256": "2d86b905d186b7410c402e2fe904a5c152a5f3b60806fd1fb8d10e6d32ff549a",
+      "sha256": "3dc8f6129f3b3549f522a7f5debdfed36b24d2d34f8891cfa7da586fa756783a",
       "mode": "0644"
     },
     "syncerate/models.py": {
-      "sha256": "aba86e0a8d589c9653df420bb9b364b149e5b2ae88d64e181c9bb9ab3f9585c8",
+      "sha256": "c3c5e3ebdc73f493981c5bf8d6cb5fe78a05941599f789d228393e8e7524810c",
       "mode": "0644"
     },
     "syncerate/notifications.py": {
-      "sha256": "9fe491374a21ef4febf1d7d99d1453b5c928bf553e89af7063c0b0c46cadd56b",
+      "sha256": "fb53f483ae4e950eb461211ba6d69c5f094951f68ef7cea73e703451695bc3e2",
       "mode": "0644"
     },
     "syncerate/syncoid_runner.py": {
-      "sha256": "e713a257d712a7353ff0e1eeea49f19c452062d9024597249120e60f61d45113",
+      "sha256": "91db9f0fa2c64d119ea0a0e910a87ae67c29d97a1b50eeee2edddafeefae862c",
       "mode": "0644"
     },
     "syncerate/system_actions.py": {
@@ -366,7 +200,11 @@
       "mode": "0644"
     },
     "tests/test_app_and_logging.py": {
-      "sha256": "b1d2285bfa4d8a84c43cfc1306fee5357de9a488d8905d8b5fb6e3ecaacf132b",
+      "sha256": "0904aa6ca7e85abd4a1384bb4e214d67690f32bdcc8994f3a7797e68e590c475",
+      "mode": "0644"
+    },
+    "tests/test_cli_contract.py": {
+      "sha256": "e7b593c7ca3c7d107cc9a8a1b20a6546ebbb3c338762b52c6571df66e92ba2a4",
       "mode": "0644"
     },
     "tests/test_config.py": {
@@ -378,15 +216,193 @@
       "mode": "0644"
     },
     "tests/test_notifications.py": {
-      "sha256": "0f78d489fa88d7ce53f3828f3127ac74f9c847324a31c38e9d0a20f956755ac4",
+      "sha256": "f1e015b36ebc01bfa0ca6378fcf70d9252697795038a454cc9372f3cb06b904a",
       "mode": "0644"
     },
     "tests/test_packaging.py": {
-      "sha256": "a576e1d4902e9187a4e7c2cec9cfbfffdd6f5a4dba6bf0b32e1de8d8b6590bae",
+      "sha256": "cd149e124cd6e074b930827abcac659d2a92ecedb5121d718268aed1ef540159",
       "mode": "0644"
     },
     "tests/test_syncoid_runner.py": {
-      "sha256": "383d9442db4ea8a6a94466a45e43aa664be6c825cb84b92d0fe3d6dd31eb2ee7",
+      "sha256": "ebabc07e5ba43bfe9f5f252bed07dfd87b9b6363362c6fb38e3210987291b765",
+      "mode": "0644"
+    },
+    "tests/test_system_actions.py": {
+      "sha256": "567e333e15d210f54f9232487bb47702ef4f47d84fdb9bab3941730bcfb2e25f",
+      "mode": "0644"
+    }
+  },
+  "release_files": {
+    ".gitignore": {
+      "sha256": "d2083f655eef7db10b773a3c68850d14bc145be3a096be967a43cc1d1c81595f",
+      "mode": "0644"
+    },
+    "README.md": {
+      "sha256": "e01df1895fe7ad36c46fa79314158b7a15440b6c15635b61da22ecb1151d48ee",
+      "mode": "0644"
+    },
+    "Syncerate.py": {
+      "sha256": "ff9778e4aa97b78d4012232c954bb0828ef03db914cfa1e37739066ddba04761",
+      "mode": "0755"
+    },
+    "Syncerate.spec": {
+      "sha256": "82acb2520b98dfc156e3917d548727f46227854c5f15382065f4afae65d5a7f2",
+      "mode": "0644"
+    },
+    "VERIFICATION.md": {
+      "sha256": "6c026ce8a7f21b6c0c0cab013a5e0f2075fa6b07b5eed0fafcc6a8f735ac5673",
+      "mode": "0644"
+    },
+    "VERSIONING.md": {
+      "sha256": "d1ab0160878041b2b1881af77aceeacd4fa9c8fd3be72ac8b79ff1c7b660ab71",
+      "mode": "0644"
+    },
+    "_config.yaml": {
+      "sha256": "bf18ada068955a80463a3dcf6bf14a4b093c36a0ead9c4f307c74a86149f4946",
+      "mode": "0644"
+    },
+    "_layouts/default.html": {
+      "sha256": "c0c1951a0e3c383429e710129c5a0ed94c58f68085982706c6a145595bf5373f",
+      "mode": "0644"
+    },
+    "build-pyinstaller.sh": {
+      "sha256": "f25c1c7e474b9846adc0844c6064e0403236b0681083702c5fb31b58b7d1dbfa",
+      "mode": "0755"
+    },
+    "commented_code_map.md": {
+      "sha256": "c285db239f110b0030c3eb47f1719e1773704e222a1acc744f01418f55084dfe",
+      "mode": "0644"
+    },
+    "config/Daily backup at cheapest time - Continue on error without losing progress": {
+      "sha256": "89d3c612fdb5bc8fdab7bd1999c84ee782038e3b780d4179bb30741c01c2fcb4",
+      "mode": "0644"
+    },
+    "config/HomeAssistant Automation - 1.png": {
+      "sha256": "685d6fb83a1f63259bb15fb3ceb7b5d68b95d97e547bccbf8bbce389497dd843",
+      "mode": "0644"
+    },
+    "config/HomeAssistant Automation - 2.png": {
+      "sha256": "988bcd0ff3a540c27f518c5a0cc6e58c5754fab40ed1cb36232cff102294d2e4",
+      "mode": "0644"
+    },
+    "config/HomeAssistant-Automation-For-MQTT-JSON.yaml": {
+      "sha256": "38c575e8a7b9e75596b387f79b32d0931632499419029fc6501dfa1689aabcda",
+      "mode": "0644"
+    },
+    "config/HomeAssistant-Configuration-For-MQTT.yaml": {
+      "sha256": "e862544bce508a5c069888b3f2e976a080cfee9e4f23695fdb201fd724e39b64",
+      "mode": "0644"
+    },
+    "config/example-Syncerate.toml": {
+      "sha256": "263bdb61d450ec08743b6639c217f834b00e718057b598e377e1e206f406d804",
+      "mode": "0644"
+    },
+    "config/example-dest-file": {
+      "sha256": "3b99b9924c0377172c9e1641ca64cb1f9c6f9e80fa86d02a40e6f97f7552d8bb",
+      "mode": "0644"
+    },
+    "config/example-source-file": {
+      "sha256": "2a47677fde743e70b26d70c749a90ceadfa18d2c91adfffe2e5264387aeaba6e",
+      "mode": "0644"
+    },
+    "dist/README.md": {
+      "sha256": "c48cae14ed9355c2f3ffff4c1d867add931fffa023f35cc15021089bb647a73b",
+      "mode": "0644"
+    },
+    "dist/Syncerate": {
+      "sha256": "03fb943defa8b5b3be04663f8131704be807f523bf4d197f85e07be2c3f934bb",
+      "mode": "0755"
+    },
+    "requirements-build.txt": {
+      "sha256": "0f67636ffd456dfdb08022dbb6eed777edee5c801d0a2574cf1c75c7b4ceb16c",
+      "mode": "0644"
+    },
+    "syncerate/__init__.py": {
+      "sha256": "ca0d0f11137e59d7ad1b1c96b49dd0f5ab392dab91f31e5d25759cd199b0a878",
+      "mode": "0644"
+    },
+    "syncerate/app.py": {
+      "sha256": "3953b5710fa8196246c9f0e2033c7994bfef92e9b8fed094f8eee371cc5ff20d",
+      "mode": "0644"
+    },
+    "syncerate/cli.py": {
+      "sha256": "332a3517ff31ba15cd483df6a47a95f9721384be56ba70988e8eb47f5da85b16",
+      "mode": "0644"
+    },
+    "syncerate/config.py": {
+      "sha256": "99a75ba98a5e84098fa5d1630a32ae55b2bb851d8fedb68af2e0a42089914b7a",
+      "mode": "0644"
+    },
+    "syncerate/datasets.py": {
+      "sha256": "a21dc0eebffc8366a1e7364021af6d2088b3a17851cf49b3c6a0d80861e19c06",
+      "mode": "0644"
+    },
+    "syncerate/errors.py": {
+      "sha256": "a64852e78c0b9b6e67aef2b906f19d40d86581fc200b5ed60fd71afa601070bc",
+      "mode": "0644"
+    },
+    "syncerate/locking.py": {
+      "sha256": "86bcc37fc30d01631fc6a5e6808ad159a10032c6d6f2116d0f5a4afaf27c6481",
+      "mode": "0644"
+    },
+    "syncerate/logging_setup.py": {
+      "sha256": "1fadded7a16c655fa590231233269603fe0850044d8d06e874d9280f629a7b7b",
+      "mode": "0644"
+    },
+    "syncerate/models.py": {
+      "sha256": "c3c5e3ebdc73f493981c5bf8d6cb5fe78a05941599f789d228393e8e7524810c",
+      "mode": "0644"
+    },
+    "syncerate/notifications.py": {
+      "sha256": "3aba6ecf4253778b899f647be6f9567e8f18b1e169b8b03dd9911f976727195d",
+      "mode": "0644"
+    },
+    "syncerate/syncoid_runner.py": {
+      "sha256": "91db9f0fa2c64d119ea0a0e910a87ae67c29d97a1b50eeee2edddafeefae862c",
+      "mode": "0644"
+    },
+    "syncerate/system_actions.py": {
+      "sha256": "71b9e5772208b2c06fa04562bdb731fd91465e8579cd37aa5ff1e53b9f90220b",
+      "mode": "0644"
+    },
+    "tests/__init__.py": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0644"
+    },
+    "tests/helpers.py": {
+      "sha256": "47467414ce9ff769c675226bbca9f855b66c3e360d8f6864ef4244af7f11eaf7",
+      "mode": "0644"
+    },
+    "tests/test_app_and_logging.py": {
+      "sha256": "0904aa6ca7e85abd4a1384bb4e214d67690f32bdcc8994f3a7797e68e590c475",
+      "mode": "0644"
+    },
+    "tests/test_cli_contract.py": {
+      "sha256": "e7b593c7ca3c7d107cc9a8a1b20a6546ebbb3c338762b52c6571df66e92ba2a4",
+      "mode": "0644"
+    },
+    "tests/test_config.py": {
+      "sha256": "4c4b7d19eec8399d446e84b38d991726bad95d197027e0c33fd1cb069d530e5b",
+      "mode": "0644"
+    },
+    "tests/test_datasets.py": {
+      "sha256": "6056589cedd4e6167f11126f839fbdafd3945fcd90b849e680091f11a09f405f",
+      "mode": "0644"
+    },
+    "tests/test_locking.py": {
+      "sha256": "618cf3294e6c5ce1617bdf2a739c60b0eb8f7bcda9248ef81b40f176e953d7ed",
+      "mode": "0644"
+    },
+    "tests/test_notifications.py": {
+      "sha256": "f1e015b36ebc01bfa0ca6378fcf70d9252697795038a454cc9372f3cb06b904a",
+      "mode": "0644"
+    },
+    "tests/test_packaging.py": {
+      "sha256": "055c9e15a2f905c86743d0e2288cf1651eed4500796a112d8b5afc5dbb46f6a5",
+      "mode": "0644"
+    },
+    "tests/test_syncoid_runner.py": {
+      "sha256": "ebabc07e5ba43bfe9f5f252bed07dfd87b9b6363362c6fb38e3210987291b765",
       "mode": "0644"
     },
     "tests/test_system_actions.py": {
