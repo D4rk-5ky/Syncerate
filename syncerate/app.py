@@ -8,7 +8,7 @@ from typing import Optional, Sequence
 
 from .cli import parse_arguments
 from .config import load_app_config
-from .datasets import load_dataset_pairs
+from .datasets import load_dataset_pairs, format_dataset_validation_report
 from .errors import EXIT_DATASET_MISSING, EXIT_OK, EXIT_SCRIPT_ERROR, SyncerateError
 from .locking import BackupLock
 from .logging_setup import (
@@ -362,6 +362,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             logger = get_console_logger()
 
         log_syncerate_error(error, logger)
+        # An invalid dataset list is a preflight failure: all unattempted
+        # pairs are still unattempted, not failed replication operations.
+        if error.dataset_validation_report is not None:
+            replication_summary = ReplicationSummary(
+                total_datasets=error.dataset_validation_report.source_count
+            )
         runtime_seconds = time.monotonic() - started_at
         completed_failure_summary = replication_summary
         if (
@@ -401,6 +407,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 len(dataset_pairs) if dry_run and dataset_pairs is not None else None
             ),
         )
+        # Keep the actionable mismatches as the last terminal/log output,
+        # after the run summary and any notification delivery diagnostics.
+        if error.dataset_validation_report is not None:
+            logger.error("")
+            logger.error("========== DATASET VALIDATION FAILURE ==========")
+            for line in format_dataset_validation_report(error.dataset_validation_report).splitlines():
+                logger.error("%s", line)
+            logger.error("========== END DATASET VALIDATION FAILURE ==========")
         return error.exit_code
 
     except Exception:

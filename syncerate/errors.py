@@ -1,5 +1,8 @@
 """Exit codes and the application exception used across Syncerate."""
 
+from typing import Optional
+from .models import DatasetValidationReport
+
 EXIT_OK = 0
 EXIT_LIST_ERROR = 1
 EXIT_SCRIPT_ERROR = 2
@@ -28,6 +31,7 @@ class SyncerateError(Exception):
         child_before: str = "",
         child_warning: str = "",
         syncoid_before: str = "",
+        dataset_validation_report: Optional[DatasetValidationReport] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -36,3 +40,4 @@ class SyncerateError(Exception):
         self.child_before = child_before
         self.child_warning = child_warning
         self.syncoid_before = syncoid_before
+        self.dataset_validation_report = dataset_validation_report

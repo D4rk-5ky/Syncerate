@@ -11,7 +11,8 @@ from .errors import (
     EXIT_OK, EXIT_OUT_OF_SPACE, SyncerateError,
 )
 from .logging_setup import format_final_run_summary, format_missing_dataset_failures
-from .models import AppConfig, DatasetPair, ReplicationSummary, RunContext
+from .datasets import format_dataset_validation_report
+from .models import AppConfig, DatasetPair, DatasetValidationReport, ReplicationSummary, RunContext
 
 
 BROKEN_PIPE_SUCCESS_SUBJECT = "Syncerate Succsful - WARNING BROKEN PIPE"
@@ -124,6 +125,7 @@ def MailTo(
     DryRunReportText: str = "",
     DryRunDatasetCount: Optional[int] = None,
     ErrorMessage: str = "",
+    ValidationReport: Optional[DatasetValidationReport] = None,
 ) -> None:
     """Build and send success, warning-success, and error mail variants.
 
@@ -414,7 +416,9 @@ def MailTo(
 
     if Exit_Code is not None and Exit_Code != EXIT_OK:
         failure_subject = (
-            "Error running Syncerate.py - ZFS destination out of space"
+            "Error running Syncerate.py - Source/destination datasets mismatch"
+            if ValidationReport is not None
+            else "Error running Syncerate.py - ZFS destination out of space"
             if Exit_Code == EXIT_OUT_OF_SPACE
             else "Error running Syncerate.py - Backup already running"
             if Exit_Code == EXIT_BACKUP_LOCKED
@@ -423,6 +427,12 @@ def MailTo(
             else "Error running Syncerate.py - This was a script error"
         )
         error_details = f"Failure reason: {ErrorMessage}\n\n" if ErrorMessage else ""
+        # Report mismatches at the very top, before the final run summary.
+        # Keep the regular failure reason and attached/inline logs afterwards.
+        mismatch_header = (
+            format_dataset_validation_report(ValidationReport) + "\n\n----------\n\n"
+            if ValidationReport is not None else ""
+        )
         if logging_enabled:
             assert log_file is not None
             assert error_file is not None
@@ -432,7 +442,7 @@ def MailTo(
             if output_file is not None and os.path.isfile(output_file):
                 attachment_files.append(output_file)
 
-            body = summary_header(ReplicationSummaryData) + error_details + inline_failure_logs()
+            body = mismatch_header + summary_header(ReplicationSummaryData) + error_details + inline_failure_logs()
 
             mail_exit_code, stderr_output = send_mail(
                 subject,
@@ -444,7 +454,7 @@ def MailTo(
             subject_and_body = dry_run_subject_prefix + failure_subject + " (Logs Disabled)"
             mail_exit_code, stderr_output = send_mail(
                 subject_and_body,
-                summary_header(ReplicationSummaryData) + error_details + subject_and_body,
+                mismatch_header + summary_header(ReplicationSummaryData) + error_details + subject_and_body,
                 recipient,
             )
 
@@ -474,6 +484,7 @@ def build_mqtt_status_payload(
     replication_summary: Optional[ReplicationSummary] = None,
     dry_run: bool = False,
     dry_run_dataset_pairs: Optional[list[DatasetPair]] = None,
+    validation_report: Optional[DatasetValidationReport] = None,
 ) -> str:
     """Build the JSON status payload consumed by Home Assistant MQTT automations."""
 
@@ -526,6 +537,20 @@ def build_mqtt_status_payload(
         "skipped_datasets": skipped_datasets,
         "failed_datasets": failed_datasets,
     }
+    if validation_report is not None:
+        def as_dict(comparison: object) -> dict[str, Any]:
+            return {
+                "line": comparison.line_number,
+                "source": comparison.source,
+                "destination": comparison.destination,
+                "reason": comparison.reason,
+            }
+        payload["matching_datasets"] = [as_dict(pair) for pair in validation_report.matches]
+        payload["mismatching_datasets"] = [as_dict(pair) for pair in validation_report.mismatches]
+        payload["source_dataset_count"] = validation_report.source_count
+        payload["destination_dataset_count"] = validation_report.destination_count
+        # Preserve Home Assistant consumers already reading failed_datasets.
+        payload["failed_datasets"].extend(as_dict(pair) for pair in validation_report.mismatches)
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -540,6 +565,7 @@ def send_mqtt_messages(
     replication_summary: Optional[ReplicationSummary] = None,
     dry_run: bool = False,
     dry_run_dataset_pairs: Optional[list[DatasetPair]] = None,
+    validation_report: Optional[DatasetValidationReport] = None,
 ) -> None:
     """Publish real success signals, dry-run reports, or failure JSON."""
 
@@ -621,6 +647,7 @@ def send_mqtt_messages(
             replication_summary=replication_summary,
             dry_run=dry_run,
             dry_run_dataset_pairs=dry_run_dataset_pairs,
+            validation_report=validation_report,
         )
         messages.append(
             {
@@ -692,6 +719,7 @@ def send_mqtt_failure_status(
             stderr_text=mqtt_error_output(error),
             replication_summary=replication_summary,
             dry_run=dry_run,
+            validation_report=error.dataset_validation_report,
         )
     except SyncerateError:
         logger.exception(
@@ -763,6 +791,7 @@ def send_error_mail(
                 DryRun=dry_run,
                 DryRunDatasetCount=dry_run_dataset_count,
                 ErrorMessage=error.message,
+                ValidationReport=error.dataset_validation_report,
             )
     except Exception:
         logger.exception("Additionally failed to send the error mail")

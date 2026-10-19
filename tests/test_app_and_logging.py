@@ -11,6 +11,7 @@ from unittest import mock
 from syncerate.app import main, successfull_run
 from syncerate.cli import parse_arguments
 from syncerate.logging_setup import (
+    format_final_run_summary,
     format_runtime_duration,
     format_transfer_size,
     log_final_run_summary,
@@ -98,12 +99,54 @@ class AppAndLoggingTests(unittest.TestCase):
         self.assertLess(second_line_index, transferred_index)
         self.assertEqual(lines[transferred_index - 1], "")
         self.assertIn("1.50 GB", lines[transferred_index])
-        self.assertEqual(lines[transferred_index + 1], "Total datasets   :   Unavailable")
-        self.assertEqual(lines[transferred_index + 2], "Completed datasets :   0")
-        self.assertEqual(lines[transferred_index + 3], "Failed datasets  :   0")
-        self.assertEqual(lines[transferred_index + 4], "")
-        self.assertEqual(runtime_index, transferred_index + 5)
+        self.assertEqual(lines[transferred_index + 1], "")
+        self.assertEqual(lines[transferred_index + 2], "Total datasets   :   Unavailable")
+        self.assertEqual(lines[transferred_index + 3], "")
+        self.assertEqual(lines[transferred_index + 4], "Completed datasets :   0")
+        self.assertEqual(lines[transferred_index + 5], "")
+        self.assertEqual(lines[transferred_index + 6], "Failed datasets  :   0")
+        self.assertEqual(lines[transferred_index + 7], "")
+        self.assertEqual(runtime_index, transferred_index + 8)
         self.assertIn("00:01:02.345", lines[runtime_index])
+
+    def test_final_summary_separates_every_content_line_in_all_run_modes(self):
+        config = make_config(
+            backup_title="Nightly backup",
+            backup_comment="First line\nSecond line\n\nFourth line",
+        )
+        complete = ReplicationSummary(
+            total_datasets=3, completed_datasets=3, attempted_datasets=3,
+            transferred_bytes=1024,
+        )
+        failed = ReplicationSummary(
+            total_datasets=3, completed_datasets=1, attempted_datasets=2,
+            transfer_measurement_complete=False,
+        )
+        cases = (
+            {"replication_summary": complete},
+            {"replication_summary": failed},
+            {"dry_run": True, "planned_dataset_count": 3},
+            {},  # Preflight failure without an established dataset count.
+        )
+        for options in cases:
+            with self.subTest(options=options):
+                summary_text = format_final_run_summary(config, 5.1, **options)
+                summary_lines = summary_text.splitlines()
+                for first, second in zip(summary_lines, summary_lines[1:]):
+                    self.assertFalse(first and second, summary_text)
+                self.assertIn("Backup comment  :   First line\n\n", summary_text)
+                self.assertIn("Second line\n\n", summary_text)
+                self.assertIn("Total datasets   :   ", summary_text)
+                self.assertIn("\n\nCompleted datasets :   ", summary_text)
+                self.assertIn("\n\nFailed datasets  :   ", summary_text)
+                self.assertIn("\n\nTotal runtime   :   00:00:05.100", summary_text)
+                if options.get("dry_run"):
+                    self.assertIn("Run mode        :   DRY RUN (no replication performed)\n\n"
+                                  "Dataset pairs planned :   3", summary_text)
+                    self.assertNotIn("Data transferred", summary_text)
+                else:
+                    self.assertIn("Data transferred :   ", summary_text)
+                    self.assertIn("\n\nTotal datasets   :   ", summary_text)
 
     def test_startup_multiline_comment_prefixes_every_physical_log_line(self):
         raw = {
@@ -681,8 +724,8 @@ class AppAndLoggingTests(unittest.TestCase):
             self.assertIn("Final run summary\n\nBackup title    :   Mail timer test\n\nBackup comment  :   First line", body)
             self.assertIn("Backup comment  :   First line", body)
             self.assertIn(
-                "Second line\n\nData transferred :   0.00 KB\n"
-                "Total datasets   :   1\nCompleted datasets :   1\n"
+                "Second line\n\nData transferred :   0.00 KB\n\n"
+                "Total datasets   :   1\n\nCompleted datasets :   1\n\n"
                 "Failed datasets  :   0\n\nTotal runtime   :", body
             )
             copied_log = body.split(".log file", 1)[1]

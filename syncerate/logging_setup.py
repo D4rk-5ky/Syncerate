@@ -246,7 +246,17 @@ def format_final_run_summary(
     )
     lines.append("")
     lines.append(f"Total runtime   :   {format_runtime_duration(elapsed_seconds)}")
-    return "\n".join(lines)
+
+    # Put one blank line between every populated summary line, including
+    # multiline backup comments. Preserve existing empty lines so deliberate
+    # spacing inside user-provided comments is not discarded. Because email
+    # and logging use this formatter, both get exactly the same layout.
+    spaced_lines: list[str] = []
+    for line in lines:
+        if line and spaced_lines and spaced_lines[-1]:
+            spaced_lines.append("")
+        spaced_lines.append(line)
+    return "\n".join(spaced_lines)
 
 
 def log_final_run_summary(

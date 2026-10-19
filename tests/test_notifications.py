@@ -322,8 +322,8 @@ class NotificationTests(unittest.TestCase):
         )
         self.assertIn("Backup comment  :   First line", header)
         self.assertIn(
-            "Second line\n\nData transferred :   Unavailable\n"
-            "Total datasets   :   Unavailable\nCompleted datasets :   0\n"
+            "Second line\n\nData transferred :   Unavailable\n\n"
+            "Total datasets   :   Unavailable\n\nCompleted datasets :   0\n\n"
             "Failed datasets  :   0\n\nTotal runtime   :   00:01:02.345", header
         )
 
@@ -333,8 +333,8 @@ class NotificationTests(unittest.TestCase):
         header = run_summary_header_text(cfg, 62.345, summary)
         self.assertIn("Data transferred :   2.00 GB", header)
         self.assertIn(
-            "Data transferred :   2.00 GB\nTotal datasets   :   Unavailable\n"
-            "Completed datasets :   0\nFailed datasets  :   0\n\n"
+            "Data transferred :   2.00 GB\n\nTotal datasets   :   Unavailable\n\n"
+            "Completed datasets :   0\n\nFailed datasets  :   0\n\n"
             "Total runtime   :   00:01:02.345",
             header,
         )
@@ -374,6 +374,9 @@ class NotificationTests(unittest.TestCase):
             ]
             offsets = [body.index(value) for value in ordered]
             self.assertEqual(offsets, sorted(offsets), body)
+            self.assertIn('Failed datasets  :   1\n\nTotal runtime', body)
+            self.assertIn('Total runtime   :   00:01:05.321\n\n----------', body)
+            self.assertIn('Total datasets   :   3\n\nCompleted datasets :   1', body)
 
     @mock.patch("syncerate.notifications.send_mail", return_value=(0, ""))
     def test_missing_dataset_failure_inlines_logs_and_attaches_files(self, send_mail_mock):
@@ -429,8 +432,8 @@ class NotificationTests(unittest.TestCase):
                make_logger('success-count-mail'), Exit_Code=0,
                RuntimeSeconds=75.1, ReplicationSummaryData=summary)
         body = send_mail_mock.call_args.args[1]
-        self.assertIn('Data transferred :   1.00 MB\nTotal datasets   :   4\n'
-                      'Completed datasets :   4\nFailed datasets  :   0\n\n'
+        self.assertIn('Data transferred :   1.00 MB\n\nTotal datasets   :   4\n\n'
+                      'Completed datasets :   4\n\nFailed datasets  :   0\n\n'
                       'Total runtime   :   00:01:15.100', body)
 
     def test_json_success_payload_includes_warning_and_skipped_pairs(self):

@@ -16,6 +16,24 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.50
+
+Previous version: `0.4.49`.
+
+- Strengthened the existing fatal source/destination preflight validation: `compare_dataset_names()` now audits **every ordered pair, including the final list entry and unequal-length surplus entries**. It records which pairs matched, which did not, their 1-based list indices, full source/destination paths, and reasons (different final name, trailing slash, missing counterpart). A single mismatch still blocks **all** transfers with exit code `1` and no credentials, SSH agent, Syncoid process or system action.
+- Added immutable `DatasetComparison` and aggregate `DatasetValidationReport` to retain **complete, untruncated** audit data on `SyncerateError`. The failed preflight logs the audit before mail attachments are prepared; after the normal final run summary and failure mail/MQTT attempts, it prints the full mismatches-first report **as the last section of terminal output**, so notification chatter cannot bury the incorrect paths.
+- Failed **email** for a comparable dataset-list preflight failure now starts with every **mismatch first**, followed by all **matches**, then the established final run summary, failure reason, embedded available `.err`/`.out` logs, and available log-file attachments. Non-preflight success/failure mail order remains unchanged. Normal final summary counts zero attempted/completed/failed replication operations in this preflight case; source-list length is displayed as total configured datasets.
+- Failure **MQTT JSON** includes `mismatching_datasets`, `matching_datasets`, `source_dataset_count`, and `destination_dataset_count`, preserving line number, paths and mismatch reasons; for existing automation consumers mismatches also appear in `failed_datasets`. Existing topics, `retain=false`, notification switches and failure exit codes are unchanged. Failure reporting occurs even when success notifications are disabled.
+- Added end-to-end tests with synthetic invalid pairs verifying preflight blocks replication, even on the last line; compares mixed matches/mismatches and excess lines; routes mail with and without log attachments, legacy/JSON MQTT, and the final terminal footer. Updated README current behavior, code/function map, configuration comments, CLI help, version/build checks, verification report and archive manifest. Preserved original files and the old 0.4.29 standalone binary (must rebuild for 0.4.50).
+
+## 0.4.49
+
+Previous version: `0.4.48`.
+
+- Updated the shared `format_final_run_summary()` formatter so **every populated summary line has at least one empty line before the next one**. This applies to backup metadata, multiline-comment continuation lines, transferred bytes, all three dataset counts, total runtime, and dry-run planning fields. Existing explicit blank lines in user-provided comments are preserved.
+- The change flows through the existing common formatter to terminal, `.log`, and **both success and failed email bodies**. Failure reason stays below the completed summary and separator, followed by the existing embedded `.err`/`.out` output and attached log files; notifications, replication, locking, retry, configuration defaults and exit codes remain unchanged.
+- Updated focused formatting regression expectations; added a common test of success/failure/dry-run/preflight summary spacing. Updated current-use README, code map, source/build/version expectations, packaging-test fake binary, verification report and file hashes. Preserved the original old `dist/Syncerate` binary reporting 0.4.29; rebuild it to use the source 0.4.49 update.
+
 ## 0.4.48
 
 Previous version: `0.4.47`.

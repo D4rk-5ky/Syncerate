@@ -76,6 +76,26 @@ class DatasetPair:
     destination: str
     extra_arguments: tuple[str, ...]
 
+@dataclass(frozen=True)
+class DatasetComparison:
+    """Preflight comparison for one aligned line, including an unmatched line."""
+
+    line_number: int
+    source: Optional[str]
+    destination: Optional[str]
+    reason: str = ""
+
+
+@dataclass
+class DatasetValidationReport:
+    """Every match and mismatch from a pre-transfer source/destination audit."""
+
+    source_count: int
+    destination_count: int
+    matches: list[DatasetComparison] = field(default_factory=list)
+    mismatches: list[DatasetComparison] = field(default_factory=list)
+
+
 @dataclass
 class SyncoidAttemptResult:
     """Explicit result from one monitored Syncoid process attempt."""

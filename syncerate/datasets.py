@@ -4,7 +4,7 @@ import logging
 import shlex
 
 from .errors import EXIT_LIST_ERROR, SyncerateError
-from .models import AppConfig, DatasetPair
+from .models import AppConfig, DatasetPair, DatasetComparison, DatasetValidationReport
 
 
 def missmatchinglists(
@@ -92,101 +92,130 @@ def parse_destination_list(
     return destination_datasets, destination_extra_arguments
 
 
+def compare_dataset_names(
+    sources: list[str], destinations: list[str]
+) -> DatasetValidationReport:
+    """Compare all ordered pairs, including final lines and any surplus lines.
+
+    Only the final dataset component must match; source/target prefixes may
+    differ. Invalid empty values/trailing slashes cannot match one another.
+    """
+
+    report = DatasetValidationReport(
+        source_count=len(sources), destination_count=len(destinations)
+    )
+    for index in range(max(len(sources), len(destinations))):
+        source = sources[index] if index < len(sources) else None
+        destination = destinations[index] if index < len(destinations) else None
+        if source is None:
+            reason = "Missing source list entry"
+        elif destination is None:
+            reason = "Missing destination list entry"
+        elif not source or not destination:
+            reason = "Empty dataset name"
+        elif source.endswith("/") or destination.endswith("/"):
+            reason = "Dataset names must not end with '/'"
+        elif source.rpartition("/")[-1] != destination.rpartition("/")[-1]:
+            reason = (
+                "Final dataset names differ: "
+                f"{source.rpartition('/')[-1]!r} != {destination.rpartition('/')[-1]!r}"
+            )
+        else:
+            reason = ""
+        comparison = DatasetComparison(index + 1, source, destination, reason)
+        (report.mismatches if reason else report.matches).append(comparison)
+    return report
+
+
+def format_dataset_validation_report(report: DatasetValidationReport) -> str:
+    """Return complete mismatches-first audit for mail, terminal and log output."""
+
+    lines = [
+        "Source/destination dataset validation FAILED - no transfer started",
+        f"Source entries      :   {report.source_count}",
+        f"Destination entries :   {report.destination_count}",
+        f"Mismatching pairs   :   {len(report.mismatches)}",
+        f"Matching pairs      :   {len(report.matches)}",
+        "",
+        "MISMATCHING DATASET PAIRS:",
+    ]
+    if not report.mismatches:
+        lines.append("  None")
+    for comparison in report.mismatches:
+        lines.extend([
+            f"  Line {comparison.line_number}:",
+            f"    Source      :   {comparison.source if comparison.source is not None else '(missing)'}",
+            f"    Destination :   {comparison.destination if comparison.destination is not None else '(missing)'}",
+            f"    Reason      :   {comparison.reason}",
+            "",
+        ])
+    lines.extend(["MATCHING DATASET PAIRS:"])
+    if not report.matches:
+        lines.append("  None")
+    for comparison in report.matches:
+        lines.extend([
+            f"  Line {comparison.line_number}:",
+            f"    Source      :   {comparison.source}",
+            f"    Destination :   {comparison.destination}",
+            "",
+        ])
+    return "\n".join(lines).rstrip()
+
+
 def load_dataset_pairs(
     app_config: AppConfig,
     logger: logging.Logger,
 ) -> list[DatasetPair]:
-    """Load, log, validate, and combine both dataset files."""
+    """Audit all dataset-list entries before returning executable pairs.
+
+    Preflight failures carry the complete report to top-level failure mail,
+    MQTT and final console output; no Syncoid process is started.
+    """
 
     source_lines = read_dataset_list(app_config.source_list_path)
-
     logger.info("Items in the Source list    :   %s", source_lines)
     logger.info("Number of items in the Source list    :   %i", len(source_lines))
     logger.info("")
 
     destination_lines_raw = read_dataset_list(app_config.destination_list_path)
-
-    if not source_lines or not destination_lines_raw:
-        logger.error("")
-        logger.error("----------")
-        logger.error("")
-        logger.error("Source and destination lists must each contain at least one active dataset")
-        logger.error("Source items: %s; destination items: %s", len(source_lines), len(destination_lines_raw))
-        raise SyncerateError(
-            "Source and destination lists must each contain at least one active dataset",
-            EXIT_LIST_ERROR,
-            kind="list",
-        )
-
     try:
         destination_lines, destination_extra_arguments = parse_destination_list(
             destination_lines_raw
         )
     except ValueError as exc:
         logger.error("%s", exc)
-        raise SyncerateError(
-            str(exc),
-            EXIT_LIST_ERROR,
-            kind="list",
-        ) from exc
+        raise SyncerateError(str(exc), EXIT_LIST_ERROR, kind="list") from exc
 
     logger.info("Raw items in the Destination list    :   %s", destination_lines_raw)
     logger.info("Parsed Destination datasets          :   %s", destination_lines)
-    logger.info(
-        "Parsed Destination extra args        :   %s",
-        destination_extra_arguments,
-    )
-    logger.info(
-        "Number of items in the Destination list    :   %i",
-        len(destination_lines),
-    )
+    logger.info("Parsed Destination extra args        :   %s", destination_extra_arguments)
+    logger.info("Number of items in the Destination list    :   %i", len(destination_lines))
     logger.info("")
 
-    if len(source_lines) == len(destination_lines):
-        logger.info("The Source and Dest files has the same number of items")
-        logger.info("")
+    report = compare_dataset_names(source_lines, destination_lines)
+    if not source_lines or not destination_lines:
+        error_message = "Source and destination lists must each contain at least one active dataset"
+    elif len(source_lines) != len(destination_lines):
+        error_message = "Source and destination dataset lists have different numbers of entries"
+    elif report.mismatches:
+        error_message = "Source/destination final dataset names do not match"
     else:
-        missmatchinglists(Lenght=True, Names=False, logger=logger)
-
-    lists_check_out = True
-    for source, destination in zip(source_lines, destination_lines):
-        if source.endswith("/") or destination.endswith("/"):
-            logger.error("Dataset names must not end with '/':")
-            logger.error("Source :   %s", source)
-            logger.error("Dest   :   %s", destination)
-            logger.error("")
-            lists_check_out = False
-            continue
-
-        if source.rpartition("/")[-1] == destination.rpartition("/")[-1]:
-            logger.info("The end of this Source and Destination Datasets matches:")
-            logger.info("Source :   %s", source)
-            logger.info("Dest   :   %s", destination)
-            logger.info("")
-        else:
-            logger.error(
-                "The end of this Source and Destination Datasets end does not match:"
-            )
-            logger.error("Source :   %s", source)
-            logger.error("Dest   :   %s", destination)
-            logger.error("")
-            lists_check_out = False
-
-    if lists_check_out:
-        logger.info("All datasets ends matches")
+        logger.info("All %s source/destination final dataset names match", len(report.matches))
         logger.info("continuing")
-    else:
-        missmatchinglists(Lenght=False, Names=True, logger=logger)
+        return [
+            DatasetPair(source=source, destination=destination,
+                        extra_arguments=tuple(extra_arguments))
+            for source, destination, extra_arguments in zip(
+                source_lines, destination_lines, destination_extra_arguments
+            )
+        ]
 
-    return [
-        DatasetPair(
-            source=source,
-            destination=destination,
-            extra_arguments=tuple(extra_arguments),
-        )
-        for source, destination, extra_arguments in zip(
-            source_lines,
-            destination_lines,
-            destination_extra_arguments,
-        )
-    ]
+    logger.error("Dataset validation failed: %s", error_message)
+    # Record the complete comparison before notifications snapshot/attach the
+    # .log and .err files. app.main() repeats it at the terminal's very end.
+    for report_line in format_dataset_validation_report(report).splitlines():
+        logger.error("%s", report_line)
+    raise SyncerateError(
+        error_message, EXIT_LIST_ERROR, kind="list",
+        dataset_validation_report=report,
+    )

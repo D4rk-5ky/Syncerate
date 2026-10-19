@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.48`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.50`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -86,7 +86,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.48"
+VERSION = "0.4.50"
 __version__ = VERSION
 ```
 
@@ -120,7 +120,8 @@ A known application exception carrying:
 - `message`: text for the error log;
 - `exit_code`: final process code;
 - `kind`: `list`, `known_child`, `syncoid`, `mqtt`, `script`, `locked`, or `lock_error`;
-- captured `pexpect` output when relevant.
+- captured `pexpect` output when relevant;
+- optional `dataset_validation_report`: the complete structured source/destination audit for a preflight list error. This avoids trying to reconstruct the dataset pairs from bounded error text after the failure.
 
 It replaces internal `sys.exit()` calls. `app.main()` catches it, logs the correct diagnostics, optionally publishes a JSON MQTT failure status, optionally sends error mail, and returns its exit code.
 
@@ -186,6 +187,14 @@ Immutable per-run timestamp and optional `.log`, `.err`, and `.out` paths. `logg
 ### `DatasetPair`
 
 One preflight-validated source dataset, destination dataset, and tuple of destination-side extra arguments. It is the unit processed sequentially by the replication runner.
+
+### `DatasetComparison`
+
+One immutable, 1-based line-by-line preflight comparison holding the full source and destination (or `None` for missing entries) and a plain-English mismatch reason. Separate from `DatasetPair`: invalid or unmatched paths must never become runnable replication work.
+
+### `DatasetValidationReport`
+
+The source/destination counts plus **all** validated matching and mismatching comparisons, with list order preserved inside each category. This report travels on `SyncerateError.dataset_validation_report` and is reused by email, MQTT and terminal output.
 
 ### `SyncoidAttemptResult`
 
@@ -357,7 +366,7 @@ Formats every recorded missing-data failure as `source -> destination` followed 
 
 ### `format_final_run_summary(app_config, elapsed_seconds, replication_summary=None, *, dry_run=False, planned_dataset_count=None)`
 
-Builds the canonical plain-text final summary shared by logging and email. It renders `Final run summary`, one blank line, then the optional metadata. When both metadata fields exist it renders `BackupTitle`, one blank line, the multiline `BackupComment` with aligned continuation lines, and another blank line. For real-run summaries it always renders `Data transferred`, using `format_transfer_size()` only when measurement is complete, otherwise `Unavailable`. Immediately following it places `Total datasets`, `Completed datasets`, `Failed datasets`, each on its own line; then one blank line before `Total runtime`. Unknown totals from preflight failures are rendered `Unavailable`, not guessed. For `dry_run=True`, the summary instead renders `Run mode : DRY RUN (no replication performed)`, the planned-count line when known, then the three dataset statistics with zero completed and failed; it omits `Data transferred` because no child process was started. The missing-dataset/pool path follows `continue_on_missing_dataset`: false stops after recording the first recognized missing dataset/pool; true continues later pairs but keeps the run failed. A continue-enabled run that reaches the end may pass the completed summary and report its measured transfer total alongside exit code `8`. Keeping this as plain text prevents terminal, `.log`, and email layouts from drifting apart.
+Builds the canonical plain-text final summary shared by logging and email. It renders `Final run summary`, one blank line, then the optional metadata. When both metadata fields exist it renders `BackupTitle`, one blank line, the multiline `BackupComment` with aligned continuation lines, and another blank line. For real-run summaries it always renders `Data transferred`, using `format_transfer_size()` only when measurement is complete, otherwise `Unavailable`. It places `Total datasets`, `Completed datasets`, `Failed datasets`, then `Total runtime` in that order. After assembling all sections it inserts an empty line between any adjacent non-empty physical lines without removing existing empty lines, so each metadata line (including multiline-comment continuations), real-run or dry-run statistic, and runtime is separated by at least one empty line in terminal, `.log`, and both email variants. Unknown totals from preflight failures are rendered `Unavailable`, not guessed. For `dry_run=True`, the summary instead renders `Run mode : DRY RUN (no replication performed)`, the planned-count line when known, then the three dataset statistics with zero completed and failed; it omits `Data transferred` because no child process was started. The missing-dataset/pool path follows `continue_on_missing_dataset`: false stops after recording the first recognized missing dataset/pool; true continues later pairs but keeps the run failed. A continue-enabled run that reaches the end may pass the completed summary and report its measured transfer total alongside exit code `8`. Keeping this as plain text prevents terminal, `.log`, and email layouts from drifting apart.
 
 ### `log_final_run_summary(app_config, elapsed_seconds, logger, replication_summary=None, *, dry_run=False, planned_dataset_count=None)`
 
@@ -370,6 +379,8 @@ Logs startup details while hiding secrets.
 It logs only the recognized TOML tables in `CONFIG_SECTIONS`, never arbitrary extra tables. It omits `PassWord`, MQTT username/password, common secret-like option names (`password`, `secret`, `token`, `credential`, API-key forms), and disabled integration-only settings. This preserves useful diagnostics while reducing the chance that a future secret option is echoed accidentally.
 
 The startup `Backup information` heading is followed by a blank logging record before the metadata for readability. Backup metadata and other configuration values are emitted through `log_multiline_value()`, so TOML multiline strings cannot inject unprefixed physical lines into the output.
+
+On a structured preflight mismatch, `app.main()` preserves the original exit code `1` and holds the TOML safelock through failure mail/MQTT. It reports `Total datasets` as the source-list count but zero replication-attempt failures, and renders the full comparison audit last in the terminal after notification output. Malformed list parsing stays a fatal preflight error.
 
 ## `syncerate/datasets.py`
 
@@ -409,6 +420,14 @@ The SSH `host:dataset` colon is not followed by a space, so it is not confused w
 
 Runs `parse_destination_line()` for every destination and returns matching dataset and argument lists. It is retained as a separately testable parser helper.
 
+### `compare_dataset_names(sources, destinations)`
+
+Audits every index through the **maximum** list length, including the last entry and any surplus source/destination line. Case-sensitive comparison checks the final path component only; trailing slashes, missing entries and differing final names are recorded as mismatches with reasons. It does not stop at the first failure or silently truncate to `zip()` length. Returns `DatasetValidationReport` without invoking Syncoid.
+
+### `format_dataset_validation_report(report)`
+
+Creates the single reusable human-readable mismatch-first report: counts, indexed mismatch details with reasons, then all matching pairs. Used in preflight `.log/.err`, failure mail before the final summary, and at the **bottom of terminal output after notification attempts**. The second terminal rendering ensures notification status chatter does not bury the actionable failure list.
+
 ### `load_dataset_pairs(app_config, logger)`
 
 Loads, logs, validates, and combines both files.
@@ -420,7 +439,7 @@ It verifies:
 3. neither side ends with `/`, preventing an accidental empty final component;
 4. the final dataset component in each positional pair matches.
 
-It then returns `list[DatasetPair]`, keeping each pair and its extra arguments together. These checks run before Syncoid is started.
+It compares **all** indices via `compare_dataset_names` and returns `list[DatasetPair]` with preserved destination-only options **only if every pair passes**. For a failed list it attaches the full `DatasetValidationReport` to `SyncerateError(kind="list", exit=1)`, logs the complete report before notification attachments are prepared, and prevents any Syncoid subprocess from starting. A failure on the last line blocks even the first valid pair. Existing `missmatchinglists()` remains as a compatibility export, but the normal preflight now uses the comprehensive report.
 
 ## `syncerate/notifications.py`
 
@@ -460,7 +479,7 @@ The email body is passed on standard input. The function returns the command exi
 
 Logs whether the local mail program accepted the message. It keeps the existing public function name for compatibility.
 
-### `MailTo(app_config, run_context, logger, ..., ReplicationSummaryData=None, DryRun=False, DryRunReportText="", DryRunDatasetCount=None, ErrorMessage="")`
+### `MailTo(app_config, run_context, logger, ..., ReplicationSummaryData=None, DryRun=False, DryRunReportText="", DryRunDatasetCount=None, ErrorMessage="", ValidationReport=None)`
 
 Builds the current success and failure message variants:
 
@@ -478,7 +497,7 @@ When called from `main()`, `RuntimeSeconds` carries the already captured monoton
 
 Collects the most useful captured child/Syncoid output for a JSON failure report. It joins available Pexpect/Syncoid error text and keeps only the last 4000 characters by default so an MQTT error payload cannot grow without bound. It never includes configuration credentials directly.
 
-### `build_mqtt_status_payload(app_config, *, success, exit_code, error_message="", stderr_text="", replication_summary=None, dry_run=False, dry_run_dataset_pairs=None)`
+### `build_mqtt_status_payload(app_config, *, success, exit_code, error_message="", stderr_text="", replication_summary=None, dry_run=False, dry_run_dataset_pairs=None, validation_report=None)`
 
 Builds the structured Home Assistant status JSON. The payload contains:
 
@@ -496,9 +515,11 @@ Builds the structured Home Assistant status JSON. The payload contains:
 - `skipped_datasets`;
 - `failed_datasets`.
 
+On a preflight pair validation failure (`1`), `validation_report` adds all indexed `matching_datasets` and `mismatching_datasets`, the source/destination list counts, and includes the mismatches in the backward-compatible `failed_datasets` array. These values are full paths plus explicit reason; no dataset transfer was attempted. These fields are absent for normal jobs to preserve the existing successful-publish schema.
+
 The configured `SyncoidCommand` is deliberately excluded from MQTT JSON so connection endpoints, key paths, and command options are not exposed to MQTT subscribers. For compatibility callers supplying a Broken Pipe warning summary, the payload retains the success status, warning flag, and skipped dataset list. Current execution stops with code `2` on retry exhaustion and publishes a failure. Missing dataset/pool runs publish `status: failure`, exit code `8`, and structured source/destination/reason objects in `failed_datasets`. `json.dumps()` is used instead of hand-built JSON so quotes, newlines, and non-ASCII text are escaped correctly.
 
-### `send_mqtt_messages(app_config, logger, *, success=True, exit_code=0, error_message="", stderr_text="", replication_summary=None, dry_run=False, dry_run_dataset_pairs=None)`
+### `send_mqtt_messages(app_config, logger, *, success=True, exit_code=0, error_message="", stderr_text="", replication_summary=None, dry_run=False, dry_run_dataset_pairs=None, validation_report=None)`
 
 Publishes real success signals, safe dry-run reports, and non-retained failure JSON using the shared payload builder.
 
@@ -517,11 +538,17 @@ Important behavior:
 
 ### `send_mqtt_failure_status(error, app_config, logger, replication_summary=None, *, dry_run=False)`
 
-Best-effort fatal-failure publisher used by the top-level exception boundary whenever either `Use_MQTT` or `MQTT_JSON_Status` is enabled. `SendMQTTOnSuccess` is intentionally not consulted here: disabling success MQTT must never hide configured failure reporting. The optional retained `ReplicationSummary` is forwarded for all failure paths so existing missing-pair JSON details are preserved, and `dry_run=True` is forwarded when the error occurred during planning so the JSON cannot be mistaken for a failed real replication. It calls `send_mqtt_messages()` with `success=False`, so one non-retained JSON failure event is published on `mqtt_json_topic` when JSON status is enabled, or `<mqtt_topic>/error` for `Use_MQTT` alone. If that MQTT publish also fails, the secondary failure is logged but the original application exit code is preserved. MQTT-originated errors are skipped to prevent recursion.
+Best-effort fatal-failure publisher used by the top-level exception boundary whenever either `Use_MQTT` or `MQTT_JSON_Status` is enabled. `SendMQTTOnSuccess` is intentionally not consulted here: disabling success MQTT must never hide configured failure reporting. Any attached `error.dataset_validation_report` is forwarded to `send_mqtt_messages` so every matching/nonmatching pair appears in failure JSON, even if the console report is long. The optional retained `ReplicationSummary` is forwarded for all failure paths so existing missing-pair JSON details are preserved, and `dry_run=True` is forwarded when the error occurred during planning so the JSON cannot be mistaken for a failed real replication. It calls `send_mqtt_messages()` with `success=False`, so one non-retained JSON failure event is published on `mqtt_json_topic` when JSON status is enabled, or `<mqtt_topic>/error` for `Use_MQTT` alone. If that MQTT publish also fails, the secondary failure is logged but the original application exit code is preserved. MQTT-originated errors are skipped to prevent recursion.
 
 ### `send_error_mail(error, app_config, run_context, logger, runtime_seconds=None, replication_summary=None, *, dry_run=False, dry_run_dataset_count=None)`
 
-Chooses the correct `MailTo()` variant from the error kind and forwards the captured runtime. It checks only whether `Mail` itself is enabled; `SendMailOnSuccess` is intentionally ignored so disabling successful-run mail never suppresses configured error mail. Dry-run state/planned count is forwarded so planning failures are explicitly labelled rather than looking like real replication failures. It forwards the retained `ReplicationSummary` for every error category, including Syncoid and MQTT failures, to keep partial run totals in failed mail. Failure reason is placed after the final summary, then `.err`/`.out` are embedded in the message body when logging is available and attached together with `.log`. It forwards `error.message` to `MailTo(ErrorMessage=...)` so the exact reason is shown even without file logging. Notification failure is caught and logged so it cannot replace the original application exit code.
+Chooses the correct `MailTo()` variant from the error kind and forwards the captured runtime. It checks only whether `Mail` itself is enabled; `SendMailOnSuccess` is intentionally ignored so disabling successful-run mail never suppresses configured error mail. Dry-run state/planned count is forwarded so planning failures are explicitly labelled rather than looking like real replication failures. It forwards the retained `ReplicationSummary` for every error category, including Syncoid and MQTT failures, to keep partial run totals in failed mail. Failure reason is placed after the final summary, then `.err`/`.out` are embedded in the message body when logging is available and attached together with `.log`. It also forwards any structured `error.dataset_validation_report` to `MailTo(ValidationReport=...)`; preflight mismatch mail uniquely begins with the complete mismatches-first report, followed by the established final summary, failure reason, inline logs and attached log files. It forwards `error.message` to `MailTo(ErrorMessage=...)` so the exact reason is shown even without file logging. Notification failure is caught and logged so it cannot replace the original application exit code.
+
+## `tests/test_dataset_validation_reporting.py`
+
+### `DatasetValidationReportingTests` and test methods
+
+`test_all_entries_including_final_and_surplus_lines_are_audited()` verifies that the last entry and surplus rows are included and matches are distinguished from mismatches; `test_trailing_slash_and_empty_lists_fail_closed()` confirms malformed names cannot appear as valid pairs; `test_preflight_failure_mail_mqtt_and_terminal_report_all_mismatches()` verifies the full real `main()` failure route with mail, both legacy and JSON MQTT modes, logging enabled/disabled, ordering, preserved log attachments, and the final terminal footer, while asserting no credentials, replication, or system action; `test_last_dataset_mismatch_stops_dry_run_too()` verifies preflight rejects a mismatch at the final line. These checks use mocks instead of live ZFS or notification services.
 
 ## `syncerate/system_actions.py`
 
@@ -857,7 +884,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Creates `dist/README.md` with the standalone-delivery explanation, expected `dist/Syncerate` path, `./build-pyinstaller.sh` command, and source-vs-generated-binary warning.
 - Counts final top-level `dist/` entries and fails unless there are exactly two: `dist/Syncerate` and `dist/README.md`; it rejects any unexpected third entry and rechecks both expected files.
 - Uses an exit trap to remove the generated `.build/` directory on success or failure.
-- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.48`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.50`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -960,7 +987,7 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
 - `Syncerate.spec`, `build-pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
-- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.48 executable and is not imported by source-mode tests; rebuild it with `build-pyinstaller.sh` for this release.
+- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.50 executable and is not imported by source-mode tests; rebuild it with `build-pyinstaller.sh` for this release.
 - `dist/README.md`: tracked delivery-folder note explaining the expected standalone output and build command; it is the only non-executable file allowed in `dist/`.
 - `config/example-Syncerate.toml`: complete 31-option categorized TOML example kept synchronized exactly with `CONFIG_OPTION_LOCATIONS`.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
@@ -986,7 +1013,8 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_runtime_duration_formats_hours_minutes_seconds_and_milliseconds()`: verifies the monotonic duration formatter, including hour rollover and negative-value clamping.
 - `test_transfer_size_chooses_kb_mb_gb_or_tb_automatically()`: verifies 1024-based automatic unit selection and fractional-KB output.
 - `test_final_summary_marks_transfer_size_unavailable_when_pv_measurement_is_incomplete()`: verifies incomplete `pv` measurement is shown as `Unavailable` rather than guessed.
-- `test_final_summary_logs_title_multiline_comment_then_runtime()`: verifies heading/title/comment/transfer/counts/runtime ordering, multiline rendering, the metadata blank lines, and the blank line between the dataset counters and `Total runtime`.
+- `test_final_summary_logs_title_multiline_comment_then_runtime()`: verifies heading/title/comment/transfer/counts/runtime ordering and one blank line between every displayed field.
+- `test_final_summary_separates_every_content_line_in_all_run_modes()`: verifies no consecutive non-empty summary lines across success, interrupted failure, preflight failure, and dry run, including multiline comments; existing explicit comment paragraph spacing is preserved.
 - `test_startup_multiline_comment_prefixes_every_physical_log_line()`: verifies multiline configuration/comment values cannot create unprefixed physical log lines and that startup metadata includes a blank line after `Backup information` plus the requested blank line between title and comment.
 - `test_success_mail_exception_is_best_effort_and_system_action_still_runs()`: regression check that success mail exception is best effort and system action still runs.
 - `test_success_mail_can_be_disabled_without_disabling_system_action()`: verifies `SendMailOnSuccess = No` suppresses only successful-run mail while the independent system action still executes.
@@ -1049,8 +1077,8 @@ Every test/helper function is listed here explicitly so the code map remains exh
 
 - `NotificationTests`: groups the tests and their shared setup for this module.
 - `mqtt_config()`: test helper that builds a valid in-memory MQTT configuration with overridable legacy/JSON/Home Assistant/success-switch settings.
-- `test_run_summary_email_header_matches_terminal_layout()`: verifies email uses the shared heading/blank-line/title/blank-line/comment/blank-line/runtime layout for legacy/runtime-only calls.
-- `test_run_summary_email_header_includes_transferred_size()`: verifies successful mail contains the shared transfer total, all three dataset statistics, then runtime, just like terminal/`.log`.
+- `test_run_summary_email_header_matches_terminal_layout()`: verifies email uses the shared heading/title/multiline-comment/transfer/counts/runtime layout, with a blank line between each populated physical line, including metadata continuations.
+- `test_run_summary_email_header_includes_transferred_size()`: verifies successful mail contains the shared transfer total, all three dataset statistics, and runtime with an empty line after each field, just like terminal/`.log`.
 - `test_json_success_payload_includes_warning_and_skipped_pairs()`: regression check that json success payload includes warning and skipped pairs.
 - `test_json_failure_payload_contains_error_and_stderr()`: regression check that json failure payload contains error and stderr.
 - `test_dry_run_mqtt_uses_nonretained_report_instead_of_real_success_signal()`: verifies dry-run success sends one non-retained JSON planning report and never the retained legacy success or Home Assistant availability payload.

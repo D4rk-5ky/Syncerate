@@ -29,6 +29,11 @@ BackupComment = ""
 # Required source/destination dataset-list files. Blank lines and lines beginning
 # with # are ignored. Each file must contain at least one active dataset, and
 # final dataset names must match their paired destination before replication starts.
+# Syncerate checks EVERY pair (including the last) and refuses the entire run
+# (exit 1) if any final names differ, lengths differ, or names end in '/'.
+# Error mail starts with all mismatches, then all matches; the MQTT JSON failure
+# contains matching_datasets and mismatching_datasets, and the terminal ends
+# with the full report. No pair is transferred on a preflight mismatch.
 SourceListPath = "/path/to/example-source-file"
 DestListPath = "/path/to/example-dest-file"
 
