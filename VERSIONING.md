@@ -16,6 +16,28 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.44
+
+Previous version: `0.4.43`.
+
+- Changed the PyInstaller delivery contract so `dist/` contains exactly two files after a successful build: `dist/Syncerate` and `dist/README.md`. Any third entry makes the build fail.
+- Renamed the build wrapper from `build_pyinstaller.sh` to `build-pyinstaller.sh` so the documented build command is `./build-pyinstaller.sh`.
+- Added `dist/README.md` with the delivery-folder explanation, expected `dist/Syncerate` output, `./build-pyinstaller.sh` build command, and warning that generated binaries must not be confused with source files.
+- Moved generated PyInstaller work and staging output under the single `.build/` directory. The wrapper removes `.build/` automatically on success or failure so build internals never remain in `dist/`.
+- Updated `.gitignore` to ignore `.build/` and generated `dist/*` output while explicitly keeping `dist/README.md` trackable. The generated executable remains ignored by Git.
+- Extended packaging regression coverage to seed stale `dist/` content and unrelated staged PyInstaller output, then require the wrapper to finish with only `README.md` and `Syncerate` while removing `.build/`.
+- Updated README, verification, code map, authoritative version/build expectations, and package manifest for 0.4.44.
+
+## 0.4.43
+
+Previous version: `0.4.42`.
+
+- Hardened `build_pyinstaller.sh` so the final `dist/` directory is always recreated empty and receives only the final verified `Syncerate` executable. PyInstaller now writes to a private `.pyinstaller-dist/` staging directory instead of publishing directly into `dist/`.
+- Added cleanup of temporary PyInstaller `build/` and staging directories through an exit trap, so successful and failed builds do not leave those generated build directories behind.
+- Added a strict post-build directory check that requires exactly one final entry, `dist/Syncerate`, and also requires that entry to be a regular non-symlink executable. Any extra file/directory in the final `dist/` makes the build fail.
+- Added a regression test that starts with stale content in `dist/` and simulates extra PyInstaller staging output; the wrapper must remove the stale output and publish only `dist/Syncerate`.
+- Updated current-use README/build documentation, `commented_code_map.md`, verification, authoritative version/build expectations, and package manifest for 0.4.43. The supplied source archive still preserves the original older `dist/Syncerate` artifact because a real PyInstaller rebuild is not available in this verification environment; running `build_pyinstaller.sh` on a configured build host replaces it with the single clean 0.4.43 executable.
+
 ## 0.4.42
 
 Previous version: `0.4.41`.

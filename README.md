@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.42`
+Current version: `0.4.44`
 
 ## ⚠️ Disclaimer / Liability
 
@@ -95,7 +95,7 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.42 source release. Rebuild with `build_pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
+**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.44 source release. Rebuild with `build-pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
 
 PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
 
@@ -109,16 +109,18 @@ Run the packaged executable exactly like the Python entry point:
 
 ### Rebuilding the executable
 
-`requirements-build.txt`, `Syncerate.spec`, and `build_pyinstaller.sh` define the reproducible build path. Create a clean virtual environment, install the pinned build/runtime dependencies, then run the build script:
+`requirements-build.txt`, `Syncerate.spec`, and `build-pyinstaller.sh` define the reproducible build path. Create a clean virtual environment, install the pinned build/runtime dependencies, then run the build script:
 
 ```bash
 python3 -m venv .venv-build
 . .venv-build/bin/activate
 python -m pip install -r requirements-build.txt
-./build_pyinstaller.sh
+./build-pyinstaller.sh
 ```
 
-`build_pyinstaller.sh` removes previous `build/` and `dist/` output, runs the checked-in PyInstaller spec, verifies that `dist/Syncerate` exists and is executable, and checks its `--version` and `--help` commands. The spec explicitly collects both `pexpect` and the dynamically imported `paho.mqtt` package so MQTT support is present even though `paho-mqtt` is imported only when MQTT is enabled.
+`build-pyinstaller.sh` guarantees a clean final `dist/`. It removes any previous generated output, places all PyInstaller work/staging material under the ignored `.build/` directory, recreates `dist/`, and publishes only two delivery files: the verified `dist/Syncerate` executable and `dist/README.md`. The build fails unless those are the only two top-level entries. The generated `.build/` directory is removed automatically on success or failure. The executable is checked with `--version` and `--help`. The spec explicitly collects both `pexpect` and the dynamically imported `paho.mqtt` package so MQTT support is present even though `paho-mqtt` is imported only when MQTT is enabled.
+
+`dist/README.md` explains that `dist/` is the standalone-delivery directory, the expected executable is `dist/Syncerate`, it is created by running `./build-pyinstaller.sh`, and generated binaries should not be confused with source files. Git ignores generated files under `dist/` while explicitly allowing `dist/README.md` to remain tracked.
 
 ## Prepare the application
 
@@ -145,7 +147,7 @@ Syncerate has four application flags. `--conf`/`-c` selects the required setting
 | `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate TOML configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. |
 | `--dry-run` | No | Forces dry-run on even when `[runtime].DryRun = false` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.42` for the 0.4.42 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.42. The flag exits without starting a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.44` for the 0.4.44 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.44. The flag exits without starting a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -207,7 +209,7 @@ Use this to see the executable's current syntax and examples. No `--conf` argume
 ./dist/Syncerate --version
 ```
 
-No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.42 build.
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.44 build.
 
 Run the packaged regression suite after installation or modification with:
 

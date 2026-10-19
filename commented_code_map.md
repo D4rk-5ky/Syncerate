@@ -1,13 +1,13 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.42`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.44`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
 ```text
 Syncerate.py
 Syncerate.spec
-build_pyinstaller.sh
+build-pyinstaller.sh
 requirements-build.txt
 syncerate/
 ├── __init__.py
@@ -84,7 +84,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.42"
+VERSION = "0.4.44"
 __version__ = VERSION
 ```
 
@@ -805,14 +805,18 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - `PYZ(...)`: creates the compressed Python module archive used by the executable.
 - `EXE(...)`: creates one console executable named `Syncerate`; one-file mode is achieved by passing analyzed binaries/data directly into `EXE` without a `COLLECT` stage. UPX is deliberately disabled for predictable builds.
 
-### `build_pyinstaller.sh`
+### `build-pyinstaller.sh`
 
 - Uses `set -euo pipefail` so missing variables and failed build/check commands stop the build instead of leaving a misleading partial release.
 - Resolves the project root from the script location and builds from that directory so the command works regardless of the caller's current working directory.
 - Imports `PyInstaller`, `pexpect`, and `paho.mqtt` before building and reports a clear dependency error before deleting/creating release output if a required build module is unavailable.
-- Removes only generated `build/` and `dist/` directories, then invokes `python -m PyInstaller --clean --noconfirm Syncerate.spec`.
-- Verifies that `dist/Syncerate` exists and is executable.
-- Runs the new executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.42`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Removes previous generated `.build/` and final `dist/`, then recreates `.build/pyinstaller-work`, `.build/pyinstaller-dist`, and a clean final `dist/`.
+- Invokes PyInstaller with explicit `--workpath` and `--distpath` under `.build/`, so all generated work/staging material stays outside the delivery directory.
+- Requires the staged `Syncerate` artifact to be a regular non-symlink executable, then installs only that verified executable into the deliberately clean final `dist/`.
+- Creates `dist/README.md` with the standalone-delivery explanation, expected `dist/Syncerate` path, `./build-pyinstaller.sh` command, and source-vs-generated-binary warning.
+- Counts final top-level `dist/` entries and fails unless there are exactly two: `dist/Syncerate` and `dist/README.md`; it rejects any unexpected third entry and rechecks both expected files.
+- Uses an exit trap to remove the generated `.build/` directory on success or failure.
+- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.44`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -868,7 +872,7 @@ Covers the runtime-aware email summary header, compatibility JSON warning-summar
 
 ### `tests/test_packaging.py` — `PackagingTests`
 
-Static tests verify the checked-in spec is one-file, explicitly collects Pexpect/Paho MQTT, pins build inputs, and keeps the build wrapper's clean-build and frozen-CLI verification safeguards.
+Static tests verify the checked-in spec is one-file, explicitly collects Pexpect/Paho MQTT, pins build inputs, and keeps the build wrapper's clean-build, exactly-two-file `dist/`, Git-ignore, and frozen-CLI verification safeguards.
 
 ### `tests/test_system_actions.py`
 
@@ -887,8 +891,9 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
-- `Syncerate.spec`, `build_pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
-- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.42 executable and is not imported by source-mode tests; rebuild it with `build_pyinstaller.sh` for this release.
+- `Syncerate.spec`, `build-pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
+- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.44 executable and is not imported by source-mode tests; rebuild it with `build-pyinstaller.sh` for this release.
+- `dist/README.md`: tracked delivery-folder note explaining the expected standalone output and build command; it is the only non-executable file allowed in `dist/`.
 - `config/example-Syncerate.toml`: complete 31-option categorized TOML example kept synchronized exactly with `CONFIG_OPTION_LOCATIONS`.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
 - Home Assistant YAML examples: legacy availability and JSON-status consumption examples.
@@ -1037,6 +1042,7 @@ Every test/helper function is listed here explicitly so the code map remains exh
 - `test_spec_builds_onefile_syncerate_and_collects_runtime_packages()`: verifies the spec builds a one-file `Syncerate` executable and explicitly collects Pexpect plus dynamically imported Paho MQTT modules.
 - `test_build_requirements_pin_packager_and_runtime_dependencies()`: verifies the documented build inputs stay pinned.
 - `test_build_script_cleans_generated_output_and_verifies_executable()`: verifies the build wrapper keeps strict shell failure handling, cleans generated output, invokes the spec, and validates the frozen CLI/version.
+- `test_build_script_publishes_only_syncerate_and_readme_into_clean_dist()`: exercises the wrapper with a fake PyInstaller frontend, pre-existing stale `dist/` content, and an extra staging artifact; verifies the final `dist/` contains exactly `README.md` and executable `Syncerate`, validates the required README text, and confirms `.build/` is removed.
 
 ### `tests/test_system_actions.py`
 

@@ -1,75 +1,102 @@
-# Syncerate 0.4.42 verification
+# Syncerate 0.4.44 verification
 
-Baseline used for this release: supplied `Syncerate-0.4.41.zip`.
+Baseline used for this release: supplied `Syncerate-0.4.43.zip`.
 
 Baseline archive SHA-256:
 
 ```text
-76d3ce251c358536540e8add5fda1cffa0a2277087ef13794555438d6f995274
+5b85b205ec2813e18532e942e0f9132b186ffa952f01f682b2c16553092b6ef3
 ```
 
-## Runtime-category move verified
+## Final `dist/` contract
 
-- `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` moved from `[syncoid]` to `[runtime]` in `CONFIG_OPTION_LOCATIONS`, `load_app_config()`, the shipped example, README, tests, and code map.
-- `[syncoid]` now owns only `SourceListPath`, `DestListPath`, and `SyncoidCommand`.
-- `[runtime]` now owns `DryRun`, `SystemAction`, `ContinueOnMissingDataset`, `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds`.
-- The shipped `config/example-Syncerate.toml` uses the requested explicit values: `ContinueWithoutResume = false`, `RetryBrokenPipe = true`, `BrokenPipeRetryCount = 1`, and `BrokenPipeRetryWaitSeconds = 10`.
-- Fallback behavior when options are omitted is unchanged: `ContinueWithoutResume` defaults to `true`, `RetryBrokenPipe` defaults to `false`, retry count defaults to `1`, and retry wait defaults to `10`.
-- A migration guard rejects these four names when left under `[syncoid]` and reports that they moved to `[runtime]`, preventing old-category values from being silently ignored.
-- `ContinueOnMissingDataset` remains under `[runtime]`, still defaults to `false`, and retains its existing failure-reporting behavior.
+- `build-pyinstaller.sh` removes previous `.build/` and `dist/` output before a build.
+- All generated PyInstaller work/staging material is placed under `.build/pyinstaller-work` and `.build/pyinstaller-dist`.
+- PyInstaller never publishes generated build internals directly into final `dist/`.
+- The wrapper installs the verified standalone executable as `dist/Syncerate`.
+- The wrapper creates `dist/README.md` with the required delivery/build explanation.
+- The wrapper counts the top-level `dist/` entries and fails unless there are exactly two: `dist/Syncerate` and `dist/README.md`.
+- Any third/unexpected file in final `dist/` is an error.
+- The executable must be a regular non-symlink executable; the README must be a regular non-symlink file.
+- An exit trap removes `.build/` on success or failure.
+- `.gitignore` ignores `.build/` and generated `dist/*` output while explicitly allowing `dist/README.md` to remain trackable.
 
-## Configuration/documentation audits
+The packaging regression test exercises the real build wrapper with a fake PyInstaller frontend. It starts with stale content in `dist/`, makes fake PyInstaller emit an unrelated extra staging artifact, and verifies that the final delivery directory contains only:
 
-- The authoritative schema contains exactly 31 supported settings.
-- The shipped TOML example contains exactly the same 31 settings in the same assigned tables.
-- README mentions every supported configuration option name.
-- All 32 fenced TOML examples in README parse successfully with `tomllib`.
-- AST-to-code-map audit found 242 production/test class/function definitions and all 242 are represented in `commented_code_map.md`.
+```text
+dist/README.md
+dist/Syncerate
+```
+
+It also verifies `.build/` is removed.
 
 ## Functional checks
 
-- `python3 -m compileall -q Syncerate.py syncerate tests` passed.
-- `bash -n build_pyinstaller.sh` passed.
-- `python3 Syncerate.py --version` reports `Syncerate.py 0.4.42`.
+- `python3 -m compileall -q Syncerate.py syncerate tests` passed for the release tree.
+- `bash -n build-pyinstaller.sh` passed.
+- `python3 Syncerate.py --version` reports `Syncerate.py 0.4.44`.
 - `python3 Syncerate.py --help` works and continues to document `--conf/-c`, `--dry-run`, and `--version`.
-- Importing `Syncerate` and `syncerate` is silent and returns success.
-- Executable modes remain set on `Syncerate.py`, `build_pyinstaller.sh`, and `dist/Syncerate`.
+- Configuration/runtime behavior is unchanged by this packaging-only release.
+- `config/example-Syncerate.toml` remains the complete categorized example configuration.
+
 
 ## Regression suite
 
-All **133/133** regression tests passed:
+All **134/134** regression tests passed:
 
 - 23 `test_app_and_logging` tests;
 - 28 `test_config` tests;
 - 8 `test_datasets` tests;
 - 20 `test_notifications` tests;
-- 3 `test_packaging` tests;
+- 4 `test_packaging` tests;
 - 48 `test_syncoid_runner` tests;
 - 3 `test_system_actions` tests.
 
-The Syncoid process tests were run in bounded groups. The first two 16-test groups passed. The final 16-test group reached the execution-time ceiling after 13 tests had completed without failure; the final four tests were then rerun separately and all passed, overlapping one already-completed test so every test in the module was explicitly covered.
+The first all-in-one Syncoid run reached the command window while the intentionally slow repeated-progress case was executing after the preceding tests had passed. The uncompleted tail was rerun in smaller bounded groups and all remaining tests passed, covering all 48 Syncoid cases explicitly.
+
+## Documentation/configuration audits
+
+- All 32 fenced TOML examples in `README.md` parse successfully with `tomllib`.
+- The loader schema contains 31 supported TOML options and `config/example-Syncerate.toml` contains the same 31 options with no differences.
+- AST/code-map audit found 243 production/test class/function definitions and every definition name is represented in `commented_code_map.md`.
+- Final checked-in `dist/` entries are exactly `README.md` and `Syncerate`.
 
 ## Package comparison and cleanup
 
-- Baseline regular project files (excluding generated bytecode/cache): 41.
-- Release regular project files (excluding generated bytecode/cache): 41.
-- No project file is intentionally added or removed for this release.
-- Required original assets remain preserved, including Home Assistant examples/screenshots and the existing standalone executable.
-- Generated `__pycache__`, `.pyc`, `.pyo`, build-cache, and temporary verification files are removed before packaging.
-- `PACKAGE_MANIFEST.json` is regenerated against the supplied 0.4.41 archive/tree using SHA-256 hashes and Unix modes; its own release hash is excluded to avoid self-reference.
+Compared with the supplied 0.4.43 baseline:
+
+- baseline regular files: 41;
+- 0.4.44 regular files: 42;
+- added: `build-pyinstaller.sh` and `dist/README.md`;
+- removed: `build_pyinstaller.sh` (renamed to the hyphenated wrapper);
+- no application/configuration feature files were removed;
+- generated `__pycache__`, `.pyc`, `.pyo`, `.build/`, legacy `build/`, and temporary verification files are excluded before packaging.
+
+`PACKAGE_MANIFEST.json` records SHA-256 hashes and Unix modes against the supplied 0.4.43 archive; its own release hash is intentionally excluded to avoid self-reference.
 
 ## Standalone executable limitation
 
-The preserved `dist/Syncerate` executable still reports:
+The preserved `dist/Syncerate` executable in the supplied source archive still reports:
 
 ```text
 Syncerate 0.4.29
 ```
 
-It is an original project file and is **not** a 0.4.42 executable. In this verification environment, Pexpect is available, but PyInstaller and Paho MQTT are not installed. A truthful 0.4.42 standalone executable therefore could not be rebuilt here. Use the 0.4.42 Python source on Python 3.11+ or rebuild `dist/Syncerate` on a compatible Linux system using `build_pyinstaller.sh` and `requirements-build.txt`.
+It is an original project artifact and is **not** a 0.4.44 executable. A truthful new frozen executable could not be produced in this environment because the full PyInstaller build dependencies are unavailable. On a configured build host, install `requirements-build.txt` and run:
+
+```bash
+./build-pyinstaller.sh
+```
+
+The updated wrapper will recreate `dist/` and leave exactly these two delivery files:
+
+```text
+dist/README.md
+dist/Syncerate
+```
 
 ## What was not fully tested
 
-No live ZFS pool, real Syncoid replication, remote SSH host, production MQTT broker/Home Assistant instance, local mail server/delivery path, or real post-success `SystemAction` was exercised. Those paths are covered by regression tests using controlled fake child processes and mocked/stubbed external integrations.
+No live ZFS pool, real Syncoid replication, remote SSH host, production MQTT broker/Home Assistant instance, local mail server/delivery path, or real post-success `SystemAction` was exercised for this packaging-only release. Those functional paths remain covered by the existing regression suite.
 
-The PyInstaller build itself was not run because required build modules are unavailable in this environment. Platform-specific behavior of a newly rebuilt frozen executable therefore remains to be verified on the target build host.
+A real PyInstaller freeze was not performed here. The final-directory publication/cleanup behavior itself is exercised end-to-end with the fake PyInstaller frontend used by `tests/test_packaging.py`.
