@@ -107,6 +107,16 @@ _PV_PROGRESS_RE = re.compile(
 )
 
 
+_TRANSFER_ESTIMATE_RE = re.compile(
+    r"\(~\s*(?P<amount>\d+(?:[.,]\d+)?)\s*(?P<unit>[KMGTPE]?i?B)\s*\)",
+    re.IGNORECASE,
+)
+_PV_RATE_RE = re.compile(
+    r"\[\s*(?P<amount>\d+(?:[.,]\d+)?)\s*(?P<unit>[KMGTPE]?i?B)/s\s*\]",
+    re.IGNORECASE,
+)
+
+
 def pv_amount_to_bytes(amount_text: str, unit_text: str) -> int:
     """Convert one pv human-readable byte counter value to whole bytes."""
 
@@ -144,13 +154,49 @@ def pv_amount_to_bytes(amount_text: str, unit_text: str) -> int:
 class TransferByteCounter:
     """Accumulate actual pv byte counters without double-counting progress refreshes."""
 
-    def __init__(self, measurement_possible: bool = True) -> None:
+    def __init__(
+        self, measurement_possible: bool = True,
+        progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> None:
+        self.progress_callback = progress_callback
+        self.current_transfer = ""
+        self.estimated_bytes: Optional[int] = None
+        self.bytes_per_second: Optional[int] = None
         self.total_bytes = 0
         self.measurement_complete = measurement_possible
         self._current_transfer_active = False
         self._current_transfer_bytes = 0
         self._current_transfer_measured = False
         self._buffer = ""
+
+    def _notify_progress(self) -> None:
+        """Copy the latest stream measurement to monitoring; never abort replication."""
+        if self.progress_callback is None:
+            return
+        measured = self._current_transfer_bytes if self._current_transfer_measured else None
+        snapshot = {
+            "current_transfer": self.current_transfer,
+            "current_dataset_estimated_bytes": self.estimated_bytes,
+            "current_dataset_transferred_bytes": measured,
+            "current_dataset_progress_percent": (
+                round(measured * 100 / self.estimated_bytes, 2)
+                if measured is not None and self.estimated_bytes else None
+            ),
+            "current_dataset_bytes_per_second": self.bytes_per_second,
+        }
+        try:
+            self.progress_callback(snapshot)
+        except Exception:
+            # Optional instrumentation must never alter a backup's result.
+            logging.getLogger(__name__).warning("Live transfer progress callback failed; disabling it for this attempt")
+            self.progress_callback = None
+
+    def write(self, text: str) -> None:
+        """Observe Pexpect reads immediately, independently of its error/prompt matcher."""
+        self.feed(text)
+
+    def flush(self) -> None:
+        """Satisfy Pexpect's stream interface; incomplete read fragments stay buffered."""
 
     def _finish_current_transfer(self) -> None:
         """Commit the maximum observed pv value for the current Syncoid stream."""
@@ -176,8 +222,19 @@ class TransferByteCounter:
     def _process_line(self, line: str) -> None:
         """Consume one physical Syncoid/pv output line in stream order."""
 
-        if _TRANSFER_START_RE.search(line):
+        if _TRANSFER_START_RE.match(line.lstrip()):
             self._start_transfer()
+            self.current_transfer = line.strip()
+            estimate = _TRANSFER_ESTIMATE_RE.search(line)
+            self.estimated_bytes = None
+            self.bytes_per_second = None
+            if estimate is not None:
+                unit = estimate.group("unit")
+                # Syncoid's readablebytes uses powers of 1024 even for KB/MB/GB.
+                if len(unit) == 2:
+                    unit = unit[0] + "iB"
+                self.estimated_bytes = pv_amount_to_bytes(estimate.group("amount"), unit)
+            self._notify_progress()
 
         progress_match = _PV_PROGRESS_RE.match(line)
         if progress_match is None:
@@ -197,6 +254,12 @@ class TransferByteCounter:
             self._current_transfer_bytes,
             transferred_bytes,
         )
+        rate = _PV_RATE_RE.search(line)
+        self.bytes_per_second = (
+            pv_amount_to_bytes(rate.group("amount"), rate.group("unit"))
+            if rate is not None else None
+        )
+        self._notify_progress()
 
     def feed(self, text: str) -> None:
         """Consume streamed output, treating both CR and LF as pv line boundaries."""
@@ -956,6 +1019,7 @@ def ssh_command(
     retry_broken_pipe: bool = False,
     process_env: Optional[dict[str, str]] = None,
     continue_without_resume: bool = True,
+    transfer_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> SyncoidAttemptResult:
     """Start and monitor one Syncoid process and return explicit flags."""
 
@@ -970,7 +1034,8 @@ def ssh_command(
     missing_dataset_cleanup_forced = False
     modified_command = list(syncoid_command)
     transfer_counter = TransferByteCounter(
-        measurement_possible="--quiet" not in modified_command
+        measurement_possible="--quiet" not in modified_command,
+        progress_callback=transfer_callback,
     )
 
     logger.info("")
@@ -997,6 +1062,12 @@ def ssh_command(
         encoding="utf-8",
         env=process_env,
     )
+
+    # Read-only observation sees bytes while expect() is waiting for an error
+    # or EOF. It neither consumes matches nor introduces a timeout. logfile_read
+    # excludes sent passwords; the original raw logfile remains unchanged.
+    child.logfile_read = transfer_counter
+    transfer_counter._notify_progress()  # Clear a previous attempt, including retries.
 
     output_handle = None
     if run_context.logging_enabled:
@@ -1057,10 +1128,6 @@ def ssh_command(
             )
         index = child.expect(patterns, timeout=expect_timeout)
 
-        transfer_counter.feed(safe_text(child.before))
-        if index != PATTERN_WARNING and isinstance(child.after, str):
-            transfer_counter.feed(child.after)
-
         if index in repeat_guarded_patterns:
             pattern_count[index] += 1
 
@@ -1080,9 +1147,6 @@ def ssh_command(
 
         if index == PATTERN_WARNING:
             warning_text = read_warning_line(child, safe_text(child.after)).strip()
-            # Preserve the boundary of preceding progress output without
-            # interpreting warning text as a transfer heading or pv counter.
-            transfer_counter.feed("\n")
             if _SYNCOID_MISSING_DATASET_WARNING_RE.fullmatch(warning_text):
                 missing_dataset_or_pool_detected = True
                 if warning_text not in missing_dataset_or_pool_messages:
@@ -1399,6 +1463,7 @@ def run_replications(
     *,
     summary: Optional[ReplicationSummary] = None,
     progress_callback: Optional[Callable[[str, DatasetPair, ReplicationSummary], None]] = None,
+    transfer_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> ReplicationSummary:
     """Run pairs and update shared statistics even if a fatal error interrupts the list."""
 
@@ -1451,6 +1516,7 @@ def run_replications(
                 logger,
                 retry_broken_pipe=app_config.retry_broken_pipe,
                 continue_without_resume=app_config.continue_without_resume,
+                **({"transfer_callback": transfer_callback} if transfer_callback is not None else {}),
                 process_env=(
                     ssh_agent_session.environment
                     if ssh_agent_session is not None

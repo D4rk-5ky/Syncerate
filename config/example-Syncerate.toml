@@ -120,6 +120,11 @@ LiveMQTTDiscovery = true
 LiveBackupName = ""
 
 # Send non-retained heartbeat every N seconds (valid 10..3600, default 60).
+# Each heartbeat includes live current-stream estimate, transferred bytes,
+# approximate percentage (can exceed 100%) and last reported transfer speed.
+# Set 10 for more frequent progress updates. No extra progress setting is needed.
+# Missing readings stay unknown; each send stream/recursive child/retry resets
+# them. Run-wide transferred bytes still count finished attempts only.
 # HA considers live sensors stale after three intervals (180s by default).
 # The last completed result is published separately WITH MQTT retain=true.
 LiveHeartbeatSeconds = 60

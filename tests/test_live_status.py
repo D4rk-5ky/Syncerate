@@ -58,9 +58,9 @@ class LiveStatusTests(unittest.TestCase):
     def test_ha_discovery_is_retained_unique_and_live_expires(self):
         m, client = self.make_connected(live_heartbeat_seconds=60)
         discoveries = [entry for entry in client.messages if entry[0].endswith('/config')]
-        self.assertEqual(len(discoveries), 9)
+        self.assertEqual(len(discoveries), 13)
         self.assertTrue(all(x[3] and x[2] == 1 for x in discoveries))
-        self.assertEqual(len({x[1]['unique_id'] for x in discoveries}), 9)
+        self.assertEqual(len({x[1]['unique_id'] for x in discoveries}), 13)
         self.assertTrue(all(x[1]['expire_after'] == 180 for x in discoveries[:-1]))
         self.assertNotIn('expire_after', discoveries[-1][1])
         self.assertEqual(discoveries[0][1]['state_topic'], m.status_topic)
@@ -156,7 +156,7 @@ class LiveStatusTests(unittest.TestCase):
         self.assertEqual(c.credentials, ('user', 'pw'))
         self.assertEqual(c.kwargs['callback_api_version'], 'v2')
         self.assertTrue(m._heartbeat_thread.is_alive())
-        self.assertEqual(len([x for x in c.messages if x[0].endswith('/config')]), 9)
+        self.assertEqual(len([x for x in c.messages if x[0].endswith('/config')]), 13)
         self.assertEqual([x[1]['event'] for x in c.messages if x[0] == m.events_topic], ['started'])
         m.finish('success', 0)
         m.stop()

@@ -16,6 +16,17 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.52
+
+Previous version: `0.4.51`.
+
+- Extended the existing `TransferByteCounter` parser to extract each Syncoid stream's rounded estimate, observed bytes, approximate percentage and reported bytes/second. Syncoid estimate labels use binary scaling; pv units retain their binary/decimal meaning, and comma/period decimals are supported. Percentages above 100% remain visible; unknown/zero estimates do not cause division errors or invented completion.
+- Attached the counter to Pexpect's read-only `logfile_read` stream instead of feeding it only after an error/prompt/EOF match. This makes measurements available while a long transfer is still running, without consuming matcher input, adding polling timeouts, changing credential writes or duplicating byte accounting. Transfer-start recognition is anchored so warning/debug examples cannot reset a real stream. New read-stream adapter methods `write`/`flush` retain partial chunks until CR/LF or EOF.
+- Added best-effort `transfer_callback` plumbing through app, replication runner and individual attempts. `LiveBackupMonitor.transfer_progress()` caches measurements under its existing lock; heartbeats include them without per-line MQTT traffic. A new pair, stream or retry clears stale measurements. Progress callback failures are contained and disabled for that attempt; existing ZFS safety, locking, retry policy, mail, legacy MQTT, success and failure paths are preserved.
+- Added four HA Discovery sensors on the existing backup device/status topic: estimated size, transferred bytes, progress percentage and transfer speed. Their live expiry/retention matches the existing sensors. Progress attributes carry the full current Syncoid heading and last counter-observation time. Terminal/live retained results keep the latest measurements without forcing 100%.
+- Updated current-use README, all affected function-map descriptions, CLI help and configuration comments (all 38 options unchanged). Added transfer-progress regression coverage for the supplied output, chunking/CR/EOF, units, over-estimate results, unknown data, recursive resets, callback failure, Discovery, retry resets and a real child that cannot exit until a heartbeat reports its progress. Made the existing help-content test insensitive to terminal-width line wrapping.
+- Updated source and build expectations to 0.4.52 and rebuilt the Linux x86-64 standalone `dist/Syncerate` with the project's pinned dependencies. The existing executable path now contains this release; no original project paths are removed. Full compile/CLI/build/archive checks and exact original-file accounting are recorded in `VERIFICATION.md` and `PACKAGE_MANIFEST.json`.
+
 ## 0.4.51
 
 Previous version: `0.4.50`.

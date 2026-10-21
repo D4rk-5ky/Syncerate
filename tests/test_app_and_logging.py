@@ -29,7 +29,7 @@ class AppAndLoggingTests(unittest.TestCase):
                 parse_arguments(["--help"])
 
         self.assertEqual(caught.exception.code, 0)
-        help_text = stream.getvalue()
+        help_text = " ".join(stream.getvalue().split())
         self.assertIn("--conf FILE", help_text)
         self.assertIn("-c FILE", help_text)
         self.assertIn("required Syncerate TOML configuration file", help_text)

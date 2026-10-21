@@ -331,7 +331,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 logger,
                 ssh_agent_session=ssh_agent_session,
                 summary=replication_summary,
-                **({"progress_callback": live_monitor.progress} if live_monitor is not None else {}),
+                **({"progress_callback": live_monitor.progress,
+                    "transfer_callback": live_monitor.transfer_progress} if live_monitor is not None else {}),
             )
         if replication_summary.has_missing_dataset_failure:
             failure_details = format_missing_dataset_failures(replication_summary)
