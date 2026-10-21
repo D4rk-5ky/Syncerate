@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.51`
+Current version: `0.4.52`
 
 ## ⚠️ Disclaimer / Liability
 
@@ -95,7 +95,7 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-**Important for this source package:** the preserved `dist/Syncerate` file is an older standalone build and reports `Syncerate 0.4.29`. It is included only because it was present in the supplied project archive. It does **not** contain the 0.4.51 source release. Rebuild with `build-pyinstaller.sh` on a compatible Linux system before using the standalone executable for this release.
+The included `dist/Syncerate` is built from this release and reports `Syncerate 0.4.52`. It is a Linux x86-64 build; use the Python source or rebuild locally if your system is incompatible. Verify its version with `./dist/Syncerate --version` before scheduling it.
 
 PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
 
@@ -171,7 +171,7 @@ Syncerate has four application flags. `--conf`/`-c` selects the required setting
 | `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate TOML configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. Every run takes a non-blocking, exclusive per-file `flock` before starting work. |
 | `--dry-run` | No | Still acquires the same per-TOML lock as a real run. Forces dry-run on even when `[runtime].DryRun = false` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.51` for the 0.4.51 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The preserved older `dist/Syncerate` bundled in this source package reports its own embedded 0.4.29 version and must be rebuilt for 0.4.51. The flag exits without starting a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.52` for the 0.4.52 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The bundled Linux x86-64 `dist/Syncerate` reports 0.4.52. The flag exits without starting a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -233,7 +233,7 @@ Use this to see the executable's current syntax and examples. No `--conf` argume
 ./dist/Syncerate --version
 ```
 
-No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.51 build.
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.52 build.
 
 Run the packaged regression suite after installation or modification with:
 
@@ -502,21 +502,70 @@ control locking. Topic paths are:
 
 | Topic | Retained? | Content |
 |---|---|---|
-| `syncerate/<backup_id>/status` | **No** | JSON running heartbeat every N seconds; immediate dataset starts and completion/progress and final `success`/`failed` (then expires). Includes `run_id`, backup name, current source → destination pair, total/completed/failed counts, transferred bytes from finished attempts, and runtime. |
+| `syncerate/<backup_id>/status` | **No** | JSON running heartbeat every N seconds; immediate dataset starts and completion/progress and final `success`/`failed` (then expires). Includes `run_id`, backup name, current source → destination pair, total/completed/failed counts, transferred bytes from finished attempts, runtime, and current stream estimate/bytes/percentage/speed. |
 | `syncerate/<backup_id>/last_result` | **Yes** | Last completed **owner** run's final JSON result, success/failure, exit code, error, counters and end time. Safe to read after restart; **not** overwritten when a duplicate start is rejected. |
 | `syncerate/<backup_id>/events` | **No** | Optional `started`, `completed`, `failed`, or `duplicate_rejected` event (configured independently). |
-| `homeassistant/sensor/syncerate_<backup_id>/<entity>/config` | **Yes** | Automatic MQTT Discovery for eight live sensors plus the separate last-result sensor. |
+| `homeassistant/sensor/syncerate_<backup_id>/<entity>/config` | **Yes** | Automatic MQTT Discovery for twelve live sensors plus the separate last-result sensor. |
 
-The initial live status is `running`; while Syncoid works on an individual
-pair, `current_dataset` shows that pair and the counters reflect the last
-completed attempt. For a long-running individual pair, transferred bytes may
-not increase until the transfer attempt finishes; **this is not byte-level
-progress or an estimated transfer percentage**. Failed counts reflect attempted
-but not completed pairs; untouched entries never count as failed.
+The initial live status is `running`; `current_dataset` identifies the configured
+source → destination pair. Run-wide `data_transferred_bytes` remains the total
+from finished attempts. Failed counts reflect attempted but not completed
+pairs; untouched entries never count as failed.
+
+### Live dataset transfer progress
+
+When live monitoring is enabled, four additional sensors appear automatically
+under the same backup device. No additional TOML settings are needed.
+
+| Home Assistant sensor | MQTT JSON field | Meaning |
+| --- | --- | --- |
+| Dataset estimated size | `current_dataset_estimated_bytes` | Rounded `(~ size)` estimate for the current Syncoid send stream, in bytes. |
+| Dataset transferred | `current_dataset_transferred_bytes` | Highest observed byte counter for that stream. |
+| Dataset progress | `current_dataset_progress_percent` | Transferred / estimated bytes × 100; may exceed 100%. |
+| Dataset transfer speed | `current_dataset_bytes_per_second` | Latest parseable rate reported by the progress output, in bytes/second. |
+
+Readings are parsed as Syncoid output arrives, including during a long transfer,
+and included in the **same non-retained status message as each heartbeat**.
+The normal interval is 60 seconds; set `LiveHeartbeatSeconds = 10` under `[mqtt]`
+for more frequent updates (valid range 10–3600). Configured pair boundaries and final
+results still publish immediately. Output lines update an in-memory cache;
+they do not cause an MQTT publication for every progress refresh.
+
+For your example, `(~ 3.3 GB)` and `3,34GiB ... [23,3MiB/s]` produce an estimate
+of about 3.3 GiB, 3.34 GiB transferred, **101.21%**, and 23.3 MiB/s. Syncoid's
+`readablebytes` formatter uses powers of 1024 despite labelling its estimates
+KB/MB/GB, so those labels are converted accordingly. Explicit `pv` GiB/MiB units
+are binary; `pv` GB/MB units are decimal. Period and comma decimals are accepted.
+The displayed `99%` from the progress bar is not used: Syncerate calculates its
+own approximate percentage from the two byte amounts. See
+[Syncoid readablebytes](https://github.com/jimsalterjrs/sanoid/blob/master/syncoid)
+for the estimate formatting and
+[Home Assistant MQTT sensor](https://www.home-assistant.io/integrations/sensor.mqtt/)
+for unknown numeric states and expiry behavior.
+
+A configured pair may send multiple snapshots or recursive child datasets.
+These four readings describe the **current send stream**, not an estimate of
+all remaining work for that pair or the entire backup. Each new stream,
+configured pair or retry resets the estimate, transferred amount and speed.
+The progress sensor's attributes include `current_transfer` (the complete
+recognized Syncoid heading, identifying recursive child/snapshot paths) and
+`progress_observed_at` (UTC time of the most recent byte-counter observation).
+The same fields are available in the MQTT payload. Heartbeats repeat the last
+observation when output stalls; a heartbeat proves the script is alive, not
+that data is still moving. The speed is the last reported rate, not an
+independently measured current rate.
+
+Missing estimates, missing counters, unavailable rates and percentages without
+a positive estimate are JSON `null` (Home Assistant `unknown`), rather than
+invented zeroes. This can occur with resumed transfers, `--quiet`, or custom
+`--pv-options` that hide normal byte/rate output. A confirmed zero-byte counter
+or rate remains zero. A missing estimate does not prevent publishing observed
+bytes or speed. Final results preserve the latest readings without forcing
+100%; success still requires the existing exit-status and safety checks.
 
 Home Assistant MQTT Discovery creates one device per backup with live status,
 current dataset, total/completed/failed dataset counts, bytes, elapsed runtime,
-heartbeat timestamp, and retained last result. Live sensors use
+heartbeat timestamp, the four dataset transfer measurements, and retained last result. Live sensors use
 `expire_after = LiveHeartbeatSeconds * 3`; the retained last-result sensor has
 **no expiry**. A stale heartbeat makes live sensors unavailable (unknown
 interruption), not conclusively `failed`. Stale live status is expected a few
@@ -915,7 +964,7 @@ mqtt_json_topic = "homeassistant/syncerate/status"
 
 The JSON topic is deliberately separate from the retained legacy topics. When both old MQTT and JSON are enabled, `mqtt_json_topic` must differ from `mqtt_topic`; when the old Home Assistant availability integration is also enabled, it must differ from `HomeAssistant_Available` as well.
 
-**Every JSON publish uses `retain = false`. There is no configuration option that can enable retain for JSON.** This prevents Syncerate from creating a retained JSON success/failure event that Home Assistant could replay on reconnect. Use a new dedicated topic such as `homeassistant/syncerate/status` so it also does not inherit the meaning of an older retained legacy topic.
+**Every completion-notification JSON publish uses `retain = false`. There is no configuration option that can enable retain for these events.** The independent live monitor retains only its last result and HA discovery definitions. This prevents Syncerate from creating a retained JSON success/failure event that Home Assistant could replay on reconnect. Use a new dedicated topic such as `homeassistant/syncerate/status` so it also does not inherit the meaning of an older retained legacy topic.
 
 Successful JSON example:
 

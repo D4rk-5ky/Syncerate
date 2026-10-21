@@ -72,6 +72,7 @@ class LiveAppIntegrationTests(unittest.TestCase):
             self.assertEqual(result, 0)
             runner.assert_called_once()
             self.assertIs(runner.call_args.kwargs['progress_callback'], monitor.return_value.progress)
+            self.assertIs(runner.call_args.kwargs['transfer_callback'], monitor.return_value.transfer_progress)
             completed.assert_called_once()
             self.assertEqual(monitor.return_value.finish.call_args.args[:2], ('success', 0))
 

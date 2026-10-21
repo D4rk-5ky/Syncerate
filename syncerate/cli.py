@@ -38,7 +38,8 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "names, otherwise nothing transfers (exit 1) and matching/mismatching "
             "pairs are reported in failure mail, MQTT and terminal. "
             "Optional mqtt.LiveMQTTEnabled publishes independent HA Discovery, "
-            "live heartbeats and retained last results without affecting replication."
+            "live heartbeats with dataset estimate, transferred bytes, percentage and speed, "
+            "plus retained last results without affecting replication."
         ),
     )
     parser.add_argument(

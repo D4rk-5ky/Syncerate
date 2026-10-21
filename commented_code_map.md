@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.51`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.52`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -89,7 +89,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.51"
+VERSION = "0.4.52"
 __version__ = VERSION
 ```
 
@@ -171,18 +171,22 @@ identity; different hosts and directories get independent topics.
 
 ### `discovery_messages(monitor)`
 
-Creates **nine retained** Home Assistant MQTT Discovery messages: eight live
+Creates **thirteen retained** Home Assistant MQTT Discovery messages: twelve live
 sensors (status, current dataset, total/completed/failed datasets, transferred
-bytes, elapsed seconds and heartbeat timestamp), plus one retained-last-result
+bytes, elapsed seconds, heartbeat timestamp, current stream estimated bytes, observed bytes, percentage and reported bytes/second), plus one retained-last-result
 sensor. Live sensors use `expire_after=3*LiveHeartbeatSeconds` to detect a lost
 heartbeat; last result is not expired. All sensors share one device identifier
-based on the backup's stable ID. Returns no messages when discovery is disabled.
+based on the backup's stable ID. Progress fields are numeric measurements;
+JSON null maps to unknown through the plain value template. The percentage sensor
+also exposes the full current Syncoid heading and counter-observation timestamp
+as attributes, avoiding HA's short sensor-state length limit. Returns no messages
+when discovery is disabled.
 
 ### `LiveBackupMonitor.__init__(config, logger, *, dry_run=False)`
 
 Builds a per-process/run UUID, topics, initial `running` state, timestamp,
 mutable counters guarded by a short local threading lock, connection status,
-and a stop event. No network call is made in the constructor.
+and a stop event. Current stream progress starts unknown (JSON null). No network call is made in the constructor.
 
 ### `LiveBackupMonitor._publish(topic, payload, *, retain=False, qos=0)`
 
@@ -230,11 +234,23 @@ the backup proceeds even if live MQTT support is unavailable.
 
 ### `LiveBackupMonitor.progress(stage, pair, summary)`
 
-Runner callback called when a pair starts, finishes a transfer attempt,
+Runner callback called when a pair starts (clearing all prior stream fields), finishes a transfer attempt,
 completes or is skipped due to missing data. Copies the existing exact dataset
 counters and most recently measured transfer total; no extra ZFS work and no
 new timeout/retry behavior. Sends an immediate status update after non-start
 stages (including the start of a new pair), in addition to periodic heartbeats.
+
+### `LiveBackupMonitor.transfer_progress(snapshot)`
+
+Copies the parser's current stream estimate, observed maximum byte count,
+unclamped percentage and last reported byte rate into the existing locked
+state. Records a UTC `progress_observed_at` timestamp only when a byte counter
+was observed, and ignores callbacks after completion. Does no network I/O;
+`_heartbeat`, connection refreshes, dataset lifecycle publications and `finish`
+reuse the cached readings in their existing status payload. A new stream or
+attempt clears unknown values instead of carrying forward an old estimate.
+`current_transfer` keeps the complete Syncoid heading so recursive child and
+snapshot identity are available without guessing the whole pair's remaining size.
 
 ### `LiveBackupMonitor.planned(total)`
 
@@ -269,8 +285,10 @@ success/dry-run and known/unexpected error boundaries call `finish()`. Lock
 rejections never initialize the owner monitor; their independent event is
 optional and cannot overwrite the current owner's state. The runner gains an
 optional `progress_callback(stage, dataset_pair, summary)` keyword argument
-with a default of `None`; existing calling code is unchanged unless live
-monitoring is enabled. It records existing counters, without changing
+with a default of `None`, plus a separate `transfer_callback(snapshot)` passed
+through each `ssh_command` attempt to `TransferByteCounter`. The latter updates
+only local measurement state; it never publishes on every line. Existing calling
+code is unchanged unless live monitoring is enabled. It records existing counters, without changing
 replication, resume, ENOSPC, Broken Pipe or missing-dataset handling.
 
 ## `config/HomeAssistant-Live-Backup-Alerts.yaml`
@@ -842,15 +860,31 @@ This confirms that local commands run as the user executing Syncerate. Remote co
 
 ### `pv_amount_to_bytes(amount_text, unit_text)`
 
-Converts one parsed `pv` progress amount to integer bytes. It accepts both period and comma decimal separators, binary `B/KiB/MiB/GiB/TiB/PiB/EiB` units, and decimal `KB/MB/GB/TB/PB/EB` units. This is intentionally limited to recognized progress fields rather than Syncoid's rounded estimate text.
+Converts one parsed `pv` progress amount to integer bytes. It accepts both period and comma decimal separators, binary `B/KiB/MiB/GiB/TiB/PiB/EiB` units, and decimal `KB/MB/GB/TB/PB/EB` units. The estimate parser reuses this conversion after normalizing Syncoid's legacy KB/MB/GB labels to KiB/MiB/GiB, matching its 1024-based `readablebytes` formatter. Estimates never replace measured run totals.
 
 ### `TransferByteCounter`
 
 Stateful stream-aware parser used by one monitored Syncoid attempt. It watches Syncoid transfer-start lines and normal `pv -b` progress output, keeps only the maximum byte value seen for the current send stream, commits that value when the next stream starts, and sums streams without double-counting carriage-return progress refreshes.
 
-#### `__init__(measurement_possible=True)`
+#### `__init__(measurement_possible=True, progress_callback=None)`
 
 Initializes the total/current-stream byte state and records whether progress measurement is expected at all. Keeping this state per Syncoid attempt avoids mutable process-global accounting; setting `measurement_possible=False` for `--quiet` prevents Syncerate from presenting an invented transfer size.
+
+#### `_notify_progress()`
+
+Builds an independent snapshot of current stream heading, estimate, observed
+bytes, approximate percentage and reported bytes/second. Unobserved values
+remain null. Calculates percentage only with a positive estimate, allows values
+above 100%, and never sets completion. Traps callback exceptions, warns once
+and disables that callback for this attempt without affecting byte accounting.
+
+#### `write(text)` and `flush()`
+
+Pexpect `logfile_read` adapter: `write` forwards freshly read output to `feed`
+immediately, even while `expect()` waits for a prompt/error/EOF. `flush` is a
+no-op because a read boundary may split any field; only CR/LF and finalization
+end a parser line. This observer does not consume Pexpect matcher input or
+see the passwords sent with `sendline`. The raw `.out` logfile remains separate.
 
 #### `_finish_current_transfer()`
 
@@ -862,7 +896,7 @@ Finishes the previous stream and starts a fresh stream-accounting window. This i
 
 #### `_process_line(line)`
 
-Recognizes Syncoid transfer-start lines and parseable `pv` progress lines, updating only the maximum byte value for the active stream. It also tolerates a parseable `pv` line without a recognized heading so compatible Syncoid/custom output is still measured instead of discarded.
+Recognizes Syncoid transfer-start lines anchored at the line start (ignoring warning/debug examples) and extracts `(~ amount unit)` estimates using `_TRANSFER_ESTIMATE_RE`. Resets live readings on each stream, including resumed/recursive sends. Parses byte counters through `_PV_PROGRESS_RE` and the last reported byte rate through `_PV_RATE_RE`, updating only the maximum byte value for the active stream and notifying the local cache. It also tolerates a parseable `pv` line without a recognized heading so compatible Syncoid/custom output is still measured instead of discarded.
 
 #### `feed(text)`
 
@@ -886,7 +920,12 @@ Splits raw Pexpect child text on CR/LF boundaries, drops blank records, keeps on
 
 Consumes the remainder of a matched warning up to CR, LF, or EOF and returns the complete text, including the prefix already matched by `ssh_command()`. This prevents words inside a warning from reaching password, connection, missing-dataset, or Broken Pipe handlers when output is delivered in several chunks. Pexpect continues writing raw output to the configured `.out` logfile. A final unterminated warning is processed at EOF.
 
-### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False, process_env=None, continue_without_resume=True)`
+Output measurements are fed exactly once through `child.logfile_read`, rather
+than replaying `before`/`after` after pattern matches. Initial callback clears
+previous-attempt progress, including retry measurements. Error patterns, warning
+consumption, timeouts and cleanup policy are unchanged.
+
+### `ssh_command(syncoid_command, password, run_context, logger, retry_broken_pipe=False, process_env=None, continue_without_resume=True, transfer_callback=None)`
 
 Starts Syncoid under Pexpect using an argv list and optional private-agent environment. The monitor processes warnings as complete lines before considering error/prompt matches on the same line. Labels `WARN` and `WARNING` are matched case-insensitively at a line boundary, with optional indentation. A following delimiter is required so an ordinary word such as `WARNINGS` is not mistaken for a warning.
 
@@ -1042,7 +1081,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Creates `dist/README.md` with the standalone-delivery explanation, expected `dist/Syncerate` path, `./build-pyinstaller.sh` command, and source-vs-generated-binary warning.
 - Counts final top-level `dist/` entries and fails unless there are exactly two: `dist/Syncerate` and `dist/README.md`; it rejects any unexpected third entry and rechecks both expected files.
 - Uses an exit trap to remove the generated `.build/` directory on success or failure.
-- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.51`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.52`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -1145,7 +1184,7 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
 - `Syncerate.spec`, `build-pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
-- `dist/Syncerate`: preserved platform-specific PyInstaller artifact. In the supplied project archive it is an older 0.4.29 build, so it is intentionally not treated as the 0.4.51 executable and is not imported by source-mode tests; rebuild it with `build-pyinstaller.sh` for this release.
+- `dist/Syncerate`: Linux x86-64 PyInstaller executable rebuilt from the 0.4.52 source with pinned requirements; checked independently with `--version`, `--help`, a dry-run, a failing dataset preflight and a simulated transfer. It bundles Python, Pexpect and Paho; external Syncoid/ZFS/SSH/mail programs remain separate.
 - `dist/README.md`: tracked delivery-folder note explaining the expected standalone output and build command; it is the only non-executable file allowed in `dist/`.
 - `config/example-Syncerate.toml`: complete 31-option categorized TOML example kept synchronized exactly with `CONFIG_OPTION_LOCATIONS`.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
@@ -1373,3 +1412,21 @@ Verified against [Syncoid revision d39b51a](https://github.com/jimsalterjrs/sano
 - `test_missing_data_does_not_hide_authentication_or_unrelated_exit()`: verifies authentication failures and exit 42 remain fatal after a missing-data report.
 - `test_missing_data_precedes_secondary_broken_pipe()`: verifies a Broken Pipe after confirmed missing-data evidence waits for final status instead of activating retries.
 - `test_completed_missing_data_run_sends_actual_error_mail_and_mqtt()`: executes three fake pairs through the real app/runner, including two missing-data failures and a later success. Captures actual generated email and MQTT JSON, verifying exit 8, both failed pairs, error delivery with success switches false, and no system action.
+
+## `tests/test_transfer_progress.py`
+
+`TransferProgressTests` verifies the new monitoring behavior with no ZFS data:
+
+- `test_user_output_chunked_with_comma_decimal_and_over_estimate`: feeds the supplied heading and progress one character at a time with CR/LF boundaries; confirms Syncoid's binary estimate, comma decimals, speed, 101.21% and unchanged measured total.
+- `test_estimate_units_follow_syncoid_binary_scaling`: checks B/KB/MB/GB/TB/GiB estimates and unknown counters before the first observation.
+- `test_missing_or_zero_estimate_and_missing_rate_stay_unknown`: verifies resumed/no-heading measurements, decimal pv units, unavailable rate and safe null percentages.
+- `test_new_recursive_stream_resets_values_and_sums_each_counter_once`: resets stale stream data, checks recursive heading identity, repeated counters and EOF without a line ending.
+- `test_warning_or_debug_heading_does_not_reset_real_stream`: prevents explanatory warnings/debug lines from creating false streams or estimates.
+- `test_instrumentation_exception_cannot_break_transfer_accounting`: confirms callback exceptions are contained once and actual byte accounting still completes.
+- `test_progress_is_cached_until_heartbeat_and_reset_for_next_pair`: confirms no per-output network publication, real observation timestamps, retained failure measurements without forcing 100%, and next-pair reset.
+- `test_discovery_uses_existing_status_topic_and_unknown_safe_templates`: validates four new sensor definitions, units, expiry, status topic and full-heading attributes.
+- `test_real_child_requires_heartbeat_ack_before_it_can_finish`: an actual child writes progress and waits for a heartbeat-triggered acknowledgement file; catches the old wait-until-EOF behavior while verifying exact final accounting and non-retained live status. Its nested `AckClient.publish` extends the existing fake client to acknowledge only an observed >100% heartbeat.
+- `test_retry_starts_with_unknown_measurements_instead_of_old_estimate`: exercises a real Broken Pipe retry, requiring two independent resets, an unknown resumed estimate and measured retry bytes summed once.
+
+The existing CLI-help test normalizes whitespace before checking documented
+phrases, so argparse terminal-width wrapping does not cause false failures.

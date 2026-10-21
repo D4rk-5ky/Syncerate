@@ -56,6 +56,10 @@ def discovery_messages(monitor: "LiveBackupMonitor") -> list[dict[str, Any]]:
         "data_transferred_bytes": ("Data transferred", "value_json.data_transferred_bytes", "B"),
         "runtime_seconds": ("Runtime", "value_json.runtime_seconds", "s"),
         "last_heartbeat": ("Last heartbeat", "value_json.last_heartbeat", None),
+        "current_dataset_estimated_bytes": ("Dataset estimated size", "value_json.current_dataset_estimated_bytes", "B"),
+        "current_dataset_transferred_bytes": ("Dataset transferred", "value_json.current_dataset_transferred_bytes", "B"),
+        "current_dataset_progress_percent": ("Dataset progress", "value_json.current_dataset_progress_percent", "%"),
+        "current_dataset_bytes_per_second": ("Dataset transfer speed", "value_json.current_dataset_bytes_per_second", "B/s"),
     }
     messages = []
     for key, (name, template, unit) in live.items():
@@ -70,6 +74,15 @@ def discovery_messages(monitor: "LiveBackupMonitor") -> list[dict[str, Any]]:
         }
         if unit:
             payload["unit_of_measurement"] = unit
+        if key.startswith("current_dataset_"):
+            payload["state_class"] = "measurement"
+        if key == "current_dataset_progress_percent":
+            payload["suggested_display_precision"] = 2
+            payload["json_attributes_topic"] = monitor.status_topic
+            payload["json_attributes_template"] = (
+                '{{ {"current_transfer": value_json.current_transfer, '
+                '"progress_observed_at": value_json.progress_observed_at} | tojson }}'
+            )
         if key == "last_heartbeat":
             payload["device_class"] = "timestamp"
         messages.append({
@@ -131,6 +144,12 @@ class LiveBackupMonitor:
             "failed_datasets": 0,
             "data_transferred_bytes": 0,
             "data_transferred_complete": False,
+            "current_transfer": "",
+            "current_dataset_estimated_bytes": None,
+            "current_dataset_transferred_bytes": None,
+            "current_dataset_progress_percent": None,
+            "current_dataset_bytes_per_second": None,
+            "progress_observed_at": None,
         }
 
     def _publish(self, topic: str, payload: str, *, retain: bool = False, qos: int = 0) -> Any:
@@ -233,6 +252,15 @@ class LiveBackupMonitor:
     def progress(self, stage: str, pair: DatasetPair, summary: ReplicationSummary) -> None:
         """Update one dataset's progress after runner state changes."""
         with self._lock:
+            if stage == "started":
+                self._state.update({
+                    "current_transfer": "",
+                    "current_dataset_estimated_bytes": None,
+                    "current_dataset_transferred_bytes": None,
+                    "current_dataset_progress_percent": None,
+                    "current_dataset_bytes_per_second": None,
+                    "progress_observed_at": None,
+                })
             self._state.update({
                 "current_dataset": f"{pair.source} -> {pair.destination}",
                 "total_datasets": summary.total_datasets,
@@ -243,6 +271,21 @@ class LiveBackupMonitor:
             })
         # Include the new current dataset immediately when its transfer starts.
         self._publish(self.status_topic, self._payload())
+
+    def transfer_progress(self, snapshot: dict[str, Any]) -> None:
+        """Cache stream progress locally for the next heartbeat, without network I/O.
+
+        The runner supplies parsed measurements, never raw commands or secrets.
+        A new stream/attempt clears the previous estimate and byte counter.
+        Unknown readings remain JSON null; reaching 100% never completes a pair.
+        """
+        with self._lock:
+            if self._completed:
+                return
+            self._state.update(snapshot)
+            self._state["progress_observed_at"] = (
+                utc_timestamp() if snapshot.get("current_dataset_transferred_bytes") is not None else None
+            )
 
     def planned(self, total: int) -> None:
         """Record validated pair total before any transfer starts."""
