@@ -19,7 +19,9 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "  %(prog)s --conf /path/to/Syncerate.toml\n"
             "  %(prog)s --conf /path/to/Syncerate.toml --dry-run\n"
             "  %(prog)s -c ./config/Syncerate.toml\n"
-            "  %(prog)s --version"
+            "  %(prog)s --version\n\n"
+            "Dry run checks local configuration and pairing; it does not verify live "
+            "ZFS datasets, SSH reachability, permissions or free space."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -51,6 +53,7 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "credentials, starting a private ssh-agent, or running SystemAction. "
             "This still acquires the same per-TOML lock as a real run. "
             "This forces dry-run on even when runtime.DryRun = false in the config. "
+            "May create logs and publish independent live MQTT when configured. "
             "Configured success notifications follow SendMailOnSuccess and "
             "SendMQTTOnSuccess; configured failures still notify normally."
         ),

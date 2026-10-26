@@ -1,6 +1,6 @@
 # Syncerate commented code map
 
-This document maps the modular Syncerate implementation in version `0.4.52`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
+This document maps the modular Syncerate implementation in version `0.4.54`. It explains what every module, class, function, command stage, and safety branch does and why it exists.
 
 ## Application layout
 
@@ -27,15 +27,19 @@ tests/
 ├── __init__.py
 ├── helpers.py
 ├── test_app_and_logging.py
+├── test_cli_contract.py
 ├── test_config.py
 ├── test_datasets.py
+├── test_dataset_validation_reporting.py
 ├── test_locking.py
 ├── test_live_app_integration.py
 ├── test_live_status.py
+├── test_mqtt_compatibility.py
 ├── test_notifications.py
 ├── test_packaging.py
 ├── test_syncoid_runner.py
-└── test_system_actions.py
+├── test_system_actions.py
+└── test_transfer_progress.py
 ```
 
 The dependency direction is intentionally one-way:
@@ -89,7 +93,7 @@ Keeping `sys.exit()` at this boundary means internal modules return values or ra
 ### `VERSION` and `__version__`
 
 ```python
-VERSION = "0.4.52"
+VERSION = "0.4.54"
 __version__ = VERSION
 ```
 
@@ -207,14 +211,14 @@ Background daemon thread that waits the configured N seconds, then publishes
 fresh non-retained status until the stop event is set. It never calls ZFS or
 changes Syncoid state.
 
-### `LiveBackupMonitor._on_connect(client, userdata, flags, reason_code, properties)`
+### `LiveBackupMonitor._on_connect(client, userdata, flags, reason_code, properties=None)`
 
-Paho v2 callback. On a successful broker connection or reconnect, republishes
+Paho 1.x/2.x callback (optional properties argument). On a successful broker connection or reconnect, republishes
 retained Discovery config and the current non-retained state. Optionally emits
 the start event at most once, and re-emits a completed retained result if
 available. Broker rejection/callback exceptions are logged nonfatally.
 
-### `LiveBackupMonitor._on_disconnect(client, userdata, disconnect_flags, reason_code, properties)`
+### `LiveBackupMonitor._on_disconnect(client, userdata, disconnect_flags, reason_code=None, properties=None)`
 
 Clears broker-connected state so a temporarily unreachable broker cannot be
 mistaken for a successful publication. Automatic Paho reconnect remains active.
@@ -227,7 +231,7 @@ identity, unique run ID, UTC timestamp and applicable error/exit information.
 
 ### `LiveBackupMonitor.start()`
 
-Lazily imports optional Paho MQTT, creates a v2 persistent client with existing
+Lazily imports optional Paho MQTT, creates the appropriate Paho 1.x or native 2.x persistent client with existing
 broker credentials, configures bounded reconnect delays, starts its network
 loop and independent heartbeat daemon. Any initialization error merely warns;
 the backup proceeds even if live MQTT support is unavailable.
@@ -631,7 +635,7 @@ Builds the legacy optional backup-title/comment email prefix. It remains public 
 
 ### `run_summary_header_text(app_config, runtime_seconds, replication_summary=None, *, dry_run=False, planned_dataset_count=None)`
 
-Builds the email header from the shared `format_final_run_summary()` formatter whenever a runtime is supplied, followed by the normal separator. Real success callers (including compatibility warning-summary callers) pass their completed `ReplicationSummary`, so email gets the same title/blank-line/comment/blank-line/transfer-total/runtime layout already written to terminal and `.log`. Dry-run callers forward `dry_run=True` plus the planned pair count, producing the explicit no-replication summary instead of a transfer total. Failure callers omit the replication summary unless the real missing-data path deliberately completed the list. If a legacy/manual caller supplies no runtime, it falls back to `backup_header_text()` rather than dropping the old metadata.
+Builds the email header from the shared `format_final_run_summary()` formatter whenever a runtime is supplied, followed by the normal separator. Real success callers (including compatibility warning-summary callers) pass their completed `ReplicationSummary`, so email gets the same title/blank-line/comment/blank-line/transfer-total/runtime layout already written to terminal and `.log`. Dry-run callers forward `dry_run=True` plus the planned pair count, producing the explicit no-replication summary instead of a transfer total. Failure callers pass the available completed or partial replication summary, including counters retained after a fatal current-pair error. Failures before validation may have no summary; unattempted pairs are never counted as failed transfers. If a legacy/manual caller supplies no runtime, it falls back to `backup_header_text()` rather than dropping the old metadata.
 
 ### `summary_header(replication_summary=None)` (nested inside `MailTo`)
 
@@ -1081,7 +1085,7 @@ This explicit flow is why modules do not need shared mutable runtime globals.
 - Creates `dist/README.md` with the standalone-delivery explanation, expected `dist/Syncerate` path, `./build-pyinstaller.sh` command, and source-vs-generated-binary warning.
 - Counts final top-level `dist/` entries and fails unless there are exactly two: `dist/Syncerate` and `dist/README.md`; it rejects any unexpected third entry and rechecks both expected files.
 - Uses an exit trap to remove the generated `.build/` directory on success or failure.
-- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.52`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
+- Runs the final executable with `--version`, derives the expected program name from `basename dist/Syncerate`, and checks for exactly `Syncerate 0.4.54`, then runs `--help`; a broken/incomplete frozen application therefore fails the build script without falsely expecting the source filename `Syncerate.py`.
 
 ### `requirements-build.txt`
 
@@ -1184,7 +1188,7 @@ Static tests verify the checked-in spec is one-file, explicitly collects Pexpect
 - `README.md`: current user-facing installation/configuration/operation guide only. Release history belongs in `VERSIONING.md`.
 - `VERSIONING.md`: every created release and its code/behavior/documentation changes.
 - `Syncerate.spec`, `build-pyinstaller.sh`, and `requirements-build.txt`: reproducible one-file standalone build definition, wrapper, and pinned build inputs.
-- `dist/Syncerate`: Linux x86-64 PyInstaller executable rebuilt from the 0.4.52 source with pinned requirements; checked independently with `--version`, `--help`, a dry-run, a failing dataset preflight and a simulated transfer. It bundles Python, Pexpect and Paho; external Syncoid/ZFS/SSH/mail programs remain separate.
+- `dist/Syncerate`: Linux x86-64 PyInstaller executable rebuilt from the 0.4.54 source with pinned requirements; checked independently with `--version`, `--help`, a dry-run, a failing dataset preflight and a simulated transfer. It bundles Python, Pexpect and Paho; external Syncoid/ZFS/SSH/mail programs remain separate.
 - `dist/README.md`: tracked delivery-folder note explaining the expected standalone output and build command; it is the only non-executable file allowed in `dist/`.
 - `config/example-Syncerate.toml`: complete 31-option categorized TOML example kept synchronized exactly with `CONFIG_OPTION_LOCATIONS`.
 - `config/example-source-file` / `config/example-dest-file`: list syntax examples.
@@ -1371,7 +1375,7 @@ The `tests/test_config.py` Boolean checks exercise `DryRun`, `ContinueOnMissingD
 
 ### Warning/resume regression checks
 
-- `test_continue_without_resume_defaults_true_and_validates_booleans()`: verifies default continuation, each supported Boolean spelling, and rejection of invalid configuration values before runtime.
+- `test_continue_without_resume_defaults_true_and_requires_toml_boolean()`: verifies default continuation, native TOML Boolean values, and rejection of quoted or other invalid values before runtime.
 - `test_resume_unavailable_can_stop_or_continue()`: checks source, target, and combined-machine warnings with both policies; verifies the warning is registered and the stop policy raises code 4.
 - `test_continue_without_resume_preserves_real_nonzero_exit()`: proves allowing missing resume support does not hide a later non-zero Syncoid exit.
 - `test_warning_error_words_do_not_trigger_error_or_prompt_handlers()`: verifies warning bodies cannot trigger credential input, host-key answers, connection failures, missing-data recording, or Broken Pipe retries; ordinary warnings also produce no separate application warning logs.
@@ -1430,3 +1434,60 @@ Verified against [Syncoid revision d39b51a](https://github.com/jimsalterjrs/sano
 
 The existing CLI-help test normalizes whitespace before checking documented
 phrases, so argparse terminal-width wrapping does not cause false failures.
+
+
+## Additional nested functions and command details
+
+- `LiveBackupMonitor.stop.disconnect_background()` (`syncerate/live_status.py`): disconnects and stops the Paho network loop on a daemon worker, allowing a brief QoS1 flush after completion. Keeping this on a bounded background worker prevents broker shutdown from holding up Syncerate.
+- `build_mqtt_status_payload.as_dict(comparison)` (`syncerate/notifications.py`): converts a dataset comparison into JSON fields for the matching/mismatching lists, reusing one shape so both lists retain line numbers, endpoints and reasons.
+- `LiveStatusTests.test_background_paho_client_start_publishes_discovery_then_live_state.ConnectedClient.username_pw_set()`: captures credentials for assertions without authenticating to a real broker.
+- The same `ConnectedClient.reconnect_delay_set()`: records retry bounds to check background-client configuration.
+- The same `ConnectedClient.connect_async()`: records host, port and keepalive to verify live-only transport setup.
+- The same `ConnectedClient.loop_start()`: invokes a successful connect callback synchronously so Discovery/start-event ordering can be tested without timing-dependent network I/O.
+- `LiveStatusTests.test_duplicate_event_never_writes_live_or_last_result.fake_single()`: captures the rejection publisher's topic/payload, proving it only publishes a non-retained event.
+- `BackupLockTests.test_duplicate_main_emits_failure_mail_and_nonretained_mqtt_without_touching_original_logs.fake_mail()`: captures mail content/attachments and returns acceptance, proving a rejected launch reports failure while leaving owner logs intact.
+- The same test's `fake_mqtt()`: records failure-publish arguments so the test can assert exit 13 and failure routing despite disabled success notifications.
+- `BackupLockTests.test_owner_keeps_lock_until_success_reporting_finishes.while_reporting()` and `test_owner_keeps_lock_until_failure_reporting_finishes.while_reporting()`: attempt reacquisition while each reporting callback runs. Both require a conflict, proving the owner retains the lock until its reporting is complete.
+
+`parse_arguments()` also explains dry-run log/live-MQTT side effects and the limits of local planning in help. It still exposes only `--conf/-c`, `--dry-run`, `--help/-h`, and `--version`; argument parsing and runtime policies are unchanged. The README command table explains the build, installation, diagnostics and example ZFS/system commands. `cleanup_generated_build_dirs()` in the build script removes `.build/` through its EXIT trap, preventing staged build files from entering the delivery folder.
+
+`VERSIONING.md` remains the sole canonical version ledger, including the complete inherited history. `PACKAGE_MANIFEST.json` compares this release against the actual supplied archive using SHA-256, paths and Unix modes; its own content hash is excluded to avoid a circular hash. `VERIFICATION.md` records this release's measured results rather than inheriting claims from a previous build.
+
+
+## Paho 1.x and 2.x compatibility
+
+`LiveBackupMonitor.start()` checks for `mqtt.CallbackAPIVersion`. It constructs a keyword-only `client_id` options dictionary, adding `callback_api_version=VERSION2` only when the library exposes the enum. This preserves the Paho 1.x constructor and selects the non-deprecated native API on 2.x, including 2.0 where the callback selector is required. Constructor/import failures still use the existing best-effort monitor failure path, without retrying an unrelated failure as a different API.
+
+`LiveBackupMonitor._on_connect(client, userdata, flags, reason_code, properties=None)` accepts the 1.x MQTT 3 four-argument callback and the 2.x API v2 five-argument callback. Comparing the return/reason code to zero is valid for both. Successful connections refresh Discovery, live state and any retained last result; only the first connection emits the optional started event. Refusal still logs a warning and publishes nothing.
+
+`LiveBackupMonitor._on_disconnect(client, userdata, disconnect_flags, reason_code=None, properties=None)` accepts both the old three-argument and new five-argument disconnect callbacks. The legacy rc occupies the third slot; no flags or reason are interpreted, so both paths simply clear connectivity and allow the existing reconnect behavior.
+
+`send_mqtt_messages()` continues to use `paho.mqtt.publish.multiple()` for legacy retained success, HA availability, JSON success/failure and dry-run results. `send_mqtt_failure_status()` delegates to it while preserving the original error and success-switch independence. `publish_duplicate_event.attempt()` continues to use `publish.single()` for the non-retained QoS1 rejection event. Both helper APIs own the callbacks required by their installed library version; no custom compatibility wrapper, duplicate client module or version-specific kwargs are added to those publishers. Authentication, MQTT 3.1.1 defaults, topics, QoS/retain and failure policies are unchanged.
+
+The standalone spec still collects the whole `paho.mqtt` package. `requirements-build.txt` keeps Paho 2.1.0 pinned for reproducible standalone builds; this pin does not restrict Python-source users to that major version.
+
+## `tests/test_mqtt_compatibility.py`
+
+These checks run against each selected real Paho installation. The loopback fixture implements only the MQTT packets needed by the tests, never general broker routing or a production service. All listeners bind 127.0.0.1 with an ephemeral port and are cleaned up by unittest. Network tests skip only when optional Paho is absent; denied localhost access is a test error requiring an environment that permits sockets.
+
+- `wait_until()`: Bound asynchronous assertions so a failed MQTT callback cannot hang tests.
+- `CallbackCompatibilityTests.test_legacy_constructor_and_callbacks_publish_without_v2_enum()`: Reject v2-only kwargs and invoke exactly the Paho 1.x callbacks.
+- `CallbackCompatibilityTests.test_legacy_constructor_and_callbacks_publish_without_v2_enum.LegacyClient.__init__()`: Initialize the strict legacy fake with only client_id accepted, catching accidental 2.x-only constructor kwargs.
+- `CallbackCompatibilityTests.test_legacy_constructor_and_callbacks_publish_without_v2_enum.LegacyClient.reconnect_delay_set()`: Accept the shared reconnect configuration without network I/O so startup can continue.
+- `CallbackCompatibilityTests.test_legacy_constructor_and_callbacks_publish_without_v2_enum.LegacyClient.connect_async()`: Accept shared connection arguments without opening a real socket in the constructor regression.
+- `CallbackCompatibilityTests.test_legacy_constructor_and_callbacks_publish_without_v2_enum.LegacyClient.loop_start()`: Invoke the exact four-argument legacy connect callback to prove startup publishes Discovery.
+- `CallbackCompatibilityTests.test_legacy_constructor_and_callbacks_publish_without_v2_enum.LegacyClient.disconnect()`: Invoke the exact three-argument legacy disconnect callback and record teardown for assertions.
+- `CallbackCompatibilityTests.test_connect_refusal_and_disconnect_accept_both_callback_apis()`: Refusal publishes nothing; both disconnect signatures clear connectivity.
+- `CallbackCompatibilityTests.test_constructor_failure_is_not_retried_as_legacy()`: Unrelated constructor failure stays best-effort, without a legacy retry.
+- `PacketBroker.__init__()`: Create the isolated recorder, lock, handler and loopback listener needed to exercise actual installed Paho code.
+- `PacketBroker.__init__.Handler.read_exact()`: Read a complete frame fragment, raising EOFError on peer closure.
+- `PacketBroker.__init__.Handler.handle()`: Record publications and send real CONNACK/PUBACK/PINGRESP packets.
+- `PacketBroker.drop_clients()`: Force socket loss so the actual Paho client must reconnect.
+- `PacketBroker.snapshot()`: Copy received messages under the fixture lock for asynchronous assertions.
+- `PacketBroker.close()`: Close listener and clients, and join the owned listener thread.
+- `RealPahoCompatibilityTests.setUp()`: Use the installed Paho package against an isolated loopback fixture.
+- `RealPahoCompatibilityTests.test_all_completion_failure_and_dry_run_routes()`: Verify real helper payloads, auth, topics, QoS and retain across all modes.
+- `RealPahoCompatibilityTests.test_live_discovery_heartbeat_reconnect_and_last_result()`: Check actual callbacks, measurements, reconnect, events and retained result.
+- `RealPahoCompatibilityTests.test_duplicate_rejection_uses_single_helper_without_owner_topics()`: Verify publish.single sends a non-retained event without owner updates.
+
+The compatibility-only unittest command runs this module without invoking ZFS, SSH, mail or SystemAction. The full unittest discovery command includes these six new regressions alongside the original 186 checks. Upstream API details were checked against [Paho migration docs](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html), [current helpers](https://eclipse.dev/paho/files/paho.mqtt.python/html/helpers.html), and the [1.6.1 publisher source](https://github.com/eclipse-paho/paho.mqtt.python/blob/v1.6.1/src/paho/mqtt/publish.py).
