@@ -2,7 +2,7 @@
 
 Syncerate processes each matching source and destination ZFS dataset pair listed in two text files. Dataset pairs run sequentially, and optional retry handling can repeat an individual pair when a Broken Pipe occurs.
 
-Current version: `0.4.52`
+Current version: `0.4.54`
 
 ## ⚠️ Disclaimer / Liability
 
@@ -15,7 +15,7 @@ Before running it in production, you **must**:
 - Read the entire source code
 - Understand exactly what it does (and what it does *not* do)
 - Review and adapt it to your own environment
-- Test it carefully in a non-production setup
+- Test it carefully in a non‑production setup
 
 By using this script, **you accept full responsibility** for its effects.
 
@@ -66,7 +66,7 @@ Required:
 Optional:
 
 - OpenSSH `ssh-agent` and `ssh-add` when `UseSSHAgent = true`
-- Python `paho-mqtt` when MQTT publishing is enabled
+- Python `paho-mqtt` when MQTT publishing is enabled (Paho 1.x and 2.x are supported for every MQTT feature; pinned builds bundle 2.1.0)
 - a configured local `mail` command when email is enabled
 - Home Assistant when using the supplied MQTT availability example
 
@@ -95,9 +95,9 @@ Release builds can include a single-file executable at `dist/Syncerate`. The exe
 
 The executable does not bundle external operating-system programs. `syncoid`/Sanoid, OpenSSH, ZFS commands, and the optional local `mail` command must still exist on the target system when the corresponding Syncerate features use them. Configuration files and source/destination list files also remain external so they can be edited normally.
 
-The included `dist/Syncerate` is built from this release and reports `Syncerate 0.4.52`. It is a Linux x86-64 build; use the Python source or rebuild locally if your system is incompatible. Verify its version with `./dist/Syncerate --version` before scheduling it.
+The included `dist/Syncerate` is built from this release and reports `Syncerate 0.4.54`. It is a Linux x86-64 build; use the Python source or rebuild locally if your system is incompatible. Verify its version with `./dist/Syncerate --version` before scheduling it.
 
-PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler.
+PyInstaller output is platform-specific. A Linux x86-64 build is for compatible Linux x86-64 systems; build separately on Linux ARM/Raspberry Pi, Windows, or macOS for those platforms. PyInstaller is not a cross-compiler. Syncerate itself uses POSIX locking, PTYs and Unix account lookup; its supported runtime is Linux with ZFS. Rebuilding on Windows does not make those dependencies available.
 
 Run the packaged executable exactly like the Python entry point:
 
@@ -171,7 +171,7 @@ Syncerate has four application flags. `--conf`/`-c` selects the required setting
 | `-c FILE`, `--conf FILE` | Yes for normal and dry runs | Selects the required Syncerate TOML configuration file. There is no implicit/default config path. Relative paths are resolved from the current working directory. Every run takes a non-blocking, exclusive per-file `flock` before starting work. |
 | `--dry-run` | No | Still acquires the same per-TOML lock as a real run. Forces dry-run on even when `[runtime].DryRun = false` in the selected settings file. It never forces a configured dry run off. The dry-run behavior validates configuration/dataset pairing, reports every exact planned Syncoid command, follows the normal success-notification controls, and does not start Syncoid, request credentials, start the private ssh-agent, or execute `SystemAction`. |
 | `-h`, `--help` | No | Prints the complete command syntax, flag descriptions, and examples, then exits with argparse's normal success status. It does not load the configuration, create logs, read dataset lists, request credentials, or start Syncoid. |
-| `--version` | No | Prints `<program-name> 0.4.52` for the 0.4.52 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The bundled Linux x86-64 `dist/Syncerate` reports 0.4.52. The flag exits without starting a replication run. |
+| `--version` | No | Prints `<program-name> 0.4.54` for the 0.4.54 source entry point and for a standalone executable rebuilt from this release. The program name reflects the entry point used. The bundled Linux x86-64 `dist/Syncerate` reports 0.4.54. The flag exits without starting a replication run. |
 
 ### `--conf FILE` / `-c FILE`
 
@@ -190,7 +190,7 @@ An absolute path is also valid:
 
 If the file cannot be read, its required tables/options are missing, or a documented value fails validation, Syncerate reports a configuration error and returns exit code `2` before replication begins.
 
-### Dry run (`[runtime].DryRun` setting)
+### `--dry-run` and `[runtime].DryRun`
 
 Dry-run is normally selected in the TOML settings file:
 
@@ -213,6 +213,8 @@ Set `DryRun = false` for a real replication run. As a convenience, `--dry-run` c
 
 There is deliberately no CLI option that forces a configured `DryRun = true` back to a real run. This keeps the persistent safety setting authoritative.
 
+Dry run still acquires the per-TOML lock and may create configured logs, send configured notifications, and publish independent live MQTT. It checks local configuration and pairing; it does not contact ZFS or SSH to verify the plan.
+
 The dry-run report includes the number of planned pairs and the exact shell-style Syncoid command that would be built for each source/destination pair. No credentials are requested, no private ssh-agent is started, Syncoid is never executed, no data is transferred, and `SystemAction` is skipped.
 
 Success notification behavior is identical to a real run: `[mail].SendMailOnSuccess` controls successful dry-run email and `[mqtt].SendMQTTOnSuccess` controls successful dry-run MQTT. Failure notifications are independent of those success switches. Successful dry-run MQTT never publishes the normal retained legacy success payload or Home Assistant `online` availability; it uses a non-retained JSON report instead.
@@ -229,11 +231,10 @@ Use this to see the executable's current syntax and examples. No `--conf` argume
 
 ```bash
 ./Syncerate.py --version
-# After rebuilding the standalone executable for this release:
 ./dist/Syncerate --version
 ```
 
-No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. The preserved pre-existing binary in this package is not a 0.4.52 build.
+No `--conf` argument is needed when requesting the version. The displayed executable name intentionally follows the actual entry point, so source and PyInstaller builds do not have to pretend to have the same filename. Both source and included standalone executable report version `0.4.54`.
 
 Run the packaged regression suite after installation or modification with:
 
@@ -241,7 +242,7 @@ Run the packaged regression suite after installation or modification with:
 python3 -m unittest discover -s tests -v
 ```
 
-The suite uses Python's standard `unittest` framework and the same `pexpect` dependency required by Syncerate. It uses fake child processes and does not run real ZFS replication.
+The suite uses Python's standard `unittest` framework and the same `pexpect` dependency required by Syncerate. It uses fake child processes and does not run real ZFS replication. The MQTT compatibility tests additionally open an isolated localhost packet fixture; no external broker is contacted.
 
 ## Source dataset list
 
@@ -360,7 +361,7 @@ The configuration is divided by responsibility:
 
 TOML Boolean values are native `true`/`false` values and must **not** be quoted. String-valued disable controls such as `Mail = "No"`, `PassWord = "No"`, `LogDestination = "No"`, and `SystemAction = "No"` remain strings because those options can also contain an address, passphrase, directory, or command.
 
-A compact example:
+A complete configuration example (all 38 available options):
 
 ```toml
 [backup]
@@ -392,6 +393,13 @@ mqtt_topic = "home-assistant/syncerate/command"
 mqtt_message = "ON"
 MQTT_JSON_Status = false
 mqtt_json_topic = "homeassistant/syncerate/status"
+LiveMQTTEnabled = false
+LiveMQTTDiscovery = true
+LiveBackupName = ""
+LiveHeartbeatSeconds = 60
+LiveNotifyStart = false
+LiveNotifySuccess = true
+LiveNotifyFailure = true
 
 [home_assistant]
 Use_HomeAssistant = false
@@ -431,8 +439,8 @@ BrokenPipeRetryWaitSeconds = 10
 | `[mail]` | `SendMailOnSuccess` | No | Boolean; defaults to `true`. Controls success email for real and dry runs. Failure email is not suppressed by this switch. |
 | `[mqtt]` | `Use_MQTT` | No | Boolean; defaults to `false`. Enables retained legacy MQTT success publishing and non-retained failure/dry-run event routing. |
 | `[mqtt]` | `SendMQTTOnSuccess` | No | Boolean; defaults to `true`. Controls success MQTT/HA/JSON publishing. Failure MQTT is not suppressed by this switch. |
-| `[mqtt]` | `broker_address` | When either MQTT output is enabled | Broker hostname/IP. |
-| `[mqtt]` | `broker_port` | When either MQTT output is enabled | Integer `1..65535`; commonly `1883`. |
+| `[mqtt]` | `broker_address` | When any MQTT output is enabled | Broker hostname/IP, including independent live monitoring. |
+| `[mqtt]` | `broker_port` | No | Integer `1..65535` when MQTT is enabled; defaults to `1883`. Shared by legacy, JSON and live monitoring. |
 | `[mqtt]` | `mqtt_username` | No | Broker username, or empty string. |
 | `[mqtt]` | `mqtt_password` | No | Broker password, or empty string. |
 | `[mqtt]` | `mqtt_topic` | When `Use_MQTT = true` | Legacy retained success topic. Legacy-only failure uses `<mqtt_topic>/error`; dry-run success uses `<mqtt_topic>/dry-run`. |
@@ -459,6 +467,22 @@ The loader has a regression-audited schema containing exactly these 38 supported
 `ContinueWithoutResume`, `RetryBrokenPipe`, `BrokenPipeRetryCount`, and `BrokenPipeRetryWaitSeconds` are runtime policy settings and must be placed under `[runtime]`. Syncerate rejects these names when they are left under `[syncoid]`, preventing a misplaced setting from being silently ignored and replaced by its fallback value.
 
 When any MQTT feature is enabled (including independent live status), broker address, broker port, and the topics required by the enabled legacy channels are validated before replication starts. Required text settings may not be empty; use the documented string `"No"` value where that is the supported disable control.
+
+## Paho MQTT compatibility
+
+All MQTT paths support the Paho Python client 1.x and 2.x APIs: legacy retained success and HA availability, JSON success/failure and dry-run reports, independent live HA Discovery/heartbeats/results/events, and duplicate-rejection events. No configuration or CLI switch selects the library version.
+
+The live monitor detects the callback API exposed by the installed library. It uses the legacy constructor/callback shapes on Paho 1.x and explicitly selects native callback API v2 on Paho 2.x. The one-shot publishers reuse Paho's `publish.multiple()` and `publish.single()` helpers; those helpers manage their own matching callbacks. Existing topics, payloads, QoS, retention, notification switches and error policies apply with either library.
+
+The supplied standalone executable bundles Paho 2.1.0 and does not use the system's Paho installation. When running the Python source, keep your existing Paho 1.x/2.x package. Syncerate still requires Python 3.11 or newer. The compatibility suite uses actual Paho 1.6.1, 2.0.0 and 2.1.0 against an isolated MQTT 3.1.1 packet fixture; it is not a test of every historical patch release or a production HA installation.
+
+To run the compatibility checks with your installed Paho (requires localhost socket access):
+
+```bash
+python3 -m unittest tests.test_mqtt_compatibility -v
+```
+
+See [Paho's migration documentation](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html) for the upstream callback differences. Library major versions 1/2 are distinct from the MQTT wire protocol versions; this change preserves the application's MQTT 3.1.1 connection behavior.
 
 ## Optional live status, MQTT heartbeats and automatic Home Assistant Discovery
 
@@ -1187,7 +1211,7 @@ The rules were checked against [Syncoid's implementation](https://github.com/jim
 | `5` | Password, authentication, or permission failure. |
 | `6` | Connection timed out. |
 | `7` | Connection was refused. |
-| `8` | One or more configured pairs encountered a missing ZFS dataset or pool. Syncerate continues the remaining list for the recognized missing-data cases, then reports the completed run as failed with code `8`. |
+| `8` | A configured pair encountered a recognized missing ZFS dataset or pool. By default stop before the next pair; `ContinueOnMissingDataset = true` processes later pairs. Both policies return failure code `8` and attempt failure reporting. |
 | `9` | The same monitored output pattern repeated too many times. |
 | `10` | MQTT dependency or publishing failure. |
 | `11` | Reserved for system-action failures; the current system-action runner logs failures without returning this code. |
@@ -1196,3 +1220,38 @@ The rules were checked against [Syncoid's implementation](https://github.com/jim
 | `14` | The per-TOML lock file could not be safely created, opened, or used. Syncerate refuses to run without a lock, and attempts configured failure email/MQTT. |
 
 Non-zero Syncoid exit codes not handled by a specific rule are returned unchanged and may overlap the application codes above. Signal termination is reported as `128 + signal number`.
+
+
+## Included integration examples
+
+- `config/HomeAssistant-Configuration-For-MQTT.yaml`: legacy MQTT binary sensor and availability; edit the topics to match your TOML.
+- `config/HomeAssistant-Automation-For-MQTT-JSON.yaml`: completion/failure JSON notification automation; edit its topic and notification service.
+- `config/HomeAssistant-Live-Backup-Alerts.yaml`: independent live failure, missing-heartbeat and long-running alerts; replace the sensor entity IDs and notification service.
+- `config/HomeAssistant Automation - 1.png` and `- 2.png`: screenshots of the legacy sensor/reset automation; adapt the steps to your Home Assistant UI.
+- `config/Daily backup at cheapest time - Continue on error without losing progress`: fenced YAML example for a multi-project backup queue. Copy the YAML inside the code fence, replace every host/topic/entity/service and configure the separate MQTT command listener. Its cleanup and snapshot jobs are external projects, not commands implemented by Syncerate.
+
+A dry-run JSON success is a planning report, so exclude `dry_run: true` reports from any automation that advances a real backup queue. Live events use `failed`; completion JSON uses `failure`. Select the matching example for the channel you enabled.
+
+## Commands used in this guide
+
+| Command | Purpose |
+| --- | --- |
+| `python3 Syncerate.py --conf FILE` / `./Syncerate.py --conf FILE` / `./dist/Syncerate --conf FILE` | Run one configured job; `-c` is the same configuration selector. |
+| `--dry-run` | Force local planning for that invocation; keep configured notifications/logging and the safety lock. |
+| `--help` / `-h` | Show all application flags and examples without reading a configuration or creating runtime files. |
+| `--version` | Show the entry point name and application version without starting a job. |
+| `chmod +x Syncerate.py` | Allow direct execution of the source entry point. |
+| `cp config/example-Syncerate.toml config/Syncerate.toml` | Create an editable job configuration while retaining the complete example. |
+| `sudo apt update` / `sudo apt install ...` | Refresh package metadata/install the listed OS prerequisites on a compatible Debian/Ubuntu system. |
+| `python3 -m venv .venv-build` / `. .venv-build/bin/activate` | Create and activate an isolated Python build environment. |
+| `python -m pip install -r requirements-build.txt` | Install pinned packager and Python runtime dependencies into that environment. |
+| `./build-pyinstaller.sh` | Rebuild and verify the standalone binary; recreates `dist/` and removes generated `.build/` work. Keep custom files outside those directories. `PYTHON_BIN=/path/to/python ./build-pyinstaller.sh` selects the builder interpreter. |
+| `python3 -m unittest discover -s tests -v` | Run regressions with simulated children/notifications and a localhost MQTT packet fixture. |
+| `python3 -m unittest tests.test_mqtt_compatibility -v` | Check callback compatibility and every MQTT publisher using the installed Paho against a localhost fixture. If optional Paho is absent, only its three network tests are skipped. |
+| `sudo zfs create Storage/Syncerate-Test` / `sudo touch /Storage/Syncerate-Test/testfile` | Create the disposable test dataset and its test file for the first-run example. |
+| `sudo zfs list` / `sudo zfs list -t snapshot` | Inspect datasets and snapshots after testing. |
+| `zpool list` / `zfs list -o name,used,avail,quota,refquota` | Inspect capacity, available space and quotas after an out-of-space failure. |
+| `syncoid SourceDataSet DestDataSet ...` | The external replication command expanded by Syncerate. `--compress none` selects uncompressed transfer, `--sshport` sets the SSH port, `--sshkey` selects the identity, `--no-privilege-elevation` uses the account's existing ZFS permissions, and destination `--recvoptions` passes ZFS receive options. Other Syncoid flags belong to the installed Syncoid version; check `syncoid --help` before using them. |
+| `shutdown -P now` / `reboot` / `/path/to/trusted-script.sh` | Examples of optional post-success shell actions running as Syncerate's account. |
+
+`VERSIONING.md` is the canonical change ledger. Function/command internals are explained in `commented_code_map.md`; release checks and limitations are recorded in `VERIFICATION.md`.

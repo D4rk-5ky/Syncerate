@@ -1,32 +1,42 @@
-# Syncerate 0.4.52 verification
+# Syncerate 0.4.54 verification
 
-Baseline: the complete supplied `Syncerate-0.4.51.zip`. No original project paths were removed. The existing standalone executable was rebuilt in place from this release's source.
+Date: 2026-10-26. Previous release: `Syncerate-0.4.53.zip`, SHA-256 `2571ca651888e755ab0afea4cc1e7b1b995ca8fb297582a6f6624708c6fbb056`. Original uploaded project: `Syncerate-Syncerate-Next.zip` (0.4.52), SHA-256 `170fc06def2b3eaef3f3329cf9a242022cadd14a8bb2f0007e298ac43744c885`.
 
-## Checks completed
+## What changed
+
+The live MQTT monitor now detects Paho's CallbackAPIVersion capability. Paho 1.x uses its original client constructor; Paho 2.x explicitly selects callback API VERSION2. The client ID is a keyword in both cases. Connect/disconnect callbacks accept the old/new argument counts using optional trailing parameters. No exception-based fallback hides unrelated constructor failures. Discovery, heartbeat, progress, reconnect and terminal result behavior reuse the same existing monitor implementation.
+
+Every MQTT path was reviewed. Legacy retained success and HA availability, JSON success/failure/dry-run status and failure-wrapper routing already use `publish.multiple()` arguments shared by both library versions. Duplicate rejection uses the shared `publish.single()` helper. Both helpers own their version-appropriate callbacks and were retained. Their actual serialized packets were verified with each installed library.
+
+The source version and build expectations advance by exactly 0.0.1 to 0.4.54. README, full configuration comments, function map and VERSIONING.md describe the current compatibility behavior. The standalone executable was rebuilt with pinned Paho 2.1.0. All 38 config option values, existing flags, both exact disclaimers, replication safety and notification/exit policies are preserved. No original file is removed; one new test module is added.
+
+## Verification results
 
 | Check | Result |
 | --- | --- |
-| Full regression suite | **186/186 passed** in a single run (176 existing, 10 new transfer-progress tests). |
-| Syncoid runner safety tests | **53/53 additionally passed in isolated processes**, including fatal ENOSPC, pipeline cleanup, retry limits, missing datasets, warning classification and credential handling. |
-| Progress before EOF | A real Pexpect child is prevented from exiting until a heartbeat publishes its >100% progress. Passed. |
-| Supplied example | `(~ 3.3 GB)` + `3,34GiB ... [23,3MiB/s] ... 99%` parses to about 3.3 GiB estimated, 3.34 GiB observed, 23.3 MiB/s, **101.21%**. Comma/period decimals and byte-unit semantics verified. |
-| Unknown/reset behavior | Missing/zero estimates, missing rates, unknown counters, CR/LF chunking, final unterminated records, recursive stream changes, new configured pairs and real Broken Pipe retry resets passed. |
-| Monitoring isolation | Parser callback exceptions remain nonfatal. Progress refreshes only update the local cache; existing heartbeat/lifecycle publications carry readings. No per-line network traffic. |
-| HA Discovery | 13 retained definitions: 12 expiring live sensors (including the four new transfer sensors) and one non-expiring last-result sensor. Existing entity IDs retained; new fields use unknown-safe templates. |
-| Python source | All source/test files compile; `--version` reports 0.4.52; `--help` describes all flags and optional transfer monitoring. |
-| Source and standalone CLI | Both pass `--help`, `--version`, real CLI dry-run and mismatching-final-dataset preflight (exit 1, no replication). |
-| Real Paho network serialization | Both source and rebuilt executable connected to an isolated local MQTT protocol fixture using Paho 2.1.0. Verified 13 Discovery publications, a non-retained heartbeat with 101.21% **while the child is still running**, and a retained success result with final counters. The child exits only after that heartbeat is acknowledged by the test fixture. This is not a production broker/HA test. |
-| Standalone build | Built Linux x86-64 one-file `dist/Syncerate` with pinned requirements: PyInstaller 6.22.2, hooks 2026.7, Pexpect 4.9.0, Paho 2.1.0. Embedded version 0.4.52, help and simulated-transfer checks passed. |
-| Build wrapper | `bash -n` passed; the build script's own version/help/dist checks passed; `dist/` contains exactly `README.md` and `Syncerate`; `.build/` removed. |
-| Configuration | Example parses successfully, and its key set matches all **38** supported options. No new settings/defaults or flags were introduced; comments explain heartbeat progress. |
-| Documentation | Current-use README, CLI help, example comments, VERSIONING and function/command map updated. Existing disclaimers preserved. |
-| ZIP preservation and integrity | All **50 original file paths** accounted for; **51 release files** including the manifest and one new test file. No removed files. Every archived content hash and Unix mode checked against the manifest; original hashes/modes checked directly against the baseline ZIP. ZIP CRC check passed. |
-| Clean package | No Python caches/bytecode, generated locks, build work directories, dependency trees, temporary files or test logs included. |
+| Full suite / actual Paho 1.6.1 | **192/192 passed**, Python 3.12.14; no skipped tests. |
+| Full suite / actual Paho 2.0.0 | **192/192 passed**, Python 3.12.14; no skipped tests. |
+| Full suite / actual Paho 2.1.0 | **192/192 passed**, Python 3.12.14; no skipped tests. |
+| Matrix isolation | Libraries installed in separate workspace locations; their actual imported versions and paths checked. Each run uses one selected Paho installation. |
+| New callback regressions | Strict legacy constructor rejects v2-only kwargs; actual 4-argument connect and 3-argument disconnect work. Both old/new refusal and disconnect shapes checked. Unrelated constructor errors are not retried as legacy and stay nonfatal to backup work. |
+| All one-shot MQTT paths | Real Paho TCP serialization tested for legacy-only, JSON-only and combined modes, each with real success, failure and dry-run success; topics, payloads, auth fields, QoS and retention checked. Failure wrapper still reports errors when the success switch is false. |
+| Live monitor / real packets | 13 retained Discovery definitions, non-retained running/heartbeat/progress, forced socket disconnect and actual reconnect with Discovery refreshed, one optional start event, retained final success result and completed event verified with each installed Paho version. |
+| Duplicate rejection / real packets | Real `publish.single()` sends only a non-retained QoS1 duplicate_rejected event; no owner status/last-result publications. |
+| Rebuilt executable / real packets | Four complete CLI scenarios pass with bundled Paho 2.1.0: simulated successful replication, dry-run, mismatching-final-pair preflight failure and duplicate-lock rejection. Legacy retained success/availability, JSON, live Discovery/results/events and duplicate routing verified; no retained success signal on dry-run/failure. |
+| Existing safety suite | Original 186 regressions remain included: preflight, locks, retry limits, fatal ENOSPC, missing datasets, credentials, progress, notifications, logging and best-effort system actions. |
+| Source/binary basic CLI | Both report 0.4.54; help covers every flag; help/version create no runtime files. Required/unknown args and missing config return 2. Config-selected and CLI-forced dry-run avoid prompts/replication/system action; real flock duplicate returns 13; final-pair mismatch returns 1. Simulated two-pair execution reports two completed datasets and 2 MiB. Source CLI also exercised with Python 3.14.4. |
+| Compile/build | All 30 Python source/test files plus Syncerate.spec compile; shell syntax passes. Actual one-file Linux x86-64 build with Python 3.12.14, PyInstaller 6.22.2, hooks 2026.7, Pexpect 4.9.0 and Paho 2.1.0. Build's own version/help checks pass. |
+| Configuration/docs | All 38 TOML values unchanged; current examples remain complete. Both exact disclaimers preserved. All 345 Python function names represented in the map, with explicit purposes for every new test/fixture function. |
+| File preservation | All 51 preceding-release paths and all 51 original uploaded paths preserved; **52 release files**, including tests/test_mqtt_compatibility.py. Complete SHA-256, size and mode accounting for both baselines is in PACKAGE_MANIFEST.json. |
+| Clean packaging | dist contains only Syncerate and README.md; .build removed. No bytecode, Python/test/build caches, generated locks, logs, temporary files, dependency installations or scratch scripts enter the zip. |
+| Final zip | Exact member set, CRC, every content hash and Unix mode checked against the release tree; source and executable version/help verified again from a fresh extraction. Executables retain 0755; ordinary files use 0644 and directories 0755. Original uploaded DOS entries with unspecified modes are recorded separately and normalized to 0644. |
 
-## Behavior and limits
+## Limits and preserved behavior
 
-The four new readings apply to the current **Syncoid send stream**, not the combined remaining size of a recursive pair or whole backup. Syncoid's rounded estimate can be low; progress is deliberately not capped at 100%, and reaching it never declares a backup successful. Multiple streams and retries reset the live measurements. Existing run-wide byte totals still accumulate finished attempts without double-counting output refreshes.
+The MQTT fixture is a small isolated MQTT 3.1.1 loopback packet recorder/acknowledger, not a production broker or a Home Assistant installation. Broker-side ACL rejection, TLS, MQTT v5, real HA entity/UI/automation creation and Pushover delivery were not tested. The change concerns Paho library major versions; it does not add another MQTT wire protocol or transport configuration. Tested library releases are 1.6.1, 2.0.0 and 2.1.0, not every historical 1.x/2.x patch release.
 
-An alive heartbeat can repeat a stale byte/rate observation if transfer output stops. `progress_observed_at` distinguishes a counter observation from a fresh script heartbeat. Missing estimates/counters/rates are unknown; standard output is required (`--quiet` or custom pv options may suppress it). Speed is the last reported rate. Estimates and pv human-readable counters are rounded, so byte amounts and percentages are approximate.
+No real ZFS/Syncoid replication, remote SSH/encrypted-key exchange or production mail/system action was performed. Simulated local children test the actual runner without touching datasets. The rebuilt executable bundles Paho 2.1.0; installing another system Paho does not change that embedded dependency. Binary compatibility on other Linux distributions/architectures requires local verification/rebuilding.
 
-Live ZFS/Syncoid replication, remote SSH, an external production MQTT broker, actual Home Assistant entity creation/UI, production mail and Pushover delivery were **not tested**. Simulated children and fake/local protocol transports were used. The rebuilt executable is Linux x86-64 and was exercised in this environment; compatibility with other distributions/architectures requires local verification or rebuilding. The existing per-TOML lock scope and cross-host/shared-filesystem limitations are unchanged.
+Live monitoring remains optional and best-effort, including bounded shutdown. Legacy MQTT errors retain their existing failure policy. Lock ownership/scope, notification switches, QoS/retain, topics, payloads, automatic first-contact host-key acceptance and post-success actions are unchanged. The initial restricted-sandbox packet test could not create sockets; all final matrix/standalone packet checks ran with permitted localhost access and passed.
+
+API review references: [Paho callback migration](https://eclipse.dev/paho/files/paho.mqtt.python/html/migrations.html), [Paho helpers](https://eclipse.dev/paho/files/paho.mqtt.python/html/helpers.html), and [Paho 1.6.1 publisher source](https://github.com/eclipse-paho/paho.mqtt.python/blob/v1.6.1/src/paho/mqtt/publish.py). The separate zip checksum avoids circular archive hashing; the manifest excludes its own current hash.

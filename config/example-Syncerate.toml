@@ -88,11 +88,11 @@ Use_MQTT = false
 # Default when omitted: true.
 SendMQTTOnSuccess = true
 
-# Shared broker settings used when either MQTT output is enabled.
-broker_address = "mqtt.example.com"
+# Shared broker settings used by legacy, JSON and independent live MQTT.
+broker_address = "10.0.0.105"
 broker_port = 1883
-mqtt_username = ""
-mqtt_password = ""
+mqtt_username = "cfna08h"
+mqtt_password = "7259381tiab"
 
 # Legacy retained success topic/payload used when Use_MQTT = true.
 # Legacy-only failures use <mqtt_topic>/error; legacy-only dry-run success uses
@@ -103,13 +103,16 @@ mqtt_message = "ON"
 # Independent structured JSON success/failure channel. May be enabled together
 # with legacy MQTT or by itself. JSON is always non-retained.
 MQTT_JSON_Status = false
-mqtt_json_topic = "homeassistant/syncerate/status"
+mqtt_json_topic = "homeassistant/syncerate-ubuntu-zfs-raid-import-test/status"
 
 # OPTIONAL INDEPENDENT LIVE MONITORING (separate from legacy mail/MQTT success)
 # Disabled by default. When true, this requires the broker details above but
 # does not require Use_MQTT, MQTT_JSON_Status, or Use_HomeAssistant.
-# An unreachable broker or missing paho-mqtt never stops an otherwise valid backup.
-LiveMQTTEnabled = false
+# All MQTT paths support paho-mqtt 1.x and 2.x automatically.
+# The standalone build bundles 2.1.0; source uses the installed Paho version.
+# An unreachable broker or missing Paho never stops an otherwise valid backup;
+# live monitoring logs a warning and remains unavailable.
+LiveMQTTEnabled = true
 
 # Publish retained Home Assistant MQTT Discovery configurations for one device
 # per canonical TOML path + hostname. Independent of the old Use_HomeAssistant.
@@ -172,7 +175,9 @@ LogDestination = "No"
 #         execute SystemAction. The --dry-run CLI flag can also force this on.
 DryRun = false
 
-# Optional command executed only after a successful real replication run.
+# Optional trusted shell command executed as the Syncerate account only after
+# a successful real replication run. Nonzero status/exceptions are logged; they
+# do not change the completed backup exit code. Mail enablement adds a 120s wait.
 # Use "No" to disable it. It is always skipped in dry-run mode.
 SystemAction = "No"
 
@@ -192,6 +197,8 @@ ContinueWithoutResume = false
 # Dataset-level ordinary Broken Pipe retry handling.
 # false = preserve normal Syncoid exit-status handling (default).
 # true  = retry the affected dataset using the count/wait values below.
+# Exhausting the allowance stops the entire run with exit 2; later pairs do not
+# start. A count of zero fails after the first detected ordinary Broken Pipe.
 RetryBrokenPipe = true
 
 # Number of retries allowed for each dataset after the first ordinary Broken Pipe.

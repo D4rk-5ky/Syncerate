@@ -187,8 +187,8 @@ class LiveBackupMonitor:
         while not self._stop_signal.wait(self.config.live_heartbeat_seconds):
             self._publish(self.status_topic, self._payload())
 
-    def _on_connect(self, client: Any, userdata: Any, flags: Any, reason_code: Any, properties: Any) -> None:
-        """Republish retained discovery and most recent state on reconnection."""
+    def _on_connect(self, client: Any, userdata: Any, flags: Any, reason_code: Any, properties: Any = None) -> None:
+        """Handle Paho 1.x (four args) or 2.x (five), refreshing discovery/state."""
         try:
             if reason_code != 0:
                 self.logger.warning("Live MQTT broker refused connection: %s", reason_code)
@@ -209,8 +209,13 @@ class LiveBackupMonitor:
         except Exception as exc:
             self.logger.warning("Live MQTT connection callback failed: %s", exc)
 
-    def _on_disconnect(self, client: Any, userdata: Any, disconnect_flags: Any, reason_code: Any, properties: Any) -> None:
-        """Mark broker disconnected; a reconnect will refresh discovery/state."""
+    def _on_disconnect(self, client: Any, userdata: Any, disconnect_flags: Any, reason_code: Any = None, properties: Any = None) -> None:
+        """Clear connectivity for Paho 1.x/2.x callback shapes.
+
+        Paho 1.x MQTT 3 passes rc in the third position; Paho 2.x callback
+        API v2 passes flags, reason and properties. No reason is inspected,
+        so optional trailing arguments safely cover both without conversion.
+        """
         self._connected.clear()
 
     def _event(self, event_type: str, **fields: Any) -> None:
@@ -230,10 +235,17 @@ class LiveBackupMonitor:
         """Start background MQTT without letting any failure abort this backup."""
         try:
             from paho.mqtt import client as mqtt
-            self._client = mqtt.Client(
-                callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-                client_id=f"syncerate_{self.backup_id[:22]}_{uuid.uuid4().hex[:6]}",
-            )
+            # Paho 1.x has no CallbackAPIVersion or callback_api_version
+            # constructor argument. On 2.x select its native API v2 explicitly;
+            # client_id stays a keyword because the first positional argument
+            # changed between the two major versions.
+            client_options: dict[str, Any] = {
+                "client_id": f"syncerate_{self.backup_id[:22]}_{uuid.uuid4().hex[:6]}",
+            }
+            callback_api = getattr(mqtt, "CallbackAPIVersion", None)
+            if callback_api is not None:
+                client_options["callback_api_version"] = callback_api.VERSION2
+            self._client = mqtt.Client(**client_options)
             if self.config.mqtt_username.strip():
                 self._client.username_pw_set(self.config.mqtt_username.strip(), self.config.mqtt_password)
             self._client.on_connect = self._on_connect

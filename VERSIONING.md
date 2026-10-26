@@ -16,6 +16,28 @@ The patch number rolls over as follows:
 
 It must never become `0.0.100`.
 
+## 0.4.54 — 2026-10-26
+
+Previous version: `0.4.53`.
+
+- Audited every MQTT implementation: live client and its callbacks/reconnect/Discovery/heartbeats/events/retained results, legacy retained success and Home Assistant availability, JSON success/failure/dry-run publishing and duplicate-rejection events. Confirmed the single/multiple one-shot publishers already use shared Paho 1.x/2.x helper interfaces and retained those implementations.
+- Updated the existing live monitor to detect CallbackAPIVersion support: use the original constructor on Paho 1.x and explicitly select callback API VERSION2 on 2.x. Kept client_id a keyword to avoid the changed positional constructor meaning. Added optional trailing connect/disconnect callback parameters for the legacy/new callback arities; no broad exception-based constructor fallback masks other failures.
+- Preserved MQTT authentication, default wire protocol, topics, payloads, QoS/retention, independent notification switches, asynchronous monitoring/bounded shutdown, duplicate-owner isolation and original exit/error policies. No config option, flag, safety default or ZFS/replication behavior changed.
+- Added six compatibility regressions: strict legacy constructor/callback behavior, both refusal/disconnect shapes, non-retried constructor failure, actual packet-level legacy/JSON/dry-run/failure routing and auth, live Discovery/heartbeat/progress/reconnect/result/events, and duplicate events. Tests use an isolated localhost MQTT 3.1.1 fixture and actual Paho installations, with bounded waits and teardown.
+- Updated current-use README, complete TOML comments and function/command map for automatic 1.x/2.x support, tested versions, source-versus-bundled Paho and test commands. Kept all 38 option values and both exact user disclaimers. Incremented authoritative version/build/test expectations by exactly 0.0.1 and rebuilt the executable with pinned Paho 2.1.0.
+- Recorded the actual test matrix, compile/CLI/build checks and limitations in VERIFICATION.md. Updated PACKAGE_MANIFEST.json and clean zip verification against both the preceding 0.4.53 release and the original supplied project; every required original file path is preserved.
+
+## 0.4.53 — 2026-10-26
+
+Previous version: `0.4.52`.
+
+- Inspected every project component before editing: entry point/package, process and credential handling, advisory locking, notifications/live monitor, build recipe, examples, screenshots, tests and existing release records. Preserved every original file path.
+- Advanced the source version and build/test version expectations by exactly 0.0.1. Extended existing CLI help with dry-run log/live-MQTT side effects and the limits of local-only validation; no flags, configuration defaults, replication logic or safety policies changed.
+- Corrected README standalone/version contradictions and exit-code 8's default-stop versus opt-in continuation description; expanded its main configuration example to all 38 options. Documented the current Paho 2.x live-monitor requirement, Linux runtime, dry-run side effects, integration assets, automation dry-run filtering, and purposes of guide commands. Kept README focused on current usage and retained both user-supplied disclaimers, including the exact non‑production spelling.
+- Updated complete config comments for shared broker use, live-monitor dependency, fatal Broken Pipe retry exhaustion and best-effort post-success shell actions without changing example values.
+- Updated the current function/command map and test tree, added missing nested-function explanations and corrected a stale test name/Boolean description. Kept VERSIONING.md as the existing canonical change ledger, avoiding a second case-sensitive copy that could diverge.
+- Rebuilt and verified the standalone executable from this release's source using the pinned requirements. Refreshed VERIFICATION.md and PACKAGE_MANIFEST.json with checks, limitations, original/archive hashes, file preservation and cache exclusion evidence.
+
 ## 0.4.52
 
 Previous version: `0.4.51`.
